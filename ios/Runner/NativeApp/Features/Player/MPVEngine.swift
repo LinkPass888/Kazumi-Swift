@@ -805,15 +805,18 @@ final class MPVEngine {
             fbo: Int32(fbo),
             w: Int32(viewport[2]),
             h: Int32(viewport[3]),
-            // 传 0，跟 main 的 media_kit_video（TextureHW.swift）一致：让 mpv 用
-            // 自己的默认值，不去假设目标缓冲是什么格式。
+            // 传真实格式 GL_RGBA8（Fuck 5618）。
             //
-            // 之前传的是 GL_RGBA。mpv 拿到这个值会认为它清楚 FBO 的格式，于是按
-            // 「目标就是这个格式」挑输出路径；硬解直通（px=videotoolbox）走的正是
-            // 这条按目标格式优化的路径，结果色度平面被处理错，画面发绿——而
-            // copy-back 的帧走的是完整 YUV→RGB 转换，不受这句影响，所以以前没暴露。
-            // main 传 0 一直是对的，这就是两边唯一的实质差别（LP 5577）。
-            internal_format: 0
+            // 这块 FBO 是我们自己定的 8 位 RGBA（`MPVPlayerContainer.swift` 里
+            // `glView.drawableColorFormat = .RGBA8888`），把真实格式告诉 mpv，
+            // 它就不用猜目标缓冲长什么样。
+            //
+            // 前两次都没成，但不是同一件事：传 `GL_RGBA` 是没带尺寸的老写法，
+            // mpv 会当成「未定尺寸的 RGBA」自己再推；传 `0` 是让它完全按默认值
+            // 猜（main 的 media_kit_video 传 0 能对，是因为它画进的是自己按
+            // CVPixelBuffer 建的纹理 FBO，不是 GLKView 的 renderbuffer）。
+            // `GL_RGBA8` 才是「这块就是 8 位 RGBA」的明确说法。
+            internal_format: Int32(GL_RGBA8)
         )
         var flip: CInt = 1
         withUnsafeMutablePointer(to: &flip) { flipPtr in
