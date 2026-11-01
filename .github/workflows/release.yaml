@@ -24,7 +24,10 @@ env:
 jobs:
   build-ios:
     name: "Release for iOS"
-    runs-on: "macos-26"
+    # 和 pr.yaml 用同一套镜像（public preview，label 就叫 xcode-27），不写死 27.x 的小版本。
+    # 之前这里是 macos-26（默认 Xcode 26.6 / iOS SDK 26.5）：那样编出来的包不认识
+    # iOS 27 的 NowPlaying 框架，canImport 直接为假，发出去的 IPA 会悄悄退回旧接口。
+    runs-on: "xcode-27"
     permissions:
       contents: read
     steps:
@@ -37,8 +40,11 @@ jobs:
       - name: Echo build progress
         run: echo "Kazumi_ios_${{ env.tag }}.ipa build progress"
 
+      # 只把版本号打进日志：这个镜像的小版本会随 GitHub 更新，钉死路径反而会在镜像升级那天断掉。
       - name: Show Xcode version
-        run: xcodebuild -version
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install build tools
         run: brew install xcodegen xcbeautify

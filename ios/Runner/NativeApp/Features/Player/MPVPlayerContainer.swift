@@ -116,6 +116,13 @@ final class PlayerSurfaceModel {
     /// 于是在「第一帧到手」那一刻再补一次 `play()`——只补一次，用户随手暂停就作废。
     private var autoPlayPending = false
 
+    /// 这一集已经报过「播完」了。
+    ///
+    /// `eof-reached` 会一直为真，直到下一条 `loadfile` 才消失；状态回调却每 250ms 来一次。
+    /// 没有这把闩，同一次片尾会被重复收尾：自动连播那边会重复派发选集任务，
+    /// 关掉连播时观看进度也会每个 tick 重写一次。换集时由 `prepareForNewEpisode()` 复位。
+    private var finishReported = false
+
     /// 需要在播放区浮现的临时提示（首 / 末集提示等）；页面渲染并在 2 秒后清空。
     var toastMessage: String?
 
@@ -349,25 +356,42 @@ final class PlayerSurfaceModel {
         }
         if snapshot.ended {
             handleFinish(errorMessage: nil)
+        } else if finishReported {
+            // 播完之后又被拖回中段重看：这一集的「已报播完」放开，再走到结尾还能再收尾一次。
+            // 只在确实离开片尾时复位，避免 eof 抖一下就重复收尾。
+            if duration <= 0 || snapshot.time < duration - 3 {
+                finishReported = false
+            }
         }
     }
 
     /// 播放结束（正常播完或出错）的收尾。
-    /// 出错只报错；只有确实播到结尾才触发 `onFinish`——停止 / 换集也会走到结尾附近。
+    /// 出错只报错；只有确实播到结尾才清播放意图并触发 `onFinish`。
+    ///
+    /// `eof-reached` 在 HLS 中途断流 / 重连时也可能短暂出现。以前这里先把
+    /// `wantsPlaying` 清掉、再判断是不是片尾；于是后续 `core-idle` 虽然为真，
+    /// `isStalled` 也永远为假，界面就只剩反复停顿而没有加载圈。
     func handleFinish(errorMessage: String?) {
-        isPlaying = false
-        wantsPlaying = false
-        isReady = false
         if let errorMessage {
+            isPlaying = false
+            wantsPlaying = false
+            isReady = false
             self.errorMessage = errorMessage
             return
         }
         guard duration > 0, currentTime >= duration - 3 else { return }
+        guard !finishReported else { return }
+        finishReported = true
+        isPlaying = false
+        wantsPlaying = false
+        isReady = false
         onFinish?(self)
     }
 
     /// 切换分集前清掉上一集的展示状态，避免旧的时长 / 进度闪一下。
     func prepareForNewEpisode() {
+        // 新的一集还没播完：把上一集的收尾闩放开。
+        finishReported = false
         // 这一集就绪后应该自己开播（见 `autoPlayPending`）。
         autoPlayPending = true
         wantsPlaying = true
@@ -418,7 +442,8 @@ final class MPVGLView: GLKView {
         // （LP 4978 第 2 条）。
         guard let engine, !engine.renderingLocked else { return }
         // 分两步排空，把「谁抛的错」分开（见 MPVEngine.drainStaleGLErrors）。
-        engine.drainStaleGLErrors("帧首，上一帧内核渲染的残留")
+        // mpv render 后还会同步跑 PiP 拷贝，所以帧首残留不能直接归因于内核。
+        engine.drainStaleGLErrors("帧首，上帧渲染后处理（含画中画）的残留")
         glClearColor(0, 0, 0, 1)
         glClear(UInt32(GL_COLOR_BUFFER_BIT))
         engine.drainStaleGLErrors("我们 glClear 之后")

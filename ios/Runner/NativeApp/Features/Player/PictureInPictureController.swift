@@ -565,6 +565,9 @@ private final class PiPFrameCopier {
     private var hasCapturedOnce = false
     private var didLogRenderFailure = false
     private var didLogFirstFrame = false
+    /// GL 诊断按「调用点 + 错误」去重；不能复用 logOnce，否则一个早期错误会把
+    /// 后面真正有用的调用点全压掉。
+    private var reportedGLDiagnosticSignatures = Set<String>()
 
     /// 片源的真实画面比例（宽 / 高）。系统起小窗时先按「内联画面」的形状铺，
     /// 等第一帧到了才改成片源比例——中间那一下就是「顶部黑一截然后恢复」（LP 4711）。
@@ -771,11 +774,28 @@ private final class PiPFrameCopier {
         rect: CGRect,
         pixelBuffer: CVPixelBuffer
     ) -> Bool {
+        // DRAW/READ_FRAMEBUFFER 与 glBlitFramebuffer 都是 ES 3 API。引擎虽然优先建
+        // ES 3 上下文，但老设备会回落到 ES 2；在那里调用只会制造粘性的 0x500。
+        guard context.api == .openGLES3 else {
+            reportGLDiagnosticOnce(
+                callSite: "PiPFrameCopier.blit",
+                detail: "OpenGL ES 2 不支持 glBlitFramebuffer，跳过画中画拷贝"
+            )
+            return false
+        }
+
+        // 不论从哪条 guard 返回，都不能把我们产生的 GL 错误留给下一帧 / mpv。
+        defer { drainGLErrors(after: "PiPFrameCopier.blit 返回前") }
+        // ensureTextureCache 也可能进 CoreVideo / GL；先把 mpv render 后的残留分开。
+        drainGLErrors(after: "PiPFrameCopier.blit 入口（上游残留）")
         guard let cache = ensureTextureCache() else { return false }
 
         var texture: CVOpenGLESTexture?
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        // PiP 在 mpv render 之后运行；这里先切出干净边界，不能把上游残留误算到 CV。
+        drainGLErrors(after: "CVOpenGLESTextureCacheCreateTextureFromImage 调用前")
         let status = CVOpenGLESTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault,
             cache,
@@ -790,20 +810,54 @@ private final class PiPFrameCopier {
             0,
             &texture
         )
-        guard status == kCVReturnSuccess, let texture else {
-            logOnce("CVPixelBuffer 纹理创建失败：\(status)")
+        // CV 即使返回失败也可能先留下 GL 错误；必须在 guard 前立即读走。
+        let textureErrors = drainGLErrors(
+            after: "CVOpenGLESTextureCacheCreateTextureFromImage",
+            cvStatus: status
+        )
+        guard status == kCVReturnSuccess, let texture, textureErrors.isEmpty else {
+            reportGLDiagnosticOnce(
+                callSite: "CVOpenGLESTextureCacheCreateTextureFromImage",
+                detail: "结果不可用，CV status=\(status)，texture=\(texture == nil ? "nil" : "已创建")"
+            )
             return false
         }
 
-        var previousFBO: GLint = 0
-        glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &previousFBO)
+        // ES 3 的 read / draw 是两个独立绑定，只存 `GL_FRAMEBUFFER_BINDING`（等于 draw）
+        // 不足以还原：mpv / GLKView 如果进来时两边不是同一个 FBO，用 GL_FRAMEBUFFER 恢复
+        // 会把 read 也一起写成 draw，后面的 GL 就落在错误的帧缓冲上。
+        var previousDrawFBO: GLint = 0
+        glGetIntegerv(GLenum(GL_DRAW_FRAMEBUFFER_BINDING), &previousDrawFBO)
+        guard drainGLErrors(after: "glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)").isEmpty else {
+            return false
+        }
+        var previousReadFBO: GLint = 0
+        glGetIntegerv(GLenum(GL_READ_FRAMEBUFFER_BINDING), &previousReadFBO)
+        guard drainGLErrors(after: "glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING)").isEmpty else {
+            return false
+        }
         var previousViewport = [GLint](repeating: 0, count: 4)
         glGetIntegerv(GLenum(GL_VIEWPORT), &previousViewport)
+        guard drainGLErrors(after: "glGetIntegerv(GL_VIEWPORT)").isEmpty else { return false }
+
+        // 从这里起任何失败路径都要恢复 mpv / GLKView 原来的 FBO 与 viewport。
+        defer {
+            glBindFramebuffer(GLenum(GL_DRAW_FRAMEBUFFER), GLuint(previousDrawFBO))
+            drainGLErrors(after: "恢复 glBindFramebuffer(GL_DRAW_FRAMEBUFFER)")
+            glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), GLuint(previousReadFBO))
+            drainGLErrors(after: "恢复 glBindFramebuffer(GL_READ_FRAMEBUFFER)")
+            restoreViewport(previousViewport)
+            drainGLErrors(after: "恢复 glViewport")
+        }
 
         if framebuffer == 0 {
             glGenFramebuffers(1, &framebuffer)
+            guard drainGLErrors(after: "glGenFramebuffers").isEmpty else { return false }
         }
         glBindFramebuffer(GLenum(GL_DRAW_FRAMEBUFFER), framebuffer)
+        guard drainGLErrors(after: "glBindFramebuffer(GL_DRAW_FRAMEBUFFER)").isEmpty else {
+            return false
+        }
         glFramebufferTexture2D(
             GLenum(GL_DRAW_FRAMEBUFFER),
             GLenum(GL_COLOR_ATTACHMENT0),
@@ -811,17 +865,25 @@ private final class PiPFrameCopier {
             CVOpenGLESTextureGetName(texture),
             0
         )
+        guard drainGLErrors(after: "glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER)").isEmpty else {
+            return false
+        }
         let framebufferStatus = glCheckFramebufferStatus(GLenum(GL_DRAW_FRAMEBUFFER))
+        guard drainGLErrors(after: "glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)").isEmpty else {
+            return false
+        }
         guard framebufferStatus == GLenum(GL_FRAMEBUFFER_COMPLETE) else {
-            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(previousFBO))
-            restoreViewport(previousViewport)
-            logOnce("画中画 FBO 不完整：0x\(String(framebufferStatus, radix: 16))")
+            reportGLDiagnosticOnce(
+                callSite: "glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)",
+                detail: "FBO 不完整：0x\(String(framebufferStatus, radix: 16))"
+            )
             return false
         }
 
         glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), GLuint(sourceFBO))
-        // 先清掉之前残留的 GL 错误，否则这里会把别人的错误算到 blit 头上。
-        while glGetError() != GLenum(GL_NO_ERROR) {}
+        guard drainGLErrors(after: "glBindFramebuffer(GL_READ_FRAMEBUFFER)").isEmpty else {
+            return false
+        }
         // 源 FBO 是给屏幕看的（mpv 用 FLIP_Y=1 画的），所以 GL 的 y=0 是画面底部。
         // CVPixelBuffer 反过来：内存第 0 行被 AVFoundation 当成画面顶部。
         // 目标 y 反向写，正好让源底部落到 PixelBuffer 的最后一行（画面底部）。
@@ -832,25 +894,20 @@ private final class PiPFrameCopier {
             GLbitfield(GL_COLOR_BUFFER_BIT),
             GLenum(GL_LINEAR)
         )
-        let blitError = glGetError()
-
-        glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(previousFBO))
-        restoreViewport(previousViewport)
-
-        guard blitError == GLenum(GL_NO_ERROR) else {
-            logOnce("画中画 blit 失败：0x\(String(blitError, radix: 16))")
-            return false
-        }
+        guard drainGLErrors(after: "glBlitFramebuffer").isEmpty else { return false }
 
         // 这块 CVPixelBuffer 接下来要给 AVFoundation 读，必须等 GPU 真写完。
         glFinish()
+        guard drainGLErrors(after: "glFinish").isEmpty else { return false }
         CVOpenGLESTextureCacheFlush(cache, 0)
+        guard drainGLErrors(after: "CVOpenGLESTextureCacheFlush").isEmpty else { return false }
         return true
     }
 
     private func ensureTextureCache() -> CVOpenGLESTextureCache? {
         if let textureCache { return textureCache }
         var cache: CVOpenGLESTextureCache?
+        drainGLErrors(after: "CVOpenGLESTextureCacheCreate 调用前")
         let status = CVOpenGLESTextureCacheCreate(
             kCFAllocatorDefault,
             nil,
@@ -858,8 +915,12 @@ private final class PiPFrameCopier {
             nil,
             &cache
         )
-        guard status == kCVReturnSuccess, let cache else {
-            logOnce("CVOpenGLESTextureCache 创建失败：\(status)")
+        let errors = drainGLErrors(after: "CVOpenGLESTextureCacheCreate", cvStatus: status)
+        guard status == kCVReturnSuccess, let cache, errors.isEmpty else {
+            reportGLDiagnosticOnce(
+                callSite: "CVOpenGLESTextureCacheCreate",
+                detail: "结果不可用，CV status=\(status)，cache=\(cache == nil ? "nil" : "已创建")"
+            )
             return nil
         }
         textureCache = cache
@@ -869,6 +930,29 @@ private final class PiPFrameCopier {
     private func restoreViewport(_ viewport: [GLint]) {
         guard viewport.count == 4 else { return }
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
+    }
+
+    /// 读到的每个「调用点 + 错误值」只报一次，但始终把队列排干净。
+    @discardableResult
+    private func drainGLErrors(after callSite: String, cvStatus: CVReturn? = nil) -> [GLenum] {
+        var errors: [GLenum] = []
+        while true {
+            let error = glGetError()
+            guard error != GLenum(GL_NO_ERROR) else { break }
+            errors.append(error)
+            let status = cvStatus.map { "，CV status=\($0)" } ?? ""
+            reportGLDiagnosticOnce(
+                callSite: callSite,
+                detail: "GL error=0x\(String(error, radix: 16))\(status)"
+            )
+        }
+        return errors
+    }
+
+    private func reportGLDiagnosticOnce(callSite: String, detail: String) {
+        let signature = "\(callSite)|\(detail)"
+        guard reportedGLDiagnosticSignatures.insert(signature).inserted else { return }
+        onLog?("GL：\(callSite)：\(detail)")
     }
 
     // MARK: 像素缓冲与 sample buffer

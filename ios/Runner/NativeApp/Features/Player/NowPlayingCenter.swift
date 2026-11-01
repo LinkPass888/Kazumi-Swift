@@ -56,6 +56,8 @@ struct NowPlayingPublishPayload {
 protocol NowPlayingModernPublishing: AnyObject {
     /// 抢主会话失败时的退路：交回旧接口重写一次，卡片不能消失。
     var onFailure: (@MainActor () -> Void)? { get set }
+    /// 真拿到主会话了：用来把退避计数归零（可选，不实现就当没有）。
+    var onActive: (@MainActor () -> Void)? { get set }
     func publish(_ payload: NowPlayingPublishPayload)
     /// 上一集 / 下一集是否可用；nil = 还不知道（集列表没拉到），保持可用。
     func setCommandAvailability(next: Bool?, previous: Bool?)
@@ -121,12 +123,27 @@ final class NowPlayingCenter {
     private var artworkCache: [String: MPMediaItemArtwork] = [:]
     /// 同一张封面编码好的图片数据，只给 iOS 27 那条新接口用（见 `write`）。
     private var artworkDataCache: [String: Data] = [:]
+    /// 两份缓存共用的淘汰顺序（先进先出）。
+    ///
+    /// 以前它们留到进程结束：一份 900px 解码图两三兆，新接口还多一份编码数据，
+    /// 连着看几十集不同剧之后就是白白涨上去的内存。现在只留最近几张，
+    /// 但两份必须**同时**进同时出——只清其中一份就会出现「旧缓存挡住早退、新接口拿不到封面」。
+    private var artworkRecency: [String] = []
+    private static let artworkCacheLimit = 8
 
     /// iOS 27+ 的新发布器。nil = 走旧接口（iOS 26 永远走旧接口）。
     /// 类型是协议而不是具体类，具体类整个带 `@available(iOS 27.0, *)`。
     private var modernPublisher: (any NowPlayingModernPublishing)?
-    /// 新接口这一次已经失败过：不再重试，直接走旧接口；`clear()` 时重置。
-    private var modernUnavailable = false
+    /// 新接口这一次失败过：到点之前先走旧接口，但**不是永远不试**。
+    ///
+    /// 第一次申请经常正好撞上 mpv 起播重配音频会话的那一刻（真机日志里那一下
+    /// `模式=AVAudioSessionModeMoviePlayback` 就是它盖的）。以前失败一次就把这个
+    /// 布尔量永久置真，整场播放都只能留旧卡片——而 iOS 27 上旧卡片正是点标题回不来的那张。
+    /// 现在改成按次退避重试，成功了就不再触发。
+    private var modernRetryNotBefore: Date?
+    private var modernFailureCount = 0
+    private static let modernRetryDelay: TimeInterval = 12
+    private static let modernMaxFailures = 8
     private var commandsConfigured = false
     private var lastRate: Double = 0
     private var lastElapsed: Double = 0
@@ -334,8 +351,11 @@ final class NowPlayingCenter {
         // 下一次播放重新建一个；`modernUnavailable` 也归零，下次重新试新接口。
         modernPublisher?.clear()
         modernPublisher = nil
-        modernUnavailable = false
-        artworkDataCache.removeAll()
+        modernRetryNotBefore = nil
+        modernFailureCount = 0
+        // 两份封面缓存都按地址复用：旧接口拿 MPMediaItemArtwork，新接口拿编码数据。
+        // 不能只清后一份、保留前一份——下一次播同一集时会被旧缓存的早退挡住，
+        // 结果新接口永远拿不到封面。它们都留到进程结束，语义才一致。
         // 保留原有同步统计；上面的卡片清理标记也记录 0/0。
         if writeCount > 0 || skipCount > 0 { logSyncSummary() }
         writeCount = 0
@@ -377,6 +397,11 @@ final class NowPlayingCenter {
         publisher.onFailure = { [weak self] in
             self?.fallBackToLegacyPublisher()
         }
+        publisher.onActive = { [weak self] in
+            // 拿到了就把旧账清掉：下一次偶发的失败从第一（最短）档重新退避。
+            self?.modernFailureCount = 0
+            self?.modernRetryNotBefore = nil
+        }
         modernPublisher = publisher
         return publisher
         #else
@@ -388,7 +413,15 @@ final class NowPlayingCenter {
     /// 补写出去。卡片能不能出来比「用哪条接口」重要，所以这里一定不能静默。
     private func fallBackToLegacyPublisher() {
         modernPublisher = nil
-        modernUnavailable = true
+        modernFailureCount += 1
+        // 递增退避：12s、24s、36s…最多试八次。连着八次都不成，就不用在这次播放里再骚扰它了。
+        if modernFailureCount >= Self.modernMaxFailures {
+            modernRetryNotBefore = .distantFuture
+        } else {
+            modernRetryNotBefore = Date().addingTimeInterval(
+                Self.modernRetryDelay * Double(modernFailureCount)
+            )
+        }
         guard let info else { return }
         KazumiLogBuffer.player("正在播放（iOS 27）：新接口不可用，退回旧接口发卡片")
         // 那一次已经算作「写过了」，不清掉节流快照的话这次会被判成没变化而跳过，
@@ -521,7 +554,7 @@ final class NowPlayingCenter {
         // iOS 27+：卡片改由 NowPlaying 框架的 MediaSession 发（见 NowPlayingSession27.swift）。
         // 它抢不到主会话时会立刻回调 `onFailure`，把那一次退回下面的旧写法，
         // 所以这里就是「先试新的」——新的不行，一行都不少地跑旧代码。
-        if #available(iOS 27.0, *), !modernUnavailable {
+        if #available(iOS 27.0, *), canTryModern() {
             let publisher = modernPublisher ?? makeModernPublisher()
             if let publisher {
                 publisher.publish(
@@ -589,11 +622,19 @@ final class NowPlayingCenter {
         }
     }
 
-    /// 封面：先查缓存，没有就下载，拿到后再补一次更新。
+    /// 封面：两条接口各有一份缓存；缺任意一份就补，全部齐了才返回。
     private func loadArtwork(for info: Info) {
         let url = info.artworkURL
         guard !url.isEmpty else { return }
-        if artworkCache[url] != nil { return }
+
+        let needsLegacyArtwork = artworkCache[url] == nil
+        var needsModernArtwork = false
+        #if canImport(NowPlaying)
+        if #available(iOS 27.0, *) {
+            needsModernArtwork = artworkDataCache[url] == nil
+        }
+        #endif
+        guard needsLegacyArtwork || needsModernArtwork else { return }
 
         Task { [weak self] in
             let loader = KazumiImageLoader.shared
@@ -620,7 +661,12 @@ final class NowPlayingCenter {
                 // 所以交非隔离的静态方法去造，闭包才不带主线程隔离。
                 let artwork = Self.makeArtwork(image: image)
                 self.artworkCache[url] = artwork
-                if let encoded { self.artworkDataCache[url] = encoded }
+                if let encoded {
+                    self.artworkDataCache[url] = encoded
+                } else if #available(iOS 27.0, *) {
+                    KazumiLogBuffer.player("正在播放（iOS 27）：封面编码失败，保留无封面卡片")
+                }
+                self.rememberArtwork(url)
                 // 图回来了，如果还是这一集，就把封面补进去（这一下才整套重建）。
                 guard let current = self.info, current.artworkURL == url else { return }
                 self.publish(
@@ -631,6 +677,27 @@ final class NowPlayingCenter {
                     full: true
                 )
             }
+        }
+    }
+
+    /// 现在能不能再试一次新接口：过了退避时间就放开，还没到就走旧接口。
+    private func canTryModern() -> Bool {
+        guard let notBefore = modernRetryNotBefore else { return true }
+        guard Date() >= notBefore else { return false }
+        modernRetryNotBefore = nil
+        return true
+    }
+
+    /// 把这一张记成最新用过，超过上限就淘汰最早的那张（当前这一集永远不清）。
+    private func rememberArtwork(_ url: String) {
+        artworkRecency.removeAll { $0 == url }
+        artworkRecency.append(url)
+        while artworkRecency.count > Self.artworkCacheLimit {
+            // 不能淘汰正在播的这一张，否则下一次写入会拿到空封面。
+            guard let index = artworkRecency.firstIndex(where: { $0 != info?.artworkURL }) else { break }
+            let evicted = artworkRecency.remove(at: index)
+            artworkCache.removeValue(forKey: evicted)
+            artworkDataCache.removeValue(forKey: evicted)
         }
     }
 

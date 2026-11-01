@@ -6,11 +6,11 @@
 //
 //  为什么要走这条（Fuck 5597 之后查出来的）：真机 iOS 27 上，控制中心 / 灵动岛 /
 //  锁屏那张卡片**点卡片本体不会把 App 叫到前台**（场景、App 生命周期一个回调都没有），
-//  而同一张卡上的播放/暂停/上一集/下一集都正常。旧接口
-//  （MPNowPlayingInfoCenter + MPRemoteCommandCenter）在 iOS 27 上已经只剩
-//  「画卡片 + 收遥控键」两件事；「这张卡归哪个 App、点它算不算回到这个 App」
-//  改由 MediaSession 的 `requestToBecomeApplicationPrimary()` 决定——这也是
-//  App 侧唯一还能动的那根杠杆。
+//  而同一张卡上的播放/暂停/上一集/下一集都正常。新接口把会话归属分成两层：
+//  `requestToBecomeApplicationPrimary()` 只管本 App 内谁是主会话，
+//  `requestToBecomeSystemPrimary()` 才继续申请系统主会话。真机已经证明前一层不够，
+//  所以两层都申请；但 SDK 没有「点卡片」回调，也没承诺系统主会话一定负责拉起 App，
+//  这仍是一次有明确观测值的真机实验，不把它写成已证明的修复。
 //
 //  用户拍板：27 用新接口，27 以下用旧的（"那就在27使用新接口，27以下用旧的"）。
 //  所以整个文件 `@available(iOS 27.0, *)`，由 `NowPlayingCenter` 在
@@ -25,8 +25,8 @@
 //     `content` / `playbackSnapshot` / `commands`，系统那边才看得到变化。
 //   * 释放 MediaSession 就是把这张卡从系统撤掉（Apple 文档：deinit 即移除），
 //     所以 `clear()` 只做「放掉引用」。
-//   * `requestToBecomeApplicationPrimary()` 是 async throws：失败只记一行日志、
-//     然后把路权交回旧接口（`onFailure`），不能让卡片直接消失。
+//   * 两层主会话申请都是 async throws：应用主会话失败就退回旧接口；系统主会话
+//     失败只记日志并保留已经可用的应用主会话，不能因为实验失败把卡片一起撤掉。
 //
 
 import Foundation
@@ -45,6 +45,9 @@ import Observation
 final class NowPlayingSessionPublisher: NowPlayingModernPublishing {
     /// 抢主会话失败时的退路，由 `NowPlayingCenter` 接上：它会用旧接口把这一集重写一遍。
     var onFailure: (@MainActor () -> Void)?
+    /// 主会话真拿到了：`NowPlayingCenter` 用它把退避计数归零，
+    /// 否则中途偶尔失败一次的旧账会一直算到这一场播完。
+    var onActive: (@MainActor () -> Void)?
 
     /// 会话 id 固定不变：同一次播放里换集只换 content，不换会话本身
     /// （换会话就要重新抢一次主会话，既慢又容易失败）。
@@ -128,8 +131,25 @@ final class NowPlayingSessionPublisher: NowPlayingModernPublishing {
             do {
                 try await session.requestToBecomeApplicationPrimary()
                 guard let self, !self.terminated else { return }
+
+                // `isApplicationPrimary` 只说明它赢了本 App 内的会话竞争。LP 的 27.0.1
+                // 已经实测这时点卡片仍无任何场景回调，所以继续申请系统主会话。
+                // SDK 没有 card-tap 回调，也没保证这一步会拉起 App；日志把两层状态
+                // 都打出来，真机才能判定「没申请上」还是「申请上也不管点击」。
+                if !session.isSystemPrimary {
+                    do {
+                        try await session.requestToBecomeSystemPrimary()
+                    } catch {
+                        guard !self.terminated else { return }
+                        KazumiLogBuffer.player(
+                            "正在播放（iOS 27）：申请系统主会话失败（\(error)），保留应用主会话"
+                        )
+                    }
+                }
+                guard !self.terminated else { return }
+                self.onActive?()
                 KazumiLogBuffer.player(
-                    "正在播放（iOS 27）：已是应用主会话（isApplicationPrimary=\(session.isApplicationPrimary)）"
+                    "正在播放（iOS 27）：主会话状态 application=\(session.isApplicationPrimary) system=\(session.isSystemPrimary)"
                 )
             } catch {
                 guard let self, !self.terminated else { return }
