@@ -21,16 +21,16 @@ options:
   xcodeVersion: "26.0"
   preGenCommand: |
     set -euo pipefail
-    cache=".build/Predidit-0.6.8"
+    cache=".build/media-kit-v0.7.3"
     if [ ! -f "$cache/.complete" ]; then
       mkdir -p .build
-      temp=$(mktemp -d .build/Predidit-0.6.8.XXXXXX)
+      temp=$(mktemp -d .build/media-kit-v0.7.3.XXXXXX)
       trap 'rm -rf "$temp"' EXIT
-      archive="libmpv-xcframeworks_0.6.8_ios-universal-video-default"
+      archive="libmpv-xcframeworks_v0.7.3_ios-universal-video-default"
       curl --fail --location --retry 3 \
-        "https://github.com/Predidit/libmpv-darwin-build/releases/download/0.6.8/$archive.tar.gz" \
+        "https://github.com/media-kit/libmpv-darwin-build/releases/download/v0.7.3/$archive.tar.gz" \
         --output "$temp/archive.tar.gz"
-      echo "d428641cc6c100de8234eae04e229966e46949eb73fcabd526a008a02e9bf968  $temp/archive.tar.gz" | shasum -a 256 -c -
+      echo "28b528c872ca0886f1a29e8c82eb25a89c0ba86c094f2bd013b4416ad3fceba8  $temp/archive.tar.gz" | shasum -a 256 -c -
       tar -xzf "$temp/archive.tar.gz" -C "$temp"
       for framework in Ass Avcodec Avfilter Avformat Avutil Dav1d Freetype Fribidi Harfbuzz Mbedcrypto Mbedtls Mbedx509 Mpv Png16 Swresample Swscale Uchardet Xml2; do
         test -f "$temp/$archive/$framework.xcframework/Info.plist"
@@ -202,24 +202,24 @@ targets:
     dependencies:
       # XHTML / XPath 解析（libxml2），对应原项目 xpath_selector 的职责。
       - package: Fuzi
-      - { framework: .build/Predidit-0.6.8/Mpv.xcframework, link: true, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Ass.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Avcodec.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Avfilter.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Avformat.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Avutil.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Dav1d.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Freetype.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Fribidi.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Harfbuzz.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Mbedcrypto.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Mbedtls.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Mbedx509.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Png16.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Swresample.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Swscale.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Uchardet.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/Predidit-0.6.8/Xml2.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Mpv.xcframework, link: true, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Ass.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Avcodec.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Avfilter.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Avformat.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Avutil.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Dav1d.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Freetype.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Fribidi.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Harfbuzz.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Mbedcrypto.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Mbedtls.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Mbedx509.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Png16.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Swresample.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Swscale.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Uchardet.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/media-kit-v0.7.3/Xml2.xcframework, link: false, embed: true, codeSign: true }
       # iOS 27 才有的 NowPlaying 框架（MediaSession / requestToBecomeApplicationPrimary）。
       # **必须弱链接**：强链接的话 iOS 26 的设备在 dyld 阶段就找不到符号、App 直接起不来。
       # 所有用法都包在 `if #available(iOS 27.0, *)` 里，见 Features/Player/NowPlayingSession27.swift。
@@ -240,7 +240,7 @@ targets:
         buildPhase: resources
     dependencies:
       - target: Runner
-      - { framework: .build/Predidit-0.6.8/Mpv.xcframework, embed: false }
+      - { framework: .build/media-kit-v0.7.3/Mpv.xcframework, embed: false }
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi.RunnerTests

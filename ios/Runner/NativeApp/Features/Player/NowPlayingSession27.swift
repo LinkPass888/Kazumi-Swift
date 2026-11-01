@@ -195,11 +195,12 @@ final class NowPlayingSessionPublisher: NowPlayingModernPublishing {
         }
     }
 
-    /// 进度 / 状态 / 速率。`rate` 的语义跟旧路径一致：播放中给真实倍速（卡住时为 0，
-    /// 系统就不会自己往前推），暂停给 0。
+    /// 进度 / 状态 / 速率。播放中给真实倍速，零速播放意图映射为缓冲，用户暂停仍为暂停。
     private static func makeSnapshot(_ payload: NowPlayingPublishPayload) -> MediaPlaybackSnapshot {
         let state: MediaPlaybackSnapshot.PlaybackState =
-            payload.isPlaying ? .playing(rate: Float(max(payload.rate, 0))) : .paused
+            payload.isPlaying
+                ? (payload.rate > 0 ? .playing(rate: Float(payload.rate)) : .buffering)
+                : .paused
         return MediaPlaybackSnapshot(
             state: state,
             elapsedTime: payload.elapsed,

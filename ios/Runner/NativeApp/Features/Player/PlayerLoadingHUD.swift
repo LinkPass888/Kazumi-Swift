@@ -13,13 +13,13 @@ import SwiftUI
 
 /// 圈 + 加载信息 + 网速。用在三处：解析地址、起播等第一帧、播放中途缓冲 / 拖进度。
 struct PlayerLoadingHUD: View {
-    /// 当前下载速度（字节/秒）。0 表示拿不到或者没在下载，这一行就不显示。
+    /// 当前下载速度（字节/秒）。0 表示拿不到或者没在下载。
     var bytesPerSecond: Double = 0
 
     /// 圈下面第一行：走到哪一步了（「正在解析播放地址…」）。nil 就不占位。
     var info: String? = nil
 
-    /// 网速那行要不要**一直占着位置**（拿不到速度时透明）。
+    /// 网速那行要不要一直显示（拿不到速度时显示横线）。
     /// 解析阶段还没有 mpv，速度永远是 0，占位只会把下面的字往下顶
     /// ——那里传 false，让「正在加载第 N 集」离底栏远一点。
     var reservesSpeedLine: Bool = true
@@ -40,15 +40,12 @@ struct PlayerLoadingHUD: View {
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.85))
             }
-            // 这一行**永远占着位置**，只是拿不到速度时透明（LP 4870：一开始有字时位置对，
-            // 字一没圈就往下掉到 1/4 线上）。圈是按整块的圆心摆在 1/4 的，少一行字整块
-            // 就矮一截、圆心跟着往下走，看起来就是「跳了一下」。
+            // 没有读数时保留横线，避免网速行消失和加载圈跳动。
             // 等宽数字：不然「9.8 MB/s」跳成「10.0 MB/s」时整行会左右抖一下。
             if reservesSpeedLine || speedText != nil {
-                Text(speedText ?? "0 KB/s")
+                Text(speedText ?? "— KB/s")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.75))
-                    .opacity(speedText == nil ? 0 : 1)
                     .animation(.easeOut(duration: 0.15), value: speedText)
             }
         }
