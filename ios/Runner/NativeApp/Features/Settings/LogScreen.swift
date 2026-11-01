@@ -76,9 +76,7 @@ struct LogScreen: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("复制全部") {
-                        UIPasteboard.general.string = filtered
-                            .map { $0.message }
-                            .joined(separator: "\n")
+                        UIPasteboard.general.string = KazumiLogExport.text(from: filtered)
                     }
                     Button("清空", role: .destructive) { isConfirmingClear = true }
                 } label: {

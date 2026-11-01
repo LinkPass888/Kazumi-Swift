@@ -36,7 +36,7 @@ struct EpisodeURLTests {
 }
 
 struct RestrictedJSONPathTests {
-    private let document = JSONValue.decode(
+    private let document = try! JSONValue.decode(
         #"{"data":{"list":[{"name":"A","url":"a"},{"name":"B","url":"b"}],"map":{"k":1}}}"#
     )
 
@@ -130,7 +130,10 @@ struct ApiRuleStrategyTests {
             request: ApiRequestConfig(url: "https://a.com"),
             format: .nested,
             episodeUrlPath: "",
-            episodePage: ApiEpisodePageConfig(url: "/play/@episodeUrl", query: ["road": .string("@roadNumber")])
+            episodePage: ApiEpisodePageConfig(json: .object([
+                "url": .string("/play/@episodeUrl"),
+                "query": .object(["road": .string("@roadNumber")])
+            ]))
         )
         let result = try strategy.parseChapters(raw, config: config, source: "x", baseUrl: "https://a.com")
         #expect(result.roads.first?.name == "高清")
@@ -228,9 +231,9 @@ struct PluginImportTests {
         #expect(result.failures.isEmpty)
     }
 
-    @Test("解析 kazumi:// 链接并可往返") func ruleLinkRoundTrip() {
+    @Test("解析 kazumi:// 链接并可往返") func ruleLinkRoundTrip() throws {
         let link = KazumiRuleLink.encode(json: ruleJSON)
-        #expect(KazumiRuleLink.decode(link) == ruleJSON)
+        #expect(try KazumiRuleLink.decode(link) == ruleJSON)
         let result = PluginImportParser.parse("看看这条规则 \(link) 谢谢")
         #expect(result.plugins.first?.name == "测试站")
     }
@@ -335,8 +338,17 @@ struct RuleEngineTests {
 
     @Test("空结果抛出 noResult") func noResult() async {
         let engine = RuleEngine(requestExecutor: StubExecutor(response: .success("<html></html>")))
-        await #expect(throws: RuleError.noResult(plugin: "站点")) {
+        do {
             _ = try await engine.search(makeConfig(), keyword: "x")
+            Issue.record("预期抛出 noResult")
+        } catch let error as RuleError {
+            guard case .noResult(let plugin) = error else {
+                Issue.record("抛出了错误的 RuleError")
+                return
+            }
+            #expect(plugin == "站点")
+        } catch {
+            Issue.record("抛出了非 RuleError")
         }
     }
 
@@ -359,8 +371,17 @@ struct RuleEngineTests {
         let config = RuleExecutionConfig(plugin: plugin)
         let failure = NetworkError.badResponse(status: 503, body: "<html>请完成验证</html>", headers: [:])
         let engine = RuleEngine(requestExecutor: StubExecutor(response: .failure(failure)))
-        await #expect(throws: RuleError.captchaRequired(plugin: "站点")) {
+        do {
             _ = try await engine.search(config, keyword: "x")
+            Issue.record("预期抛出 captchaRequired")
+        } catch let error as RuleError {
+            guard case .captchaRequired(let plugin) = error else {
+                Issue.record("抛出了错误的 RuleError")
+                return
+            }
+            #expect(plugin == "站点")
+        } catch {
+            Issue.record("抛出了非 RuleError")
         }
     }
 

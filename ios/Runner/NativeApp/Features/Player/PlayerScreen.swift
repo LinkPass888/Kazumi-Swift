@@ -238,6 +238,8 @@ struct PlayerScreen: View {
     var resumeRule: String?
 
     @State private var controller: PlayerController?
+    /// Diagnostic identity only; it does not participate in navigation or playback.
+    @State private var diagnosticPlayerID = String(UUID().uuidString.prefix(8)).lowercased()
     @State private var surface = PlayerSurfaceModel()
     /// 交给播放内核的代理（LP 5331：设置里手填的那个）。nil = 不走。
     /// 不现取：得在「开关或地址端口改了 / 回前台」时才重读一次。
@@ -373,14 +375,7 @@ struct PlayerScreen: View {
     /// 主题色分深浅两档，菜单跟着走（Colo 3344）。
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
-    /// 场景是不是在前台。
-    ///
-    /// 以前直接用 `@Environment(\.scenePhase)`。入口换成 UIKit 的
-    /// `@main KazumiAppDelegate` + `UIHostingController` 之后（4ef8aab5），
-    /// SwiftUI 那个环境值不再跟着真实场景走——LP 5563 的日志里切过后台，
-    /// 但 `[会话] 切到后台` 和 `mpv: 画面：后台渲染锁已上` 一行都没有，
-    /// 也就是 `handleBackground()` 根本没执行、后台渲染锁没上。
-    /// 改成自己听 UIScene 的通知，这个值就一定跟系统一致（Fuck 5583 核过）。
+    /// 由现有 UIScene 通知维护的播放策略标志；诊断另外读取实际 activationState。
     @State private var sceneIsActive = true
 
     /// 画面那一半（body 的前半截）。
@@ -437,6 +432,7 @@ struct PlayerScreen: View {
             GeometryReader { proxy in
                 Color.clear
                     .onAppear {
+                        logLifecycleSnapshot("onAppear")
                         containerSize = proxy.size
                         containerInsets = proxy.safeAreaInsets
                     }
@@ -602,20 +598,20 @@ struct PlayerScreen: View {
         // 熄屏 / 切出去继续出声（LP 清单「后台播放」，默认关）。
         // 具体做什么拆到下面两个方法里：这个闭包自己已经很长，再往里塞
         // 编译器的类型检查会超时（「unable to type-check in reasonable time」）。
-        // 前后台走 UIScene 的通知，不再用 `scenePhase`（原因见上面 sceneIsActive）。
-        // 两条通知表示「事件」，重复发也只是多一次幂等调用。
-        .onReceive(NotificationCenter.default.publisher(for: UIScene.didEnterBackgroundNotification)) { _ in
+        // 保留现有 UIScene 通知订阅和处理顺序。
+        // 回调标记仅表示收到通知，不表明其触发来源。
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.didEnterBackgroundNotification)) { notification in
             sceneIsActive = false
+            logLifecycleSnapshot("UIScene.didEnterBackgroundNotification.received", scene: notification.object as? UIScene)
             // 进后台 / 锁屏一律放弃常亮；回前台且还在播再重新判断。
             updateIdleTimer()
-            // 真机上「卡片为什么不出」只能靠这一行判：切后台那一刻把音频会话的
-            // 真实类别/选项和卡片字段数写进「播放」日志（设置 → 日志 → 播放）。
-            // 混音的会话不会被 iOS 当成正在播放，日志里有 mixWithOthers 就是它。
+            // 记录通知回调时的音频会话和卡片字段，不据此推断卡片点击结果。
             PlayerAudioSession.shared.logSnapshot("切到后台")
             handleBackground()
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { notification in
             sceneIsActive = true
+            logLifecycleSnapshot("UIScene.didActivateNotification.received", scene: notification.object as? UIScene)
             updateIdleTimer()
             handleForeground()
             // 回前台重新读一次代理：用户可能刚把代理工具打开/关掉。
@@ -710,7 +706,9 @@ struct PlayerScreen: View {
             }
         }
         .onDisappear {
-            // 离开播放器：控制中心不该再挂着这一集。
+            // A view lifecycle callback is not evidence of a deliberate return action.
+            logLifecycleSnapshot("onDisappear.beforeCardClear")
+            // 保留现有清理顺序。
             NowPlayingCenter.shared.clear()
             restoreAudioSessionAfterPlayer()
             // 离开播放器：屏幕常亮无论如何都要还回去，不能带出这个页面。
@@ -731,6 +729,17 @@ struct PlayerScreen: View {
             // 退出播放器时把观看记录并进云盘（原版 player_item.dart:375 也是这个时机）。
             syncHistoryIfNeeded()
         }
+    }
+
+    /// Read-only view state plus actual scene activation states, separate from sceneIsActive.
+    private func logLifecycleSnapshot(_ event: String, scene: UIScene? = nil, details: String = "") {
+        let state = "player=\(diagnosticPlayerID) controllerPresent=\(controller != nil)"
+            + " sceneIsActive=\(sceneIsActive) isPlaying=\(surface.isPlaying)"
+            + " corePaused=\(surface.corePaused) coreIdle=\(surface.coreIdle)"
+            + " isReady=\(surface.isReady) position=\(surface.currentTime) duration=\(surface.duration)"
+            + " pausedByBackground=\(pausedByBackground) fullscreen=\(isFullscreen)"
+        PlaybackLifecycleDiagnostics.log("PlayerScreen.\(event)", scene: scene,
+                                         details: details.isEmpty ? state : "\(state) \(details)")
     }
 
     /// 各种半屏页面的内容。抽成方法是因为原来这段 switch 直接写在 `.sheet` 里，
@@ -981,7 +990,9 @@ struct PlayerScreen: View {
         let next = settings.playerProxyURL
         guard next != proxyURL else { return }
         proxyURL = next
-        KazumiLogBuffer.player(next == nil ? "代理：不走代理，直连" : "代理：走 \(next!)")
+        KazumiLogBuffer.player(MPVDiagnostics.sanitize(
+            next == nil ? "代理：不走代理，直连" : "代理：走 \(next!)"
+        ))
     }
 
     /// 回前台：收回画中画、解开渲染锁、按设置自动续播。
@@ -997,9 +1008,7 @@ struct PlayerScreen: View {
             pausedByBackground = false
             if !surface.isPlaying { surface.play() }
         }
-        // 这行留着：真机上「回来停着不接着播」时，先看这条——
-        // 续播=否 就是「本来就不该续」（设置关了 / 用户自己暂停的），不是丢了。
-        KazumiLogBuffer.player("回前台：渲染锁已解，续播=\(shouldResume ? "是" : "否")")
+        logLifecycleSnapshot("handleForeground.completed", details: "shouldResume=\(shouldResume)")
     }
 
     // MARK: - 播放区
@@ -2068,6 +2077,7 @@ struct PlayerScreen: View {
     private func topBar(_ controller: PlayerController) -> some View {
         HStack(spacing: 8) {
             Button {
+                logLifecycleSnapshot("returnButton.tapped")
                 dismiss()
             } label: {
                 Image(systemName: "chevron.left")

@@ -162,7 +162,7 @@ final class MPVEngine {
         defer { EAGLContext.setCurrent(nil) }
 
         guard let mpv = mpv_create() else {
-            onLog?("mpv_create 失败")
+            log("mpv_create 失败")
             return
         }
         handle = mpv
@@ -180,11 +180,7 @@ final class MPVEngine {
         // 而它默认加的是 `mixWithOthers`——混音的会话不会被 iOS 当成「正在播放」，
         // 控制中心 / 锁屏那张卡就永远不出来。开了这个，它不再加 mixWithOthers。
         setOption("audio-exclusive", "yes")
-        // 模拟器没有硬解，强行开 videotoolbox 会黑屏（MPVKit demo 同样的判断）。
-        // 真机用 copy-back 这一档，不走零拷贝互操作：互操作一旦和硬解出来的
-        // 帧格式对不上（10bit、双平面），屏幕上的表现就是花屏、发绿发紫、
-        // 或者只剩红绿两色（LP 2026-10-28 第 1 条）。copy-back 多一次拷贝，
-        // 1080p 这点开销换来画面颜色一定是对的。
+        // 保持现有硬解策略：模拟器 no，真机按开关使用 auto-safe。
         setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled))
         // 逐帧交给我们的 GL 视图，不走独立窗口。渲染 API 在
         // `mpv_render_context_create` 里指定，不用再设 gpu-api（设了会被拒）。
@@ -211,16 +207,20 @@ final class MPVEngine {
 
         let initStatus = mpv_initialize(mpv)
         guard initStatus >= 0 else {
-            onLog?("mpv_initialize 失败：\(String(cString: mpv_error_string(initStatus)))")
+            log("mpv_initialize 失败：\(String(cString: mpv_error_string(initStatus)))")
             return
         }
 
-        // 把 mpv 自己的日志接过来：着色器编译失败、色彩空间、帧格式这些
-        // 只有它会说，不订阅就是纯瞎子。
-        // ffmpeg 这一路放开到 debug：它会把真实发出去的请求行和每一个头逐条打出来，
-        // 400 那种「本地能取、内核不行」只能靠这个看（Fuck 5523）。别的一律 warn，
-        // 免得日志被刷满。看一眼就把这行改回 "warn"。
-        mpv_request_log_messages(mpv, "warn,ffmpeg=debug,hwdec=v,gpu=v,vo=v")
+        // C API 只接受一个级别，不接受 msg-level 的分模块语法。
+        // v 收集解码 / 色彩 / 渲染；接收端白名单、脱敏、限流，不开 HTTP debug。
+        let logStatus = mpv_request_log_messages(mpv, "v")
+        if logStatus >= 0 {
+            log("内核日志订阅成功：级别=v rc=\(logStatus)")
+        } else {
+            log("内核日志订阅失败：级别=v rc=\(logStatus)（\(String(cString: mpv_error_string(logStatus)))）")
+        }
+        let clientVersion = mpv_client_api_version()
+        log("内核版本 \(stringProperty("mpv-version") ?? "未知") / 客户端 API \(clientVersion >> 16).\(clientVersion & 0xffff)")
 
         setupRenderContext(mpv)
         setupEvents(mpv)
@@ -249,10 +249,10 @@ final class MPVEngine {
             return mpv_render_context_create(&renderContext, mpv, &params)
         }
         guard created >= 0, let renderContext else {
-            onLog?("mpv 渲染上下文建不起来：\(String(cString: mpv_error_string(created)))")
+            log("mpv 渲染上下文建不起来：\(String(cString: mpv_error_string(created)))")
             return
         }
-        onLog?("GL \(glString(GL_RENDERER)) / \(glString(GL_VERSION))")
+        log("GL \(glString(GL_RENDERER)) / \(glString(GL_VERSION))")
         self.renderContext = renderContext
         mpv_render_context_set_update_callback(
             renderContext,
@@ -265,7 +265,7 @@ final class MPVEngine {
         let pump = MPVEventPump(mpv: mpv) { [weak self] snapshot in
             Task { @MainActor in self?.apply(snapshot) }
         } log: { [weak self] message in
-            Task { @MainActor in self?.onLog?(message) }
+            Task { @MainActor in self?.log(message) }
         }
         pump.onCommandReply = { [weak self] id, error, rawFrame in
             Task { @MainActor in
@@ -330,10 +330,6 @@ final class MPVEngine {
     /// 开关关掉就纯软解；开着用 `auto-safe`——与 main 一致（LP 5549/5551/5577：
     /// main 上一直是这一档，颜色正常）。
     ///
-    /// 之前直通（`px=videotoolbox`）发绿的根因不在这一档，在我们交给 mpv 的
-    /// `internal_format`：以前传 `GL_RGBA`，mpv 就按「目标就是这个格式」挑输出路径，
-    /// 硬解直通正好走那条路，色度平面被处理错。现在跟 main 一样传 0。
-    ///
     /// 模拟器没有硬解，开与关都是 `no`。
     static func hwdec(enabled: Bool) -> String {
         #if targetEnvironment(simulator)
@@ -353,7 +349,7 @@ final class MPVEngine {
     func setRenderingLocked(_ locked: Bool) {
         guard locked != renderingLocked else { return }
         renderingLocked = locked
-        onLog?(locked ? "画面：后台渲染锁已上" : "画面：后台渲染锁已解")
+        log(locked ? "画面：后台渲染锁已上" : "画面：后台渲染锁已解")
         if !locked {
             glView?.setNeedsDisplay()
         }
@@ -505,12 +501,12 @@ final class MPVEngine {
     func captureFrameToFile() async -> (url: URL?, note: String) {
         let raw = await captureRawFrame()
         if let url = raw.url { return (url, raw.note) }
-        onLog?(raw.note)
+        log(raw.note)
 
         // 原始帧那条不成再退一步：试 VO 出图（真机上以前一直失败，留着当第二选择）。
         let viaVO = await captureFrameViaVO()
         if let url = viaVO.url { return (url, viaVO.note) }
-        onLog?(viaVO.note)
+        log(viaVO.note)
         return (nil, "\(raw.note)；\(viaVO.note)")
     }
 
@@ -537,7 +533,7 @@ final class MPVEngine {
             ? "，片源 \(Int(lastSnapshot.videoWidth))×\(Int(lastSnapshot.videoHeight))"
             : ""
         let note = "截图成功（原始帧）：\(frame.width)×\(frame.height)\(sourceText)，\(frame.format)，\(Int(Date().timeIntervalSince(started) * 1000)) 毫秒"
-        onLog?(note)
+        log(note)
         return (path, note)
     }
 
@@ -579,7 +575,7 @@ final class MPVEngine {
                 }
             }
             if status < 0 {
-                onLog?("取帧命令下发失败：\(String(cString: mpv_error_string(status)))")
+                log("取帧命令下发失败：\(String(cString: mpv_error_string(status)))")
                 finishRawShot(id: id, frame: nil)
                 return
             }
@@ -605,13 +601,13 @@ final class MPVEngine {
         let result = await runAsyncCommand("screenshot-to-file", [path.path, "video"])
         guard result >= 0 else {
             let note = "截图失败：mpv 出图没成（video 标志，错误码 \(result)），共 \(Int(Date().timeIntervalSince(started) * 1000)) 毫秒"
-            onLog?(note)
+            log(note)
             return (nil, note)
         }
 
         guard FileManager.default.fileExists(atPath: path.path) else {
             let note = "截图失败：命令成了但文件没落盘（\(path.path)）"
-            onLog?(note)
+            log(note)
             return (nil, note)
         }
         let size = Self.pixelSize(of: path)
@@ -622,7 +618,7 @@ final class MPVEngine {
             ? "，片源 \(Int(lastSnapshot.videoWidth))×\(Int(lastSnapshot.videoHeight))"
             : ""
         let note = "截图成功：\(sizeText)\(sourceText)，\(Int(Date().timeIntervalSince(started) * 1000)) 毫秒"
-        onLog?(note)
+        log(note)
         return (path, note)
     }
 
@@ -672,6 +668,12 @@ final class MPVEngine {
 
     // MARK: - 小工具
 
+    /// 包括属性、命令和代理提示在内，交给上层前统一脱敏。
+    private func log(_ message: String) {
+        let safe = MPVDiagnostics.sanitize(message)
+        if !safe.isEmpty { onLog?(safe) }
+    }
+
     /// 代理地址（LP 5331：设置里手填的那个）。`nil` 表示不走代理，把选项清掉。
     ///
     /// libmpv 不认 iOS 的系统代理（App 也拿不到代理软件在 HTTP 模式下的端口），
@@ -682,10 +684,10 @@ final class MPVEngine {
         let value = url ?? ""
         let status = mpv_set_property_string(handle, "http-proxy", value)
         if status < 0 {
-            onLog?("设属性 http-proxy 失败：\(String(cString: mpv_error_string(status)))")
+            log("设属性 http-proxy 失败：\(String(cString: mpv_error_string(status)))")
             return
         }
-        onLog?(url == nil ? "代理：不走代理" : "代理：走 \(url!)")
+        log(url == nil ? "代理：不走代理" : "代理：走 \(url!)")
     }
 
     /// 播放中改的选项（画面填充方式这类）：走属性，当场生效。
@@ -693,14 +695,14 @@ final class MPVEngine {
         guard let handle else { return }
         let status = mpv_set_property_string(handle, name, value)
         if status < 0 {
-            onLog?("设属性 \(name) 失败：\(String(cString: mpv_error_string(status)))")
+            log("设属性 \(name) 失败：\(String(cString: mpv_error_string(status)))")
         }
     }
 
     private func setOption(_ name: String, _ value: String) {
         let status = mpv_set_option_string(handle, name, value)
         if status < 0 {
-            onLog?("设选项 \(name) 失败：\(String(cString: mpv_error_string(status)))")
+            log("设选项 \(name) 失败：\(String(cString: mpv_error_string(status)))")
         }
     }
 
@@ -732,7 +734,7 @@ final class MPVEngine {
             pointers.append(nil)
             let status = mpv_command_async(handle, id, &pointers)
             if status < 0 {
-                onLog?("命令 \(name) 异步下发失败：\(String(cString: mpv_error_string(status)))")
+                log("命令 \(name) 异步下发失败：\(String(cString: mpv_error_string(status)))")
                 finishCommand(id: id, error: status)
                 return
             }
@@ -786,7 +788,7 @@ final class MPVEngine {
         }
         let status = mpv_command(handle, &cargs)
         if status < 0 {
-            onLog?("命令 \(name) 失败：\(String(cString: mpv_error_string(status)))")
+            log("命令 \(name) 失败：\(String(cString: mpv_error_string(status)))")
         }
     }
 
@@ -858,7 +860,7 @@ final class MPVEngine {
         let geometry = "fbo \(viewport[2])×\(viewport[3]) drawable \(view.drawableWidth)×\(view.drawableHeight) bounds \(Int(view.bounds.width))×\(Int(view.bounds.height))@\(view.contentScaleFactor)"
         guard geometry != lastGeometry else { return }
         lastGeometry = geometry
-        onLog?("画面尺寸 \(geometry)")
+        log("画面尺寸 \(geometry)")
     }
 
     private func glString(_ name: Int32) -> String {
@@ -909,8 +911,10 @@ final class MPVEventPump: @unchecked Sendable {
     private var ticker: DispatchSourceTimer?
     /// 最近一次加载失败的原因；成功起播后清掉。
     private var lastError: String?
-    /// 内核最后一条 error / fatal 级日志的原文，报错提示拼原因用。
+    /// 只保存已脱敏的 error / fatal 摘要，报错提示也不能携带凭据。
     private var lastCoreErrorText: String?
+    private var diagnostics = MPVDiagnostics()
+    private var awaitingStartFile = false
     /// 这一集的格式参数只记一次。
     private var loggedVideoInfo = false
     /// 这次加载走到哪一步（LP 4818）。只在事件泵自己的队列上读写。
@@ -933,7 +937,7 @@ final class MPVEventPump: @unchecked Sendable {
         for name in ["time-pos", "duration", "pause", "eof-reached", "core-idle", "video-params"] {
             let status = mpv_observe_property(mpv, 0, name, MPV_FORMAT_NONE)
             if status < 0 {
-                onLog("observe \(name) 失败：\(String(cString: mpv_error_string(status)))")
+                log("observe \(name) 失败：\(String(cString: mpv_error_string(status)))")
             }
         }
         mpv_set_wakeup_callback(
@@ -973,6 +977,10 @@ final class MPVEventPump: @unchecked Sendable {
             guard let self else { return }
             self.loadPhase = .opening
             self.firstFrameRendered = false
+            self.loggedVideoInfo = false
+            self.lastCoreErrorText = nil
+            self.diagnostics.resetPlayback()
+            self.awaitingStartFile = true
         }
     }
 
@@ -1002,6 +1010,11 @@ final class MPVEventPump: @unchecked Sendable {
                 // 开始打开文件：圈从现在开始转（LP 4818 第 2 条）。
                 loadPhase = .opening
                 firstFrameRendered = false
+                loggedVideoInfo = false
+                lastCoreErrorText = nil
+                // beginLoad 已重置过就不再给一份配额；内核自行换文件仍需重置。
+                if !awaitingStartFile { diagnostics.resetPlayback() }
+                awaitingStartFile = false
             }
             if id == MPV_EVENT_FILE_LOADED {
                 // 文件打开了不等于有画面：不在这儿收圈，往后推到「等首帧」
@@ -1022,9 +1035,9 @@ final class MPVEventPump: @unchecked Sendable {
                     let message = String(cString: mpv_error_string(endFile.pointee.error))
                     // 画面上那行内核日志已经拿掉了（LP 4810），所以这里必须给一句人话：
                     // 内核报的是英文（`Failed to open ...`），翻成用户看得懂的原因。
-                    // 原文照旧进日志，排查时还要靠它。
+                    // 日志与错误详情都只用脱敏后的文本。
                     lastError = PlayerErrorMessage.friendly(core: message, detail: lastCoreErrorText)
-                    onLog("end-file 错误：\(message)\(lastCoreErrorText.map { " / \($0)" } ?? "")")
+                    log("end-file 错误：\(message)\(lastCoreErrorText.map { " / \($0)" } ?? "")")
                 }
             }
             if id == MPV_EVENT_LOG_MESSAGE, let raw = event.pointee.data {
@@ -1034,12 +1047,11 @@ final class MPVEventPump: @unchecked Sendable {
                 let text = String(cString: message.pointee.text)
                 let prefix = String(cString: message.pointee.prefix)
                 let level = String(cString: message.pointee.level)
-                onLog("[\(prefix)] \(text)")
-                // 留一条 error / fatal 级的原文：内核真正的原因（域名解析不了、
-                // 403、解码器起不来）往往只在日志里说，end-file 那条只有一句
-                // `Failed to open`。报错提示要拼上它才说得准。
-                if level == "error" || level == "fatal" {
-                    lastCoreErrorText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let diagnostic = diagnostics.receive(prefix: prefix, level: level, text: text)
+                if let receipt = diagnostic.receipt { log(receipt) }
+                if let line = diagnostic.line { log(line) }
+                if let errorText = diagnostic.errorText {
+                    lastCoreErrorText = errorText
                 }
             }
             if id == MPV_EVENT_COMMAND_REPLY {
@@ -1077,12 +1089,17 @@ final class MPVEventPump: @unchecked Sendable {
             let line = videoInfoLine()
             if !line.hasSuffix("px=? 矩阵=? 原色=? 伽马=? 位深=? hwdec=?") {
                 loggedVideoInfo = true
-                onLog("片源 \(line)")
+                log("片源 \(line)")
             }
         }
         snap.loadError = lastError
         snap.loadPhase = loadPhase
         onSnapshot(snap)
+    }
+
+    private func log(_ message: String) {
+        let safe = MPVDiagnostics.sanitize(message)
+        if !safe.isEmpty { onLog(safe) }
     }
 
     private func videoInfoLine() -> String {

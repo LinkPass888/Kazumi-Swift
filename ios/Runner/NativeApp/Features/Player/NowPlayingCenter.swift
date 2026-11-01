@@ -258,13 +258,17 @@ final class NowPlayingCenter {
         }
     }
 
-    /// 退出播放器、播完、出错时调用。
+    /// 清空正在播放卡片与回调；调用本身不表明退出原因。
     func clear() {
+        PlaybackLifecycleDiagnostics.log(
+            "NowPlayingCenter.clear",
+            details: "cardClear=invoked writes=\(writeCount) skips=\(skipCount)"
+        )
         info = nil
         lastRate = 0
         lastElapsed = 0
         lastState = .stopped
-        // 一次都没轮询过就不记（开了播放页立刻退出的情况，没必要留一行 0/0）。
+        // 保留原有同步统计；上面的卡片清理标记也记录 0/0。
         if writeCount > 0 || skipCount > 0 { logSyncSummary() }
         writeCount = 0
         skipCount = 0

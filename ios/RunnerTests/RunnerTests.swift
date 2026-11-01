@@ -5,6 +5,7 @@
 //  原生工程冒烟测试：验证包信息与内置资源（Anime4K 着色器）确实打进了 Bundle。
 //
 
+import Foundation
 import Testing
 @testable import Runner
 

@@ -66,6 +66,28 @@ final class KazumiLogBuffer: Sendable {
     }
 }
 
+/// Pure text export of a chronological snapshot (or a category-filtered snapshot).
+/// Build one formatter per export, shared by all entries, without mutable global state.
+enum KazumiLogExport {
+    static func text(from entries: [KazumiLogBuffer.Entry], timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS Z"
+
+        // Keep snapshot order, including entries with equal timestamps. Prefix every
+        // physical line, including blank lines, so multiline messages remain traceable.
+        return entries.flatMap { entry in
+            let prefix = "[\(formatter.string(from: entry.timestamp))] "
+            return entry.message
+                .replacingOccurrences(of: "\r\n", with: "\n")
+                .components(separatedBy: .newlines)
+                .map { prefix + $0 }
+        }.joined(separator: "\n")
+    }
+}
+
 extension KazumiLogBuffer {
     /// 记录规则检索结果（与 os.Logger 的输出并行写入缓冲）。
     static func plugin(_ message: String) {
