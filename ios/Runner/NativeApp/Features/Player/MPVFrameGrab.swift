@@ -16,7 +16,7 @@
 
 import CoreGraphics
 import Foundation
-import Libmpv
+import Mpv
 
 /// 一块从 mpv 取回来的原始帧。
 struct MPVRawFrame: Sendable {

@@ -1,5 +1,5 @@
 import Foundation
-import Libmpv
+import Mpv
 import Testing
 
 /// Exercises the actual linked libmpv without media, render contexts or network access.

@@ -19,6 +19,26 @@ options:
   generateEmptyDirectories: false
   groupSortPosition: top
   xcodeVersion: "26.0"
+  preGenCommand: |
+    set -euo pipefail
+    cache=".build/Predidit-0.6.8"
+    if [ ! -f "$cache/.complete" ]; then
+      mkdir -p .build
+      temp=$(mktemp -d .build/Predidit-0.6.8.XXXXXX)
+      trap 'rm -rf "$temp"' EXIT
+      archive="libmpv-xcframeworks_0.6.8_ios-universal-video-default"
+      curl --fail --location --retry 3 \
+        "https://github.com/Predidit/libmpv-darwin-build/releases/download/0.6.8/$archive.tar.gz" \
+        --output "$temp/archive.tar.gz"
+      echo "d428641cc6c100de8234eae04e229966e46949eb73fcabd526a008a02e9bf968  $temp/archive.tar.gz" | shasum -a 256 -c -
+      tar -xzf "$temp/archive.tar.gz" -C "$temp"
+      for framework in Ass Avcodec Avfilter Avformat Avutil Dav1d Freetype Fribidi Harfbuzz Mbedcrypto Mbedtls Mbedx509 Mpv Png16 Swresample Swscale Uchardet Xml2; do
+        test -f "$temp/$archive/$framework.xcframework/Info.plist"
+      done
+      touch "$temp/$archive/.complete"
+      rm -rf "$cache"
+      mv "$temp/$archive" "$cache"
+    fi
 
 settings:
   base:
@@ -31,18 +51,13 @@ settings:
     CLANG_ENABLE_OBJC_ARC: YES
     GCC_C_LANGUAGE_STANDARD: gnu17
     ENABLE_BITCODE: NO
-    # mpv / FFmpeg 静态库体积较大，保留完整的调试符号映射。
+    # mpv / FFmpeg 库体积较大，保留完整的调试符号映射。
     DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
 
 packages:
   Fuzi:
     url: https://github.com/cezheng/Fuzi.git
     from: 3.1.3
-  # 播放内核（LP 3671–3673）：mpv，只有 C 接口，Swift 那层在 Features/Player/MPV*。
-  # 用 GPL 那条产品：Kazumi 本体就是 GPL-3.0，多出来的 samba 支持用不上但不冲突。
-  MPVKit:
-    url: https://github.com/mpvkit/MPVKit.git
-    exactVersion: 1.1.0-n9.0.2
 
 targets:
   Runner:
@@ -187,10 +202,24 @@ targets:
     dependencies:
       # XHTML / XPath 解析（libxml2），对应原项目 xpath_selector 的职责。
       - package: Fuzi
-      # 播放内核 mpv。只取 LGPL 那条产品（`MPVKit`）：GPL 那条多了 samba，
-      # 本项目用不到，License 也更简单。
-      - package: MPVKit
-        product: MPVKit
+      - { framework: .build/Predidit-0.6.8/Mpv.xcframework, link: true, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Ass.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Avcodec.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Avfilter.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Avformat.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Avutil.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Dav1d.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Freetype.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Fribidi.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Harfbuzz.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Mbedcrypto.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Mbedtls.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Mbedx509.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Png16.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Swresample.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Swscale.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Uchardet.xcframework, link: false, embed: true, codeSign: true }
+      - { framework: .build/Predidit-0.6.8/Xml2.xcframework, link: false, embed: true, codeSign: true }
       # iOS 27 才有的 NowPlaying 框架（MediaSession / requestToBecomeApplicationPrimary）。
       # **必须弱链接**：强链接的话 iOS 26 的设备在 dyld 阶段就找不到符号、App 直接起不来。
       # 所有用法都包在 `if #available(iOS 27.0, *)` 里，见 Features/Player/NowPlayingSession27.swift。
@@ -203,8 +232,15 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: RunnerTests
+        excludes:
+          - Fixtures
+          - Fixtures/**
+      - path: RunnerTests/Fixtures
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Runner
+      - { framework: .build/Predidit-0.6.8/Mpv.xcframework, embed: false }
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi.RunnerTests

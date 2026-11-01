@@ -2,9 +2,9 @@
 //  MPVEngine.swift
 //  Kazumi
 //
-//  mpv 内核（LP 3671–3673：放弃 KSPlayer，换 MPVKit + Anime4K）。
+//  mpv 内核 + Anime4K。
 //
-//  MPVKit 只给 libmpv 的 C 接口，这一层是给它套的 Swift 壳：
+//  libmpv 的 C 接口，这一层是给它套的 Swift 壳：
 //   * 建 mpv 句柄、设选项、按集 loadfile；
 //   * 建 OpenGL ES 渲染上下文（GLSL 着色器只认这条渲染路径，Metal 那条不认，
 //     而且 mpv 的 Metal 是补丁版）；
@@ -19,7 +19,7 @@ import CoreVideo
 import Foundation
 import GLKit
 import ImageIO
-import Libmpv
+import Mpv
 import OpenGLES
 import UIKit
 

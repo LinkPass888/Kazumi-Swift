@@ -21,7 +21,7 @@ import AVFoundation
 import AVKit
 import CoreMedia
 import CoreVideo
-import Libmpv
+import Mpv
 import OpenGLES
 import QuartzCore
 import UIKit
