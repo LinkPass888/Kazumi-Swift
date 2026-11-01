@@ -417,8 +417,11 @@ final class MPVGLView: GLKView {
         // 后台锁着就什么都不画：连 glClear 也不做——iOS 在后台不给 OpenGL ES 用
         // （LP 4978 第 2 条）。
         guard let engine, !engine.renderingLocked else { return }
+        // 分两步排空，把「谁抛的错」分开（见 MPVEngine.drainStaleGLErrors）。
+        engine.drainStaleGLErrors("帧首，上一帧内核渲染的残留")
         glClearColor(0, 0, 0, 1)
         glClear(UInt32(GL_COLOR_BUFFER_BIT))
+        engine.drainStaleGLErrors("我们 glClear 之后")
         engine.render(in: self)
     }
 }

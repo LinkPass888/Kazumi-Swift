@@ -191,6 +191,11 @@ targets:
       # 本项目用不到，License 也更简单。
       - package: MPVKit
         product: MPVKit
+      # iOS 27 才有的 NowPlaying 框架（MediaSession / requestToBecomeApplicationPrimary）。
+      # **必须弱链接**：强链接的话 iOS 26 的设备在 dyld 阶段就找不到符号、App 直接起不来。
+      # 所有用法都包在 `if #available(iOS 27.0, *)` 里，见 Features/Player/NowPlayingSession27.swift。
+      - sdk: NowPlaying.framework
+        weak: true
 
   RunnerTests:
     type: bundle.unit-test

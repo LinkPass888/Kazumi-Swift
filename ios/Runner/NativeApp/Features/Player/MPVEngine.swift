@@ -351,7 +351,40 @@ final class MPVEngine {
         renderingLocked = locked
         log(locked ? "画面：后台渲染锁已上" : "画面：后台渲染锁已解")
         if !locked {
+            // 回前台这一刻是偏色/报错最爱复发的时机，重新武装一轮排空。
+            armGLErrorDrain()
             glView?.setNeedsDisplay()
+        }
+    }
+
+    // MARK: - GL 错误定位（诊断）
+
+    /// 排空 GL 错误的预算（帧数）。只在前几帧和回前台那几帧做，
+    /// 不长期挂在一帧一次的 glGetError 同步上。
+    private var glErrorDrainFrames = 0
+
+    /// 重新武装一轮排空。起播、尺寸变化、回前台时各叫一次。
+    func armGLErrorDrain(_ frames: Int = 90) {
+        glErrorDrainFrames = max(glErrorDrainFrames, frames)
+    }
+
+    /// 把当前挂着的 GL 错误读出来并清掉，同时说清是在哪一步读到的。
+    ///
+    /// 为什么要分步：GL 错误是粘性的，没被读走就一直挂着。内核那句
+    /// `error after creating texture: OpenGL error INVALID_ENUM` 是它的通用检查点，
+    /// 只能说明「内核在这一步读到了一次错」，不能说明错是它自己犯的。
+    /// 在「帧首」「我们 glClear 之后」各读一次，就能把这个错分成三种：
+    ///   帧首就有 → 上一帧内核抛出、但它后面没有检查点；
+    ///   glClear 之后才有 → 我们自己（或 GLKView）的调用；
+    ///   两处都干净、内核还报 → 错就在内核这一帧的渲染里。
+    func drainStaleGLErrors(_ stage: String) {
+        guard glErrorDrainFrames > 0 else { return }
+        var drained = 0
+        while drained < 8 {
+            let error = glGetError()
+            if error == GLenum(GL_NO_ERROR) { break }
+            drained += 1
+            log("GL 排空：\(stage)读到错误 0x\(String(error, radix: 16))，已清")
         }
     }
 
@@ -427,9 +460,22 @@ final class MPVEngine {
 
     /// mpv 现在真正挂着的着色器个数（读 `glsl-shaders` 属性本身，不是我们打算挂几个）。
     /// 「播放信息」里那一行用它，才能分清「没挂上」和「挂了但看不出」。
+    ///
+    /// 按节点数组数，不按逗号切字符串：列表属性用字符串取回来时的拼接方式取决于
+    /// mpv 的打印实现，拿它当分隔符数个数是在猜。
     func appliedShaderCount() -> Int {
-        guard let text = stringProperty("glsl-shaders") else { return 0 }
-        return text.split(separator: ",").filter { !$0.isEmpty }.count
+        guard let handle else { return 0 }
+        var node = mpv_node()
+        guard mpv_get_property(handle, "glsl-shaders", MPV_FORMAT_NODE, &node) >= 0 else { return 0 }
+        defer { mpv_free_node_contents(&node) }
+        if node.format == MPV_FORMAT_NODE_ARRAY, let list = node.u.list {
+            return Int(list.pointee.num)
+        }
+        // 退路：真拿成字符串了，就按逗号数（着色器路径里不会有逗号）。
+        if node.format == MPV_FORMAT_STRING, let text = node.u.string {
+            return String(cString: text).split(separator: ",").filter { !$0.isEmpty }.count
+        }
+        return 0
     }
 
     /// 读一个字符串属性。mpv 分配的那块内存必须还回去，否则每开一次信息页漏一点。
@@ -474,10 +520,14 @@ final class MPVEngine {
 
     /// 挂上一整串 Anime4K 着色器，顺序就是数组顺序（照 main 的管线）。
     func setShaders(_ paths: [String]) {
-        if paths.isEmpty {
-            command("change-list", ["glsl-shaders", "clr", ""])
-        } else {
-            command("change-list", ["glsl-shaders", "set", paths.joined(separator: ",")])
+        // 以前这里是 `set` 一整串逗号拼接的路径。mpv 不会把那个逗号当列表分隔符，
+        // 它把整串当成**一个**文件名去打开——真机日志里就是 6 个路径连在一起报
+        // 「Cannot open file …a.glsl,…b.glsl,…」，等于一个着色器都没挂上。
+        // change-list 的语义就是「改这个列表」，所以先清空，再逐个 append：
+        // 一个文件一条记录，顺序就是数组顺序（照 main 的管线）。
+        command("change-list", ["glsl-shaders", "clr", ""])
+        for path in paths {
+            command("change-list", ["glsl-shaders", "append", path])
         }
     }
 
@@ -796,6 +846,7 @@ final class MPVEngine {
     func render(in view: GLKView) {
         // 后台一律不碰 GL（LP 4978 第 2 条）。
         guard let renderContext, !renderingLocked else { return }
+        if glErrorDrainFrames > 0 { glErrorDrainFrames -= 1 }
         var fbo: GLint = 0
         glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &fbo)
         var viewport = [GLint](repeating: 0, count: 4)
@@ -861,6 +912,8 @@ final class MPVEngine {
         guard geometry != lastGeometry else { return }
         lastGeometry = geometry
         log("画面尺寸 \(geometry)")
+        // 尺寸变了＝重新配了一次渲染目标（起播、转屏、回前台），这几帧最容易复发。
+        armGLErrorDrain()
     }
 
     private func glString(_ name: Int32) -> String {
