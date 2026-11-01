@@ -68,6 +68,36 @@ protocol NowPlayingModernPublishing: AnyObject {
 final class NowPlayingCenter {
     static let shared = NowPlayingCenter()
 
+    /// 场景启动、音频会话和发布器共用同一判据：SDK 与运行系统都支持才走新路。
+    static var modernSupported: Bool {
+        #if canImport(NowPlaying)
+        if #available(iOS 27.0, *) { return true }
+        #endif
+        return false
+    }
+
+    private enum PublishingPath { case idle, modern, legacy }
+    private var publishingPath: PublishingPath = .idle
+
+    var usesLegacyRemoteControls: Bool {
+        publishingPath == .legacy || (publishingPath == .idle && !Self.modernSupported)
+    }
+
+    /// 现代路径只报告本地发布状态，不借旧单例猜测 MediaSession 是否已成为主会话。
+    var diagnosticSummary: String {
+        switch publishingPath {
+        case .idle:
+            return "NowPlaying=idle preferred=\(Self.modernSupported ? "modern" : "legacy")"
+        case .modern:
+            return "NowPlaying=modern publisher=\(modernPublisher != nil)"
+                + " localPublished=\(lastSyncSnapshot != nil) playing=\(commands.isPlaying) rate=\(lastRate)"
+        case .legacy:
+            let center = MPNowPlayingInfoCenter.default()
+            return "NowPlaying=legacy 卡片字段=\(center.nowPlayingInfo?.count ?? 0)"
+                + " 状态=\(center.playbackState.rawValue)"
+        }
+    }
+
     /// 控制中心那几颗按钮按下去要做什么，由播放页面接上。
     /// 没接就是空实现——显示出来点不动比不显示更难看，所以一进来就接好。
     /// 真正的存放处在 commands 盒子里：注册给系统的闭包只读盒子，不碰主线程状态。
@@ -131,7 +161,7 @@ final class NowPlayingCenter {
     private var artworkRecency: [String] = []
     private static let artworkCacheLimit = 8
 
-    /// iOS 27+ 的新发布器。nil = 走旧接口（iOS 26 永远走旧接口）。
+    /// iOS 27+ 的新发布器；尚未发布时也可能为 nil，路径由 publishingPath 决定。
     /// 类型是协议而不是具体类，具体类整个带 `@available(iOS 27.0, *)`。
     private var modernPublisher: (any NowPlayingModernPublishing)?
     /// 新接口这一次失败过：到点之前先走旧接口，但**不是永远不试**。
@@ -144,7 +174,7 @@ final class NowPlayingCenter {
     private var modernFailureCount = 0
     private static let modernRetryDelay: TimeInterval = 12
     private static let modernMaxFailures = 8
-    private var commandsConfigured = false
+    private var legacyCommandTargets: [(command: MPRemoteCommand, token: Any)] = []
     private var lastRate: Double = 0
     private var lastElapsed: Double = 0
     private var lastState: MPNowPlayingPlaybackState = .stopped
@@ -177,11 +207,48 @@ final class NowPlayingCenter {
 
     // MARK: - 遥控指令
 
-    /// 接一次就够了。幂等：重复调用不会重复注册。
+    /// 幂等；现代路径（包括第一次发布前）不注册旧命令。
     func configureRemoteCommands() {
-        guard !commandsConfigured else { return }
-        commandsConfigured = true
+        guard usesLegacyRemoteControls else { return }
+        switchPublishingPath(to: .legacy)
+    }
 
+    /// 先完整清理旧所有者，再创建下一条路径，不能同时保留两套控制。
+    private func switchPublishingPath(to next: PublishingPath) {
+        guard publishingPath != next else { return }
+        switch publishingPath {
+        case .modern:
+            // 先断回调再 clear，旧发布器的迟到通知不能把新路径切回去。
+            modernPublisher?.onFailure = nil
+            modernPublisher?.onActive = nil
+            modernPublisher?.clear()
+            modernPublisher = nil
+        case .legacy:
+            clearLegacyPublisher()
+        case .idle:
+            break
+        }
+        publishingPath = next
+        switch next {
+        case .modern:
+            if #available(iOS 27.0, *) {
+                modernPublisher = makeModernPublisher()
+            }
+        case .legacy:
+            configureLegacyCommands()
+            if let info {
+                setLegacyCommandAvailability(
+                    next: info.episodeCount > 0 ? info.episode < info.episodeCount : nil,
+                    previous: info.episodeCount > 0 ? info.episode > 1 : nil
+                )
+            }
+        case .idle:
+            break
+        }
+    }
+
+    private func configureLegacyCommands() {
+        guard legacyCommandTargets.isEmpty else { return }
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.isEnabled = true
         center.pauseCommand.isEnabled = true
@@ -198,32 +265,49 @@ final class NowPlayingCenter {
         center.seekForwardCommand.isEnabled = false
         center.seekBackwardCommand.isEnabled = false
 
-        Self.registerCommandHandlers(commands)
-        // iOS 27+ 另有一条新接口（见 NowPlayingSession27.swift），但这套 target **不拆**：
-        // 新接口抢到主会话后旧接口这边没有 nowPlayingInfo、本来就没卡片可挂；
-        // 而新接口一旦失败要立刻退回这套（`fallBackToLegacyPublisher`），拆了就得重建。
-        // 反过来把旧接口先关掉的风险更大：控制中心那几颗键现在是好使的。
+        legacyCommandTargets = Self.registerCommandHandlers(commands, center: center)
+    }
+
+    private func setLegacyCommandAvailability(next: Bool?, previous: Bool?) {
+        let center = MPRemoteCommandCenter.shared()
+        if let next { center.nextTrackCommand.isEnabled = next }
+        if let previous { center.previousTrackCommand.isEnabled = previous }
+    }
+
+    private func clearLegacyPublisher() {
+        // 只移除自己注册的 token，不用 removeTarget(nil) 影响其它使用者。
+        for target in legacyCommandTargets {
+            target.command.removeTarget(target.token)
+            target.command.isEnabled = false
+        }
+        legacyCommandTargets.removeAll()
+        let center = MPNowPlayingInfoCenter.default()
+        center.nowPlayingInfo = nil
+        center.playbackState = .stopped
+        lastState = .stopped
+        PlayerAudioSession.endRemoteControlEventsIfNeeded()
     }
 
     /// 故意 nonisolated：闭包在这个上下文里形成，才不继承主线程隔离。
     /// 系统在自己的队列上回调它们，哪怕闭包体自己再跳回主线程也没用——
     /// 隔离检查就压在闭包入口那一帧（真机报告里就是这么死的）。
-    private nonisolated static func registerCommandHandlers(_ box: CommandBox) {
-        let center = MPRemoteCommandCenter.shared()
-
-        center.playCommand.addTarget { _ in
+    private nonisolated static func registerCommandHandlers(
+        _ box: CommandBox,
+        center: MPRemoteCommandCenter
+    ) -> [(command: MPRemoteCommand, token: Any)] {
+        let play = center.playCommand.addTarget { _ in
             guard box.onPlay != nil else { return .commandFailed }
             Task { @MainActor in box.onPlay?() }
             return .success
         }
 
-        center.pauseCommand.addTarget { _ in
+        let pause = center.pauseCommand.addTarget { _ in
             guard box.onPause != nil else { return .commandFailed }
             Task { @MainActor in box.onPause?() }
             return .success
         }
 
-        center.togglePlayPauseCommand.addTarget { _ in
+        let toggle = center.togglePlayPauseCommand.addTarget { _ in
             guard box.onPlay != nil || box.onPause != nil else { return .commandFailed }
             Task { @MainActor in
                 if box.isPlaying { box.onPause?() } else { box.onPlay?() }
@@ -238,7 +322,7 @@ final class NowPlayingCenter {
         //   - 什么都没有 → 系统根本没投递（就不是这段代码的问题）
         //   - 「收到下一集」但没有下一行 → 回调没接上
         //   - 「没有下一集」 → 集数/边界判据挡了
-        center.nextTrackCommand.addTarget { _ in
+        let next = center.nextTrackCommand.addTarget { _ in
             KazumiLogBuffer.player("遥控：收到下一集")
             guard box.onNext != nil else {
                 KazumiLogBuffer.player("遥控：下一集没有回调（播放页没接上）")
@@ -248,7 +332,7 @@ final class NowPlayingCenter {
             return .success
         }
 
-        center.previousTrackCommand.addTarget { _ in
+        let previous = center.previousTrackCommand.addTarget { _ in
             KazumiLogBuffer.player("遥控：收到上一集")
             guard box.onPrevious != nil else {
                 KazumiLogBuffer.player("遥控：上一集没有回调（播放页没接上）")
@@ -259,7 +343,7 @@ final class NowPlayingCenter {
         }
 
         // 锁屏那条进度条可以拖。
-        center.changePlaybackPositionCommand.addTarget { event in
+        let seek = center.changePlaybackPositionCommand.addTarget { event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent,
                   box.onSeek != nil
             else { return .commandFailed }
@@ -267,6 +351,14 @@ final class NowPlayingCenter {
             Task { @MainActor in box.onSeek?(target) }
             return .success
         }
+        return [
+            (center.playCommand, play),
+            (center.pauseCommand, pause),
+            (center.togglePlayPauseCommand, toggle),
+            (center.nextTrackCommand, next),
+            (center.previousTrackCommand, previous),
+            (center.changePlaybackPositionCommand, seek),
+        ]
     }
 
     // MARK: - 更新
@@ -305,22 +397,13 @@ final class NowPlayingCenter {
         let isNewItem = info != next
         info = next
 
-        // 上一集 / 下一集到两端要灰掉（LP 5060）：main 那边由 audio_service 按队列位置
-        // 置灰，我们这边一直写死 `isEnabled = true`，所以第一集会点着「上一集」没反应。
-        // 只拿 `episodeCount` 判：集列表还没拉回来（0）时不动，免得加载那两秒两颗键先灰一下。
-        if episodeCount > 0 {
-            let center = MPRemoteCommandCenter.shared()
-            center.previousTrackCommand.isEnabled = episode > 1
-            center.nextTrackCommand.isEnabled = episode < episodeCount
-        }
-        // 新接口的箭头可用性跟着同一套判据走（旧接口改的是 MPRemoteCommandCenter，
-        // 新接口得重建 commands 数组）。刻意不经过下面的节流：集列表刚拉回来那一下
-        // 元数据没变，`publish` 会跳过写，但两颗箭头该灰还是得灰。
-        if #available(iOS 27.0, *) {
-            modernPublisher?.setCommandAvailability(
-                next: episodeCount > 0 ? episode < episodeCount : nil,
-                previous: episodeCount > 0 ? episode > 1 : nil
-            )
+        // 不经过写卡片的节流；只更新当前所有者的箭头。
+        let nextEnabled: Bool? = episodeCount > 0 ? episode < episodeCount : nil
+        let previousEnabled: Bool? = episodeCount > 0 ? episode > 1 : nil
+        if publishingPath == .legacy {
+            setLegacyCommandAvailability(next: nextEnabled, previous: previousEnabled)
+        } else {
+            modernPublisher?.setCommandAvailability(next: nextEnabled, previous: previousEnabled)
         }
         let effectiveRate = isPlaying ? max(rate, 0) : 0
         lastRate = effectiveRate
@@ -347,15 +430,13 @@ final class NowPlayingCenter {
         lastRate = 0
         lastElapsed = 0
         lastState = .stopped
-        // 新接口的会话一并拆掉：释放 MediaSession 就等于把卡片从系统那边撤走。
-        // 下一次播放重新建一个；`modernUnavailable` 也归零，下次重新试新接口。
-        modernPublisher?.clear()
-        modernPublisher = nil
+        // 只清理当前所有者；现代路径从未使用旧接口时，clear 也不触碰旧单例。
+        switchPublishingPath(to: .idle)
         modernRetryNotBefore = nil
         modernFailureCount = 0
         // 两份封面缓存都按地址复用：旧接口拿 MPMediaItemArtwork，新接口拿编码数据。
         // 不能只清后一份、保留前一份——下一次播同一集时会被旧缓存的早退挡住，
-        // 结果新接口永远拿不到封面。它们都留到进程结束，语义才一致。
+        // 结果新接口永远拿不到封面。两份按同一套有界缓存规则复用。
         // 保留原有同步统计；上面的卡片清理标记也记录 0/0。
         if writeCount > 0 || skipCount > 0 { logSyncSummary() }
         writeCount = 0
@@ -372,13 +453,6 @@ final class NowPlayingCenter {
         commands.onPrevious = nil
         commands.onSeek = nil
         commands.isPlaying = false
-        // 遥控键回到「都可用」的默认态：`configureRemoteCommands()` 只会跑一次，
-        // 这里若把两颗键留在灰的状态，下一轮播放要等第一次 `update()` 才恢复。
-        let center = MPRemoteCommandCenter.shared()
-        center.previousTrackCommand.isEnabled = true
-        center.nextTrackCommand.isEnabled = true
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        MPNowPlayingInfoCenter.default().playbackState = .stopped
     }
 
     // MARK: - iOS 27+ 的新接口
@@ -394,25 +468,30 @@ final class NowPlayingCenter {
         let publisher = NowPlayingSessionPublisher { next, previous in
             Self.makeModernCommands(box, next: next, previous: previous)
         }
-        publisher.onFailure = { [weak self] in
-            self?.fallBackToLegacyPublisher()
+        publisher.onFailure = { [weak self, weak publisher] in
+            // fail 的调用栈 / activation 任务还可能持有局部 MediaSession。
+            // 下一轮主队列再交棒，让失败调用先返回；不增加延时重试。
+            DispatchQueue.main.async { [weak self, weak publisher] in
+                guard let self, let publisher, self.modernPublisher === publisher else { return }
+                self.fallBackToLegacyPublisher()
+            }
         }
-        publisher.onActive = { [weak self] in
+        publisher.onActive = { [weak self, weak publisher] in
+            guard let self, let publisher, self.modernPublisher === publisher else { return }
             // 拿到了就把旧账清掉：下一次偶发的失败从第一（最短）档重新退避。
-            self?.modernFailureCount = 0
-            self?.modernRetryNotBefore = nil
+            self.modernFailureCount = 0
+            self.modernRetryNotBefore = nil
         }
-        modernPublisher = publisher
         return publisher
         #else
         return nil
         #endif
     }
 
-    /// 新接口不行了（抢不到主会话 / 申请抛错）：把引用放掉，用旧接口把当前这一集
+    /// 新接口不行了（抢不到主会话 / 申请抛错）：先清掉新会话，用旧接口把当前这一集
     /// 补写出去。卡片能不能出来比「用哪条接口」重要，所以这里一定不能静默。
     private func fallBackToLegacyPublisher() {
-        modernPublisher = nil
+        guard publishingPath == .modern else { return }
         modernFailureCount += 1
         // 递增退避：12s、24s、36s…最多试八次。连着八次都不成，就不用在这次播放里再骚扰它了。
         if modernFailureCount >= Self.modernMaxFailures {
@@ -422,7 +501,12 @@ final class NowPlayingCenter {
                 Self.modernRetryDelay * Double(modernFailureCount)
             )
         }
-        guard let info else { return }
+        guard let info else {
+            switchPublishingPath(to: .idle)
+            return
+        }
+        // 先记退避并完整交棒，下面重写卡片时只能走旧路径。
+        switchPublishingPath(to: .legacy)
         KazumiLogBuffer.player("正在播放（iOS 27）：新接口不可用，退回旧接口发卡片")
         // 那一次已经算作「写过了」，不清掉节流快照的话这次会被判成没变化而跳过，
         // 结果就是退回旧接口了却没写出去。
@@ -547,16 +631,12 @@ final class NowPlayingCenter {
 
     /// 真正写一次：重建字典 + 赋值。`publish` 判定要写的时候才走到这里。
     private func write(_ info: Info, elapsed: Double, isPlaying: Bool, rate: Double, full: Bool) {
-        // 卡片第一次写进系统的这一刻也补一次远程控制事件声明（LP 4961）：
-        // 启动那一下是在场景还没进前台时调的。只补一次，见 `PlayerAudioSession`。
-        PlayerAudioSession.declareRemoteControlEventsIfNeeded()
-
-        // iOS 27+：卡片改由 NowPlaying 框架的 MediaSession 发（见 NowPlayingSession27.swift）。
-        // 它抢不到主会话时会立刻回调 `onFailure`，把那一次退回下面的旧写法，
-        // 所以这里就是「先试新的」——新的不行，一行都不少地跑旧代码。
+        // 路径切换先清理旧所有者，再创建新发布器；第一次走现代路径不碰旧 API。
+        #if canImport(NowPlaying)
         if #available(iOS 27.0, *), canTryModern() {
-            let publisher = modernPublisher ?? makeModernPublisher()
-            if let publisher {
+            switchPublishingPath(to: .modern)
+            // 在 publish 之前已存好发布器与所有者，同步 onFailure 不会重建现代发布器。
+            if let publisher = modernPublisher {
                 publisher.publish(
                     NowPlayingPublishPayload(
                         artworkID: info.artworkURL,
@@ -576,6 +656,9 @@ final class NowPlayingCenter {
                 return
             }
         }
+        #endif
+        switchPublishingPath(to: .legacy)
+        PlayerAudioSession.declareRemoteControlEventsIfNeeded()
 
         var dictionary = full ? [String: Any]() : (MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:])
 

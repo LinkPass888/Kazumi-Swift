@@ -121,17 +121,17 @@ final class KazumiSceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.window = window
         window.makeKeyAndVisible()
 
-        // 保留现有顺序：窗口就绪后请求 FirstResponder 并声明远程控制事件。
-        Self.declareRemoteControlEvents(on: host)
-        PlaybackLifecycleDiagnostics.log("scene.windowReady", scene: scene,
-                                         details: "beginReceivingRemoteControlEvents=called")
+        // 旧路径保留窗口就绪后的声明；现代路径启动时不接旧远程事件。
+        if !NowPlayingCenter.modernSupported {
+            Self.declareRemoteControlEvents(on: host)
+        }
+        PlaybackLifecycleDiagnostics.log(
+            "scene.windowReady", scene: scene,
+            details: "beginReceivingRemoteControlEvents=\(NowPlayingCenter.modernSupported ? "skipped-modern" : "called")"
+        )
     }
 
-    /// 把宿主控制器顶成 FirstResponder，再向系统声明「这个 App 要收远程控制事件」。
-    ///
-    /// `UIHostingController` 的 `canBecomeFirstResponder` 默认是 false、而且是只读的，
-    /// 所以用下面那个子类把它打开。拿不到第一响应者也照样要调
-    /// `beginReceivingRemoteControlEvents()`——后者是 App 级声明，不依赖响应者链。
+    /// 只供不支持现代框架的启动路径使用；播放器激活后的补充声明仍由音频会话管理。
     @MainActor
     private static func declareRemoteControlEvents(on host: UIViewController) {
         _ = host.becomeFirstResponder()
