@@ -37,6 +37,20 @@ enum KazumiThemeMode: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum HardwareDecodeMode: String, CaseIterable, Identifiable, Sendable {
+    case videotoolbox
+    case videotoolboxCopy = "videotoolbox-copy"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .videotoolbox: "直通"
+        case .videotoolboxCopy: "非直通"
+        }
+    }
+}
+
 /// 超分辨率档位：关 / 效率 / 质量，三档。
 ///
 /// 数值沿用原版 Anime4K 设置的存储值（1=关闭，2=效率，3=质量），
@@ -175,8 +189,9 @@ enum SettingsKey {
     static let privateMode = "privateMode"
     /// 低内存模式三档（跟随网络 / 始终开启 / 始终关闭），沿用 main 的 `lowMemoryPolicy`。
     static let lowMemoryPolicy = "lowMemoryPolicy"
-    /// 硬件解码开关（LP 5549）。main 那边存的是解码器名字，我们只做开关，存布尔。
+    /// 硬件解码开关，与解码模式独立保存。
     static let hardwareDecodeEnabled = "hardwareDecodeEnabled"
+    static let hardwareDecodeMode = "hardwareDecodeMode"
     /// AniSkip 片头片尾时间轴，沿用原版 `SettingsKeys.aniSkipLookup` 的键名，默认开启。
     static let aniSkipLookup = "aniSkipLookup"
     /// 控制栏自动隐藏前的停留时长（毫秒），沿用原版
@@ -324,7 +339,17 @@ final class SettingsStore {
 
     /// 默认超分辨率档位（对应原版 `defaultSuperResolutionMode`，沿用 `anime4kMode` 键名）。
     var superResolutionMode: SuperResolutionMode {
-        didSet { persist(superResolutionMode.rawValue, SettingsKey.anime4kMode) }
+        didSet {
+            persist(superResolutionMode.rawValue, SettingsKey.anime4kMode)
+            superResolutionOverride = nil
+        }
+    }
+
+    private var superResolutionOverride: SuperResolutionMode? = nil
+
+    var playbackSuperResolutionMode: SuperResolutionMode {
+        get { superResolutionOverride ?? superResolutionMode }
+        set { superResolutionOverride = newValue }
     }
 
     /// 进入播放器时的初始画面比例。播放器里改只影响这一次，不写回这里。
@@ -483,10 +508,13 @@ final class SettingsStore {
         didSet { persist(privateMode, SettingsKey.privateMode) }
     }
 
-    /// 硬件解码开关。开 = `auto-safe`（与 main 的默认档一致，LP 5549/5551），
-    /// 关 = 纯软解。花屏那种情况只出现在更早的直通链路，先跟 main 走。
+    /// 关闭时使用纯软解，不改变已选的硬件解码模式。
     var hardwareDecodeEnabled: Bool {
         didSet { persist(hardwareDecodeEnabled, SettingsKey.hardwareDecodeEnabled) }
+    }
+
+    var hardwareDecodeMode: HardwareDecodeMode {
+        didSet { persist(hardwareDecodeMode.rawValue, SettingsKey.hardwareDecodeMode) }
     }
 
     /// 低内存模式：决定解复用缓存是 1500 MiB 还是 2 MiB（对齐 main，LP 5547）。
@@ -847,6 +875,9 @@ final class SettingsStore {
         brightnessVolumeGesture = Self.read(defaults, SettingsKey.brightnessVolumeGesture, true)
         privateMode = Self.read(defaults, SettingsKey.privateMode, false)
         hardwareDecodeEnabled = Self.read(defaults, SettingsKey.hardwareDecodeEnabled, true)
+        hardwareDecodeMode = HardwareDecodeMode(
+            rawValue: Self.read(defaults, SettingsKey.hardwareDecodeMode, HardwareDecodeMode.videotoolboxCopy.rawValue)
+        ) ?? .videotoolboxCopy
         // 老版本只写过 `lowMemoryMode` 那个布尔。它不是这里的三档键，读不到就回默认档，
         // 与 main「旧值留着、新键没写过就当自动」的做法一致。
         lowMemoryMode = LowMemoryMode(
@@ -936,7 +967,7 @@ final class SettingsStore {
 
     /// 把播放相关设置恢复为出厂值（LP 清单「恢复默认设置」）。
     ///
-    /// 只动播放器与超分辨率：解码器、规则、网络、同步这些不在这里，
+    /// 只动播放器与超分辨率：规则、网络、同步这些不在这里，
     /// 所以设置页那颗按钮的确认文案也只提这两块，不夸大范围。
     func resetPlayerSettings() {
         autoPlayNext = true
@@ -947,6 +978,7 @@ final class SettingsStore {
         brightnessVolumeGesture = true
         privateMode = false
         hardwareDecodeEnabled = true
+        hardwareDecodeMode = .videotoolboxCopy
         lowMemoryMode = .auto
         playSpeed = 1.0
         buttonSkipTime = 80

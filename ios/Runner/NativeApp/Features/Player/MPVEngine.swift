@@ -117,9 +117,9 @@ final class MPVEngine {
     private var reportedFirstFrame = false
     var onLog: ((String) -> Void)?
 
-    /// 硬件解码开不开：容器按设置页那颗开关传进来，只在建内核时读一次
-    /// （`hwdec` 对已经打开的文件不生效，换集才换得过来）。
+    /// 解码开关与模式由容器传入，只在建内核时读取，重新打开播放器后生效。
     var hardwareDecodeEnabled = true
+    var hardwareDecodeMode: HardwareDecodeMode = .videotoolboxCopy
 
     /// 解复用缓存大小（字节）。进来之前由容器按低内存模式的档位算好；
     /// 之后档位或网络变了就调 `applyCacheSize(_:)` 立刻改，不用重建内核。
@@ -192,8 +192,8 @@ final class MPVEngine {
         // 而它默认加的是 `mixWithOthers`——混音的会话不会被 iOS 当成「正在播放」，
         // 控制中心 / 锁屏那张卡就永远不出来。开了这个，它不再加 mixWithOthers。
         setOption("audio-exclusive", "yes")
-        // 保持现有硬解策略：模拟器 no，真机按开关使用 auto-safe。
-        setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled))
+        // 模拟器固定软解；真机按开关与所选模式初始化。
+        setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode))
         // 逐帧交给我们的 GL 视图，不走独立窗口。渲染 API 在
         // `mpv_render_context_create` 里指定，不用再设 gpu-api（设了会被拒）。
         // 不用 gpu-hq：它的 ewa_lanczos + 去色带很吃 GPU，会掉帧；
@@ -338,17 +338,12 @@ final class MPVEngine {
         setFlag("pause", true)
     }
 
-    /// 前台该用的硬解档位。
-    ///
-    /// 开关关掉就纯软解；开着用 `auto-safe`——与 main 一致（LP 5549/5551/5577：
-    /// main 上一直是这一档，颜色正常）。
-    ///
-    /// 模拟器没有硬解，开与关都是 `no`。
-    static func hwdec(enabled: Bool) -> String {
+    /// 关闭硬解或运行在模拟器时始终使用 `no`。
+    static func hwdec(enabled: Bool, mode: HardwareDecodeMode) -> String {
         #if targetEnvironment(simulator)
         return "no"
         #else
-        return enabled ? "auto-safe" : "no"
+        return enabled ? mode.rawValue : "no"
         #endif
     }
 

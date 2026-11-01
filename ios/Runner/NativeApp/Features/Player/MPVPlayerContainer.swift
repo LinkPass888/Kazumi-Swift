@@ -608,6 +608,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
     let lowMemoryMode: LowMemoryMode
     /// 硬件解码开关（LP 5549）。
     let hardwareDecodeEnabled: Bool
+    let hardwareDecodeMode: HardwareDecodeMode
     let surface: PlayerSurfaceModel
 
     /// 按档位和当前网络算出这一集该给的缓存字节数。
@@ -636,6 +637,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
         // 本地文件不按流量算（main 的 `isLocalPlayback`），所以文件播放永远走完整缓存。
         engine.applyCacheSize(cacheSizeForPolicy())
         engine.hardwareDecodeEnabled = hardwareDecodeEnabled
+        engine.hardwareDecodeMode = hardwareDecodeMode
         // 播到一半 Wi-Fi 换成移动数据（或反过来）时，缓存档位要跟着换，不用重开这一集。
         // 「跟随网络」这一档在两种网络下取的值不一样，靠这个回调补上。
         MeteredNetworkMonitor.shared.onChange = { [engine, mode = lowMemoryMode, isLocal = url.isFileURL] in

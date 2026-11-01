@@ -1913,10 +1913,10 @@ struct PlayerScreen: View {
 
     /// 长按临时加速：原版按住期间用 `defaultShortcutForwardPlaySpeed`（默认 2.0），
     /// 松手恢复按下前的速度，不写回设置。
-    /// 切超分档位：写设置（着色器由容器按新路径重新挂上，当场生效），
+    /// 切超分档位：只改本次应用会话（着色器由容器按新路径重新挂上，当场生效），
     /// 再在 1/4 那条线上提示一句「超分辨率 · 质量」（Colo 2026-10-28）。
     private func applySuperResolution(_ mode: SuperResolutionMode) {
-        settings.superResolutionMode = mode
+        settings.playbackSuperResolutionMode = mode
         noteInteraction()
         let text = mode == .off ? "超分辨率 · 关闭" : "超分辨率 · \(mode.title)"
         withAnimation(.easeOut(duration: 0.15)) { superResolutionHUD = text }
@@ -2057,7 +2057,7 @@ struct PlayerScreen: View {
                     userAgent: controller.userAgent,
                     cookie: controller.playbackCookieHeader(for: text),
                     proxyURL: proxyURL,
-                    shaderPaths: settings.superResolutionMode.shaderPaths,
+                    shaderPaths: settings.playbackSuperResolutionMode.shaderPaths,
                     fillMode: aspectRatioMode.fillMode,
                     danmaku: controller.danmakuComments,
                     danmakuStyle: danmakuStyle,
@@ -2066,6 +2066,7 @@ struct PlayerScreen: View {
                     danmakuTopInset: isFullscreen ? 44 : 0,
                     lowMemoryMode: settings.lowMemoryMode,
                     hardwareDecodeEnabled: settings.hardwareDecodeEnabled,
+                    hardwareDecodeMode: settings.hardwareDecodeMode,
                     surface: surface
                 )
             } else {
@@ -2409,7 +2410,7 @@ struct PlayerScreen: View {
             ("方向", orientationSummary),
             // 超分到底有没有喂进 mpv：这里显示真正找到的着色器文件数
             // （Colo 2026-10-28：是 0 就是没挂上，是 6 但画面没变才是着色器本身的问题）。
-            ("超分辨率", "\(settings.superResolutionMode.title) · \(surface.appliedShaderCount()) 颗着色器（已挂）"),
+            ("超分辨率", "\(settings.playbackSuperResolutionMode.title) · \(surface.appliedShaderCount()) 颗着色器（已挂）"),
         ]
         return VStack(spacing: 0) {
             ZStack {
@@ -2705,11 +2706,11 @@ struct PlayerScreen: View {
                 SystemMenuButton.Item(
                     title: "超分辨率",
                     symbol: "wand.and.stars",
-                    subtitle: settings.superResolutionMode.title,
+                    subtitle: settings.playbackSuperResolutionMode.title,
                     selection: .init(options: SuperResolutionMode.allCases.map { mode in
                         .init(
                             title: mode.title,
-                            isSelected: settings.superResolutionMode == mode
+                            isSelected: settings.playbackSuperResolutionMode == mode
                         ) {
                             applySuperResolution(mode)
                         }
@@ -3051,13 +3052,13 @@ struct PlayerScreen: View {
     private var superResolutionButton: some View {
         SystemMenuButton(
             selection: .init(options: SuperResolutionMode.allCases.map { mode in
-                .init(title: mode.title, isSelected: settings.superResolutionMode == mode) {
+                .init(title: mode.title, isSelected: settings.playbackSuperResolutionMode == mode) {
                     applySuperResolution(mode)
                 }
             }),
             title: nil,
             symbol: "wand.and.stars",
-            accessibilityLabel: "超分辨率 \(settings.superResolutionMode.title)",
+            accessibilityLabel: "超分辨率 \(settings.playbackSuperResolutionMode.title)",
             onOpen: { pinControlsWhileMenuOpen() }
         )
         .frame(minWidth: 44, minHeight: 40)
