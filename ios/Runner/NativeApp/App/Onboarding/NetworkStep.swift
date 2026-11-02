@@ -54,21 +54,6 @@ struct NetworkStep: View {
                     Divider().padding(.leading, 16)
 
                     HStack(spacing: 12) {
-                        Text("规则仓库镜像")
-                            .font(.body)
-                        Spacer(minLength: 8)
-                        Toggle("规则仓库镜像", isOn: Binding(
-                            get: { settings.enableGitProxy },
-                            set: { settings.enableGitProxy = $0 }
-                        ))
-                        .labelsHidden()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 11)
-
-                    Divider().padding(.leading, 16)
-
-                    HStack(spacing: 12) {
                         Text("图片加速")
                             .font(.body)
                         Spacer(minLength: 8)
@@ -85,6 +70,11 @@ struct NetworkStep: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 11)
+
+                    Divider().padding(.leading, 16)
+
+                    // 规则仓库镜像放本组最后（Colo 规格 2026-11-02），与设置里同顺序。
+                    RulesMirrorMenu()
                 }
                 .background {
                     KazumiPalette.cardShape(

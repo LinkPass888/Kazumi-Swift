@@ -26,7 +26,7 @@ private struct KazumiSettingsDetailStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(.large)
             .scrollContentBackground(.hidden)
             // LP 3524：二级页也要跟首页一个底色。原来铺的是 `background(for:)`
             // （浅色白、深色 #121212），条目本身也是白的，浅色下整页糊成一片白。
@@ -1066,7 +1066,8 @@ struct NetworkSettingsScreen: View {
 
     var body: some View {
         Form {
-            // 一段三行照原版 NetworkMirrorSettings：番剧条目、规则仓库、图片。
+            // 一段三行照原版 NetworkMirrorSettings：番剧条目、图片、规则仓库镜像
+            // （镜像放最后，Colo 规格 2026-11-02；LP 6225）。
             Section {
                 Group {
                     Picker("番剧条目加速", selection: bangumiAccelerationBinding) {
@@ -1075,13 +1076,13 @@ struct NetworkSettingsScreen: View {
                     }
                     .pickerStyle(.menu)
 
-                    Toggle("规则仓库镜像", isOn: gitProxyBinding)
-
                     Picker("图片加速", selection: imageAccelerationBinding) {
                         Text("直连").tag(ImageAcceleration.direct.rawValue)
                         Text("镜像").tag(ImageAcceleration.mirror.rawValue)
                     }
                     .pickerStyle(.menu)
+
+                    RulesMirrorMenu(asListRows: true)
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
             } header: {
@@ -1186,10 +1187,6 @@ struct NetworkSettingsScreen: View {
             get: { settings.enableBangumiProxy },
             set: { settings.enableBangumiProxy = $0 }
         )
-    }
-
-    private var gitProxyBinding: Binding<Bool> {
-        Binding(get: { settings.enableGitProxy }, set: { settings.enableGitProxy = $0 })
     }
 
     private var imageAccelerationBinding: Binding<String> {

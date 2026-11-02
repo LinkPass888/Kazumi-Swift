@@ -4,7 +4,7 @@
 //
 //  1:1 翻译 lib/request/clients/rules_repo_client.dart 与 dio_factory.dart 中的
 //  _RulesMirrorInterceptor：规则目录默认走 raw.githubusercontent.com，
-//  开启镜像后改写为 raw.gitcode.com 镜像。
+//  按「规则仓库加速」的选择改写前缀（上游 2.4.1 起从开关改成四选一）。
 //
 
 import Foundation
@@ -14,15 +14,45 @@ enum KazumiEndpoints {
     /// 规则仓库。
     static let pluginShop = "https://raw.githubusercontent.com/Predidit/KazumiRules/main/"
 
-    /// 规则仓库镜像。
-    static let pluginShopMirror = "https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/"
+    /// 规则仓库镜像。gh-proxy 和 ghfast 是「前缀 + 完整原地址」，
+    /// GitCode 是「换掉域名后那段」。
+    static let ghProxyMirror = "https://gh-proxy.org/"
+    static let ghfastMirror = "https://ghfast.top/"
+    static let gitcodeMirror = "https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/"
+}
+
+/// 规则仓库加速方式（对应上游 `enableGitProxy` 之后的四选一）。
+enum RulesMirror: String, Sendable, CaseIterable {
+    case ghProxy
+    case ghfast
+    case gitcode
+    case direct
+
+    var shortTitle: String {
+        switch self {
+        case .ghProxy: "gh-proxy"
+        case .ghfast: "ghfast"
+        case .gitcode: "GitCode"
+        case .direct: "直连"
+        }
+    }
+
+    /// 展开后跟在名字后面的说明（13 pt 灰字）。
+    var note: String {
+        switch self {
+        case .ghProxy: "默认镜像"
+        case .ghfast: "备用镜像"
+        case .gitcode: "国内镜像"
+        case .direct: "不走镜像"
+        }
+    }
 }
 
 final class RulesRepoClient: Sendable {
     static let shared = RulesRepoClient()
 
     /// 由设置页写入；仅影响后续请求，与 interceptor 的即时读取行为一致。
-    static let enableMirror = OSAllocatedUnfairLock(initialState: false)
+    static let mirror = OSAllocatedUnfairLock(initialState: RulesMirror.ghProxy)
 
     private let sessionProvider: ProxyAwareURLSession
 
@@ -62,9 +92,39 @@ final class RulesRepoClient: Sendable {
 
     /// 对应 _RulesMirrorInterceptor：只改写规则仓库前缀。
     static func mirrored(_ url: String) -> String {
-        guard enableMirror.withLock({ $0 }),
+        mirrored(url, mirror: Self.mirror.withLock { $0 })
+    }
+
+    /// 按指定镜像改写；测速也走这里，保证测的就是实际会用的地址。
+    static func mirrored(_ url: String, mirror: RulesMirror) -> String {
+        guard mirror != .direct,
               url.hasPrefix(KazumiEndpoints.pluginShop) else { return url }
-        return KazumiEndpoints.pluginShopMirror
-            + url.dropFirst(KazumiEndpoints.pluginShop.count)
+        let path = url.dropFirst(KazumiEndpoints.pluginShop.count)
+        switch mirror {
+        case .ghProxy: return KazumiEndpoints.ghProxyMirror + url
+        case .ghfast: return KazumiEndpoints.ghfastMirror + url
+        case .gitcode: return KazumiEndpoints.gitcodeMirror + path
+        case .direct: return url
+        }
+    }
+
+    /// 测这条镜像通不通、往返多少毫秒：只取规则列表文件的开头，3 秒不上就算不通。
+    func measureLatency(for mirror: RulesMirror) async -> Int? {
+        let urlString = Self.mirrored(KazumiEndpoints.pluginShop + "index.json", mirror: mirror)
+        guard let url = URL(string: urlString) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("bytes=0-0", forHTTPHeaderField: "range")
+        request.setValue(HTTPHeaders.randomUserAgent(), forHTTPHeaderField: "user-agent")
+        request.timeoutInterval = 3
+        let start = Date()
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<400).contains(http.statusCode) else { return nil }
+            return Int(Date().timeIntervalSince(start) * 1000)
+        } catch {
+            return nil
+        }
     }
 }

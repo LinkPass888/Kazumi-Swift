@@ -115,7 +115,7 @@ extension SettingsStore {
             SettingsKey.downloadDanmaku,
             SettingsKey.defaultStartupPage,
             SettingsKey.enableBangumiProxy,
-            SettingsKey.enableGitProxy,
+            SettingsKey.rulesMirror,
             SettingsKey.useSystemProxy,
             SettingsKey.imageAcceleration,
             SettingsKey.selectedPluginIndex,
@@ -371,8 +371,13 @@ extension SettingsStore {
             enableBangumiProxy = flag
             restored += 1
         }
-        if let flag = value(SettingsKey.enableGitProxy)?.boolValue {
-            enableGitProxy = flag
+        if let text = value(SettingsKey.rulesMirror)?.stringValue,
+           RulesMirror(rawValue: text) != nil {
+            rulesMirror = text
+            restored += 1
+        } else if let flag = value(SettingsKey.enableGitProxy)?.boolValue {
+            // 旧备份里还是开关：开着落 gh-proxy，关着落直连。
+            rulesMirror = (flag ? RulesMirror.ghProxy : RulesMirror.direct).rawValue
             restored += 1
         }
         if let flag = value(SettingsKey.useSystemProxy)?.boolValue {

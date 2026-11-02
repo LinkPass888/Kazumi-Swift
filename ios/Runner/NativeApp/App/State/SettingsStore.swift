@@ -271,7 +271,9 @@ enum SettingsKey {
     ///
     /// 现在没有界面用它，存储留着：旧备份里带着这个键，恢复时不丢。
     static let useSystemProxy = "useSystemProxy"
-    /// 规则仓库镜像（原版 `enableGitProxy`）。
+    /// 规则仓库加速方式（上游 2.4.1 起四选一：ghProxy / ghfast / gitcode / direct）。
+    static let rulesMirror = "rulesMirror"
+    /// 旧的规则仓库镜像开关，只用于把老值接成新四选一。
     static let enableGitProxy = "enableGitProxy"
     /// 图片加速方式（原版 `imageAcceleration`，direct / mirror）。
     static let imageAcceleration = "imageAcceleration"
@@ -719,13 +721,13 @@ final class SettingsStore {
         didSet { persist(useSystemProxy, SettingsKey.useSystemProxy) }
     }
 
-    /// 规则仓库镜像开关（对应原版 `enableGitProxy`）。
-    var enableGitProxy: Bool {
+    /// 规则仓库加速方式（上游 2.4.1 起从开关改成四选一）。
+    var rulesMirror: String {
         didSet {
-            persist(enableGitProxy, SettingsKey.enableGitProxy)
+            persist(rulesMirror, SettingsKey.rulesMirror)
             // withLock 的闭包是 Sendable 的，先把值取成局部常量再进去。
-            let enabled = enableGitProxy
-            RulesRepoClient.enableMirror.withLock { $0 = enabled }
+            let selected = RulesMirror(rawValue: rulesMirror) ?? .ghProxy
+            RulesRepoClient.mirror.withLock { $0 = selected }
         }
     }
 
@@ -939,7 +941,16 @@ final class SettingsStore {
         proxyUrl = Self.read(defaults, SettingsKey.proxyUrl, "")
         proxyConfigured = Self.read(defaults, SettingsKey.proxyConfigured, false)
         proxyTestUrl = Self.read(defaults, SettingsKey.proxyTestUrl, "")
-        enableGitProxy = Self.read(defaults, SettingsKey.enableGitProxy, false)
+        // 规则仓库加速：新键优先；老用户按旧开关接（开着落 gh-proxy，关着落直连）；
+        // 全新安装没有旧键，落 gh-proxy（上游默认）。
+        if let storedMirror = defaults.string(forKey: SettingsKey.rulesMirror),
+           RulesMirror(rawValue: storedMirror) != nil {
+            rulesMirror = storedMirror
+        } else if let legacyFlag = defaults.object(forKey: SettingsKey.enableGitProxy) as? Bool {
+            rulesMirror = (legacyFlag ? RulesMirror.ghProxy : RulesMirror.direct).rawValue
+        } else {
+            rulesMirror = RulesMirror.ghProxy.rawValue
+        }
         onboardingCompleted = Self.read(defaults, SettingsKey.onboardingCompleted, false)
         onboardingAgreementVersion = Self.read(defaults, SettingsKey.onboardingAgreementVersion, 0)
         imageAcceleration = Self.read(defaults, SettingsKey.imageAcceleration, ImageAcceleration.mirror.rawValue)
@@ -967,8 +978,8 @@ final class SettingsStore {
         BangumiAcceleration.mode = enableBangumiProxy ? .mirror : .direct
         // 网络那几项同样要补一次：init 里赋初值不触发 didSet，
         // 不补的话冷启动后镜像开关、代理、图片加速都还是默认值。
-        let gitMirrorEnabled = enableGitProxy
-        RulesRepoClient.enableMirror.withLock { $0 = gitMirrorEnabled }
+        let selectedMirror = RulesMirror(rawValue: rulesMirror) ?? .ghProxy
+        RulesRepoClient.mirror.withLock { $0 = selectedMirror }
         KazumiNetworkPolicy.imageAcceleration =
             ImageAcceleration(rawValue: imageAcceleration) ?? .direct
         // 代理也得补：漏了这一行，冷启动后开关是开着的、各 URLSession 却是

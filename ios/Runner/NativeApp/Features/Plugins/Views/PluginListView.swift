@@ -191,6 +191,7 @@ struct PluginListView: View {
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.heroBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("规则管理")
+        .navigationBarTitleDisplayMode(.large)
         .toolbar { toolbarContent }
         .navigationDestination(isPresented: Binding(
             get: { selectedRule != nil },

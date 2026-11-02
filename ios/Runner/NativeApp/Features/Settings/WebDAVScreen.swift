@@ -61,7 +61,7 @@ struct WebDAVScreen: View {
             }
         }
         .navigationTitle("多设备同步")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())

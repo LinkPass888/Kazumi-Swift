@@ -197,7 +197,7 @@ struct SettingsScreen: View {
         // 顶部滚动边缘：列表顶部用渐进模糊（.soft）。
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
     }

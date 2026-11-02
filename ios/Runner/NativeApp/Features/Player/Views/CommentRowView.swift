@@ -30,7 +30,7 @@ struct CommentRowView: View {
     @State private var expanded = false
 
     /// 星星跟昵称一起随动态字体缩放（Colo 6165）：昵称是 footnote，调大时昵称会长。
-    @ScaledMetric(relativeTo: .footnote) private var starSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .footnote) private var starSize: CGFloat = 13
 
     private let avatarSize: CGFloat = 32
     private let gap: CGFloat = 10
@@ -83,7 +83,7 @@ struct CommentRowView: View {
                     .font(.system(size: starSize, weight: .semibold))
                     .foregroundStyle(filled > 0
                                      ? AnyShapeStyle(KazumiPalette.accent(for: colorScheme))
-                                     : AnyShapeStyle(Color.secondary.opacity(0.25)))
+                                     : AnyShapeStyle(Color.secondary.opacity(0.35)))
             }
         }
         .frame(width: starSize * 5 + 4, alignment: .leading)

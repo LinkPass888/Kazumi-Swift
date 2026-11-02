@@ -143,7 +143,7 @@ struct SyncBackupScreen: View {
         // 所以叫「账号与备份」而不是「同步备份」。只有等分件版同步、
         // 「启用 WebDAV」总闸与自动推送三件事都落地后，才改回「同步备份」。
         .navigationTitle("同步设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         // 导出/恢复的结果不占表单位置（LP 5135/5137/5151）：它浮在页面上层，
         // 既不进 Form 的行，也不把下面的内容推上推下，自己几秒后收走。
         .overlay(alignment: .bottom) {

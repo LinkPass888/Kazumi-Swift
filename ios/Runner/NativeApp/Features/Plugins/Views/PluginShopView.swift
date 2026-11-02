@@ -69,6 +69,22 @@ struct PluginShopView: View {
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.heroBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("规则仓库")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await refresh(force: true) }
+                } label: {
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(isLoading)
+                .accessibilityLabel("刷新")
+            }
+        }
         .refreshable { await refresh(force: true) }
         .overlay(alignment: .bottom) {
             if let toast {

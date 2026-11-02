@@ -257,9 +257,13 @@ struct PlayerScreen: View {
     @State private var lastOrientationResult = "未请求"
     @State private var danmakuDraft = ""
     @FocusState private var danmakuFieldFocused: Bool
+    /// 这一次的暂停是「输入弹幕」引起的：收键盘后只恢复这一种（上游 2.4.0 #2708）。
+    @State private var pausedForDanmakuInput = false
     @State private var playbackRate: Float = 1.0
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
+    /// 拖动时手指在进度条上的横坐标（点），目标时间跟它走。
+    @State private var scrubFingerX: CGFloat = 0
     @State private var isEditingSkipSeconds = false
     @State private var skipSecondsInput = ""
     @State private var skipSecondsError: String?
@@ -3180,6 +3184,23 @@ struct PlayerScreen: View {
             .submitLabel(.send)
             .onSubmit { sendDanmaku() }
             .disabled(!danmakuEnabled)
+            .onChange(of: danmakuFieldFocused) { _, focused in
+                if focused {
+                    // 只在真播着时停：本来暂停的不动。
+                    if surface.isPlaying {
+                        surface.pause()
+                        pausedForDanmakuInput = true
+                    }
+                } else if pausedForDanmakuInput {
+                    pausedForDanmakuInput = false
+                    // 播完、或者还没就绪的，不替用户拉起来。
+                    let atEnd = surface.duration > 0
+                        && surface.currentTime >= surface.duration - 0.5
+                    if controllerPhase == .ready, !atEnd, !surface.isPlaying {
+                        surface.play()
+                    }
+                }
+            }
 
             Button {
                 sendDanmaku()
@@ -3227,6 +3248,9 @@ struct PlayerScreen: View {
         let progress = total > 0 ? min(max(current / total, 0), 1) : 0
         return GeometryReader { proxy in
             let width = max(proxy.size.width, 1)
+            // 目标时间那个小球：越靠两端越往里收，不让它跑出屏幕（Ato 6223）。
+            let bubbleWidth: CGFloat = 72
+            let bubbleX = min(max(scrubFingerX - bubbleWidth / 2, 0), max(width - bubbleWidth, 0))
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(.white.opacity(0.3))
@@ -3241,16 +3265,37 @@ struct PlayerScreen: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         if !isScrubbing { onScrub(true) }
-                        let ratio = min(max(value.location.x / width, 0), 1)
+                        let x = min(max(value.location.x, 0), width)
+                        scrubFingerX = x
+                        let ratio = x / width
                         scrubValue = Double(ratio) * total
                     }
                     .onEnded { _ in onScrub(false) }
             )
+            .overlay(alignment: .topLeading) {
+                if isScrubbing {
+                    scrubTimeBubble
+                        .frame(width: bubbleWidth)
+                        .offset(x: bubbleX, y: -22)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .frame(height: 44)
         .accessibilityElement()
         .accessibilityLabel("播放进度")
         .accessibilityValue(timeText(current))
+    }
+
+    /// 拖动时浮在轨道上方的那条目标时间：跟其他时间同一个格式，松手就收。
+    private var scrubTimeBubble: some View {
+        Text(timeText(scrubValue))
+            .font(.system(size: 12, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.black)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.white.opacity(0.92), in: Capsule())
     }
 
     private func speedText(_ value: Double) -> String { PlaybackSpeed.label(value) }

@@ -71,7 +71,7 @@ struct LogScreen: View {
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("运行日志")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {

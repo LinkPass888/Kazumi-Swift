@@ -154,7 +154,7 @@ struct StorageScreen: View {
             }
         }
         .navigationTitle("存储与日志")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
