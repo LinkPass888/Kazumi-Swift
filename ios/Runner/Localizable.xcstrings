@@ -71,9 +71,36 @@
         }
       }
     },
-    "%@ · 写回旧版格式失败": {},
-    "%@ 不是有效 JSON：%@": {},
-    "%@ 不能为空": {},
+    "%@ · 写回旧版格式失败": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 寫回舊版格式失敗"
+          }
+        }
+      }
+    },
+    "%@ 不是有效 JSON：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 不是有效的 JSON：%@"
+          }
+        }
+      }
+    },
+    "%@ 不能为空": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 不能為空"
+          }
+        }
+      }
+    },
     "%@ 个分片": {
       "localizations": {
         "zh-Hant": {
@@ -124,7 +151,16 @@
         }
       }
     },
-    "%@ 在表单模式下必须是 JSON 对象": {},
+    "%@ 在表单模式下必须是 JSON 对象": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 在表單模式下必須是 JSON 物件"
+          }
+        }
+      }
+    },
     "%@ 已是最新版本": {
       "localizations": {
         "zh-Hant": {
@@ -135,7 +171,16 @@
         }
       }
     },
-    "%@ 必须是 JSON 对象": {},
+    "%@ 必须是 JSON 对象": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 必須是 JSON 物件"
+          }
+        }
+      }
+    },
     "%@ 更新": {
       "localizations": {
         "zh-Hant": {
@@ -146,7 +191,16 @@
         }
       }
     },
-    "%@ 条需要更高版本客户端": {},
+    "%@ 条需要更高版本客户端": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 條需要較新版本的用戶端"
+          }
+        }
+      }
+    },
     "%@ 没有搜索结果": {
       "localizations": {
         "zh-Hant": {
@@ -307,7 +361,16 @@
         }
       }
     },
-    "%@季": {},
+    "%@季": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@季"
+          }
+        }
+      }
+    },
     "%@年%@新番": {
       "localizations": {
         "zh-Hant": {
@@ -338,17 +401,78 @@
         }
       }
     },
-    "%@（云盘上原来那份是空的，已用这次的结果覆盖）": {},
-    "%@，%@ 部": {},
-    "%@，已启用 %@ 项筛选": {},
-    "%@，未启用筛选": {},
-    "%@：正在上传冲突状态": {},
-    "%@：正在更新本地冲突状态": {},
-    "(%@ 人)": {},
+    "%@（云盘上原来那份是空的，已用这次的结果覆盖）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@（雲端上原本那份是空的，已用這次的結果覆蓋）"
+          }
+        }
+      }
+    },
+    "%@，%@ 部": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@，%@ 部"
+          }
+        }
+      }
+    },
+    "%@，已启用 %@ 项筛选": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@，已啟用 %@ 項篩選"
+          }
+        }
+      }
+    },
+    "%@，未启用筛选": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@，未啟用篩選"
+          }
+        }
+      }
+    },
+    "%@：正在上传冲突状态": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@：正在上傳衝突狀態"
+          }
+        }
+      }
+    },
+    "%@：正在更新本地冲突状态": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@：正在更新本機衝突狀態"
+          }
+        }
+      }
+    },
+    "(%@ 人)": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(%@ 人)"
+          }
+        }
+      }
+    },
     "(\\d{1,3})话": {},
     "(\\d{4})年": {},
-    ")」的全部下载？": {},
-    ")，%@ 条可更新": {},
     ")；云盘原文件为 0 字节，已覆盖": {
       "localizations": {
         "zh-Hant": {
@@ -389,8 +513,26 @@
         }
       }
     },
-    "Access Token 无效或已过期，请在 Bangumi 配置中更换 Token": {},
-    "AniList 放送时刻": {},
+    "Access Token 无效或已过期，请在 Bangumi 配置中更换 Token": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Access Token 無效或已過期，請在 Bangumi 設定中更換 Token"
+          }
+        }
+      }
+    },
+    "AniList 放送时刻": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AniList 放送時刻"
+          }
+        }
+      }
+    },
     "AniSkip 片头片尾": {
       "localizations": {
         "zh-Hant": {
@@ -401,7 +543,16 @@
         }
       }
     },
-    "AniSkip 片头片尾数据": {},
+    "AniSkip 片头片尾数据": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AniSkip 片頭片尾資料"
+          }
+        }
+      }
+    },
     "AniSkip: 片头片尾已加载": {
       "localizations": {
         "zh-Hant": {
@@ -422,7 +573,16 @@
         }
       }
     },
-    "Anime4K（超分辨率着色器）": {},
+    "Anime4K（超分辨率着色器）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anime4K（超解析度著色器）"
+          }
+        }
+      }
+    },
     "Bangumi 同步、WebDAV 备份": {
       "localizations": {
         "zh-Hant": {
@@ -443,7 +603,16 @@
         }
       }
     },
-    "Bangumi 拒绝访问，请检查 Token 权限或稍后重试": {},
+    "Bangumi 拒绝访问，请检查 Token 权限或稍后重试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 拒絕存取，請檢查 Token 權限或稍後重試"
+          }
+        }
+      }
+    },
     "Bangumi 接口地址无效: %@": {
       "localizations": {
         "zh-Hant": {
@@ -454,7 +623,16 @@
         }
       }
     },
-    "Bangumi 操作失败，请稍后重试": {},
+    "Bangumi 操作失败，请稍后重试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 操作失敗，請稍後重試"
+          }
+        }
+      }
+    },
     "Bangumi 收藏列表里没有 data 字段": {
       "localizations": {
         "zh-Hant": {
@@ -465,10 +643,46 @@
         }
       }
     },
-    "Bangumi 服务请求失败（HTTP %@），请稍后重试": {},
-    "Bangumi 状态同步完成": {},
-    "Bangumi 用户信息不完整": {},
-    "Bangumi 番组计划": {},
+    "Bangumi 服务请求失败（HTTP %@），请稍后重试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 服務請求失敗（HTTP %@），請稍後重試"
+          }
+        }
+      }
+    },
+    "Bangumi 状态同步完成": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 狀態同步完成"
+          }
+        }
+      }
+    },
+    "Bangumi 用户信息不完整": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 使用者資訊不完整"
+          }
+        }
+      }
+    },
+    "Bangumi 番组计划": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 番組計畫"
+          }
+        }
+      }
+    },
     "Bangumi 说有 %@ 条收藏，但第一页是空的": {
       "localizations": {
         "zh-Hant": {
@@ -479,7 +693,16 @@
         }
       }
     },
-    "Bangumi 请求过于频繁，请稍后重试": {},
+    "Bangumi 请求过于频繁，请稍后重试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 請求過於頻繁，請稍後重試"
+          }
+        }
+      }
+    },
     "Bangumi 账号": {
       "localizations": {
         "zh-Hant": {
@@ -500,8 +723,26 @@
         }
       }
     },
-    "Bangumi 返回的数据格式异常：%@": {},
-    "Bangumi优先": {},
+    "Bangumi 返回的数据格式异常：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 回傳的資料格式異常：%@"
+          }
+        }
+      }
+    },
+    "Bangumi优先": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 優先"
+          }
+        }
+      }
+    },
     "DanDanPlay 没有这部番的记录": {
       "localizations": {
         "zh-Hant": {
@@ -512,8 +753,26 @@
         }
       }
     },
-    "Fuzi（XPath 解析）": {},
-    "GPL-3.0 许可证": {},
+    "Fuzi（XPath 解析）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fuzi（XPath 解析）"
+          }
+        }
+      }
+    },
+    "GPL-3.0 许可证": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "GPL-3.0 授權條款"
+          }
+        }
+      }
+    },
     "HTML 响应没有根节点": {
       "localizations": {
         "zh-Hant": {
@@ -584,7 +843,16 @@
         }
       }
     },
-    "Telegram 频道": {},
+    "Telegram 频道": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Telegram 頻道"
+          }
+        }
+      }
+    },
     "WebDAV GET %@ 收到 %@ 字节，HTTP %@": {},
     "WebDAV PUT %@ 发出 %@ 字节，HTTP %@": {},
     "WebDAV 地址无效：%@": {
@@ -609,7 +877,16 @@
         }
       }
     },
-    "bangumi-mal 映射表": {},
+    "bangumi-mal 映射表": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "bangumi-mal 對照表"
+          }
+        }
+      }
+    },
     "iCloud 云盘": {
       "localizations": {
         "zh-Hant": {
@@ -620,8 +897,26 @@
         }
       }
     },
-    "mpv / MPVKit（播放内核）": {},
-    "trace.moe 以图搜番": {},
+    "mpv / MPVKit（播放内核）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "mpv / MPVKit（播放核心）"
+          }
+        }
+      }
+    },
+    "trace.moe 以图搜番": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "trace.moe 以圖搜番"
+          }
+        }
+      }
+    },
     "trace.moe 响应解析失败": {
       "localizations": {
         "zh-Hant": {
@@ -692,7 +987,16 @@
         }
       }
     },
-    "「%@」已是最新版本": {},
+    "「%@」已是最新版本": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」已是最新版本"
+          }
+        }
+      }
+    },
     "「%@」已更新": {
       "localizations": {
         "zh-Hant": {
@@ -713,7 +1017,16 @@
         }
       }
     },
-    "「%@」需要更高版本的客户端": {},
+    "「%@」需要更高版本的客户端": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」需要較新版本的用戶端"
+          }
+        }
+      }
+    },
     "「我在追的动画」包含所有标记「在看」的番剧。": {
       "localizations": {
         "zh-Hant": {
@@ -944,9 +1257,36 @@
         }
       }
     },
-    "下载目录：书签已接回访问权 %@": {},
-    "下载目录：书签换不回地址，退回默认位置": {},
-    "下载目录：书签解析到了但拿不到访问权，退回默认位置": {},
+    "下载目录：书签已接回访问权 %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載目錄：書籤已接回存取權 %@"
+          }
+        }
+      }
+    },
+    "下载目录：书签换不回地址，退回默认位置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載目錄：書籤換不回位址，退回預設位置"
+          }
+        }
+      }
+    },
+    "下载目录：书签解析到了但拿不到访问权，退回默认位置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載目錄：書籤解析到了但拿不到存取權，退回預設位置"
+          }
+        }
+      }
+    },
     "下载管理": {
       "localizations": {
         "zh-Hant": {
@@ -1067,7 +1407,16 @@
         }
       }
     },
-    "与 Bangumi 保持相同的追番状态": {},
+    "与 Bangumi 保持相同的追番状态": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "與 Bangumi 保持相同的追番狀態"
+          }
+        }
+      }
+    },
     "临时目录": {
       "localizations": {
         "zh-Hant": {
@@ -1108,11 +1457,56 @@
         }
       }
     },
-    "云盘上的备份文件不是有效的备份（可能不是本应用写的，或者文件已损坏）。": {},
-    "云盘上的备份文件是 0 字节": {},
-    "云盘上的备份文件是空的（0 字节），里面没有数据可恢复。": {},
-    "云盘上的那个文件不是备份文件（开头不是 JSON），可能是登录页或错误页。": {},
-    "云盘读写失败。": {},
+    "云盘上的备份文件不是有效的备份（可能不是本应用写的，或者文件已损坏）。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雲端上的備份檔案不是有效的備份（可能不是本應用程式寫的，或者檔案已損壞）。"
+          }
+        }
+      }
+    },
+    "云盘上的备份文件是 0 字节": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雲端上的備份檔案是 0 位元組"
+          }
+        }
+      }
+    },
+    "云盘上的备份文件是空的（0 字节），里面没有数据可恢复。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雲端上的備份檔案是空的（0 位元組），裡面沒有資料可回復。"
+          }
+        }
+      }
+    },
+    "云盘上的那个文件不是备份文件（开头不是 JSON），可能是登录页或错误页。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雲端上的那個檔案不是備份檔案（開頭不是 JSON），可能是登入頁或錯誤頁。"
+          }
+        }
+      }
+    },
+    "云盘读写失败。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雲端讀寫失敗。"
+          }
+        }
+      }
+    },
     "五": {
       "localizations": {
         "zh-Hant": {
@@ -1143,7 +1537,16 @@
         }
       }
     },
-    "今天": {},
+    "今天": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今天"
+          }
+        }
+      }
+    },
     "今天 %@": {
       "localizations": {
         "zh-Hant": {
@@ -1184,7 +1587,16 @@
         }
       }
     },
-    "从剪贴板恢复": {},
+    "从剪贴板恢复": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "從剪貼簿回復"
+          }
+        }
+      }
+    },
     "从剪贴板粘贴": {
       "localizations": {
         "zh-Hant": {
@@ -1215,7 +1627,16 @@
         }
       }
     },
-    "从文件恢复": {},
+    "从文件恢复": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "從檔案回復"
+          }
+        }
+      }
+    },
     "从时间表移除": {
       "localizations": {
         "zh-Hant": {
@@ -1296,8 +1717,26 @@
         }
       }
     },
-    "令牌已保存，尚未验证": {},
-    "以 Bangumi 为准": {},
+    "令牌已保存，尚未验证": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "權杖已儲存，尚未驗證"
+          }
+        }
+      }
+    },
+    "以 Bangumi 为准": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以 Bangumi 為準"
+          }
+        }
+      }
+    },
     "以图搜番": {
       "localizations": {
         "zh-Hant": {
@@ -1308,7 +1747,16 @@
         }
       }
     },
-    "以本机为准": {},
+    "以本机为准": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以本機為準"
+          }
+        }
+      }
+    },
     "低内存模式": {
       "localizations": {
         "zh-Hant": {
@@ -1329,7 +1777,16 @@
         }
       }
     },
-    "使用 Access Token 授权，令牌只存在本机": {},
+    "使用 Access Token 授权，令牌只存在本机": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 Access Token 授權，權杖只存在本機"
+          }
+        }
+      }
+    },
     "使用 POST 搜索": {
       "localizations": {
         "zh-Hant": {
@@ -1420,9 +1877,36 @@
         }
       }
     },
-    "例如 1.0.0": {},
-    "例如 孤独摇滚": {},
-    "例如 示例站点": {},
+    "例如 1.0.0": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例如 1.0.0"
+          }
+        }
+      }
+    },
+    "例如 孤独摇滚": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例如 孤獨搖滾"
+          }
+        }
+      }
+    },
+    "例如 示例站点": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例如 範例站點"
+          }
+        }
+      }
+    },
     "侧载安装可能无法正常更改，这是已知问题。换位置只对之后下载的剧集生效，之前的不会跟着搬。": {
       "localizations": {
         "zh-Hant": {
@@ -1483,7 +1967,16 @@
         }
       }
     },
-    "保留最近更新": {},
+    "保留最近更新": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留最近更新"
+          }
+        }
+      }
+    },
     "修改条件": {
       "localizations": {
         "zh-Hant": {
@@ -1554,7 +2047,16 @@
         }
       }
     },
-    "先填 WebDAV 地址": {},
+    "先填 WebDAV 地址": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先填 WebDAV 位址"
+          }
+        }
+      }
+    },
     "全屏": {
       "localizations": {
         "zh-Hant": {
@@ -1605,7 +2107,26 @@
         }
       }
     },
-    "共 %@ 条规则%@。": {},
+    "共 %@ 条规则。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共 %@ 條規則。"
+          }
+        }
+      }
+    },
+    "共 %@ 条规则，%@ 条可更新。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共 %@ 條規則，%@ 條可更新。"
+          }
+        }
+      }
+    },
     "共 %@ 条规则，数据来自 KazumiRules 仓库。": {
       "localizations": {
         "zh-Hant": {
@@ -1626,7 +2147,16 @@
         }
       }
     },
-    "共 %@ 项设置，将覆盖当前设置。": {},
+    "共 %@ 项设置，将覆盖当前设置。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共 %@ 項設定，將覆蓋目前設定。"
+          }
+        }
+      }
+    },
     "关于": {
       "localizations": {
         "zh-Hant": {
@@ -1919,7 +2449,16 @@
         }
       }
     },
-    "删除 %@": {},
+    "删除 %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除 %@"
+          }
+        }
+      }
+    },
     "删除「%@」的全部下载？": {
       "localizations": {
         "zh-Hant": {
@@ -1950,8 +2489,26 @@
         }
       }
     },
-    "删除规则「%@」？": {},
-    "删除规则？": {},
+    "删除规则「%@」？": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除規則「%@」？"
+          }
+        }
+      }
+    },
+    "删除规则？": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除規則？"
+          }
+        }
+      }
+    },
     "删除记录": {
       "localizations": {
         "zh-Hant": {
@@ -1962,7 +2519,16 @@
         }
       }
     },
-    "删除选中的 %@ 条规则？": {},
+    "删除选中的 %@ 条规则？": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除選取的 %@ 條規則？"
+          }
+        }
+      }
+    },
     "别名": {
       "localizations": {
         "zh-Hant": {
@@ -1983,7 +2549,16 @@
         }
       }
     },
-    "制作人员": {},
+    "制作人员": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "製作人員"
+          }
+        }
+      }
+    },
     "刷新": {
       "localizations": {
         "zh-Hant": {
@@ -2034,7 +2609,16 @@
         }
       }
     },
-    "剧集分隔符": {},
+    "剧集分隔符": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "劇集分隔符"
+          }
+        }
+      }
+    },
     "剧集列表": {
       "localizations": {
         "zh-Hant": {
@@ -2045,11 +2629,56 @@
         }
       }
     },
-    "剧集列表路径": {},
-    "剧集名称路径": {},
-    "剧集地址路径": {},
-    "剧集字符串路径": {},
-    "剧集数量：%@": {},
+    "剧集列表路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "劇集清單路徑"
+          }
+        }
+      }
+    },
+    "剧集名称路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "劇集名稱路徑"
+          }
+        }
+      }
+    },
+    "剧集地址路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "劇集位址路徑"
+          }
+        }
+      }
+    },
+    "剧集字符串路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "劇集字串路徑"
+          }
+        }
+      }
+    },
+    "剧集数量：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "劇集數量：%@"
+          }
+        }
+      }
+    },
     "剧集页面 URL 无效: %@": {
       "localizations": {
         "zh-Hant": {
@@ -2070,8 +2699,26 @@
         }
       }
     },
-    "剪贴板里没有可用的图片链接": {},
-    "剪贴板里没有设置备份。先复制一段备份文本，或者改用从文件恢复。": {},
+    "剪贴板里没有可用的图片链接": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "剪貼簿裡沒有可用的圖片連結"
+          }
+        }
+      }
+    },
+    "剪贴板里没有设置备份。先复制一段备份文本，或者改用从文件恢复。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "剪貼簿裡沒有設定備份。先複製一段備份文字，或者改用從檔案回復。"
+          }
+        }
+      }
+    },
     "加入房间": {
       "localizations": {
         "zh-Hant": {
@@ -2152,7 +2799,16 @@
         }
       }
     },
-    "历史 %@ 条": {},
+    "历史 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "歷史 %@ 條"
+          }
+        }
+      }
+    },
     "原地": {
       "localizations": {
         "zh-Hant": {
@@ -2233,7 +2889,16 @@
         }
       }
     },
-    "发送失败：请先在「我的」里登录 Bangumi 后再试。": {},
+    "发送失败：请先在「我的」里登录 Bangumi 后再试。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "傳送失敗：請先在「我的」裡登入 Bangumi 後再試。"
+          }
+        }
+      }
+    },
     "发送弹幕": {
       "localizations": {
         "zh-Hant": {
@@ -2344,7 +3009,16 @@
         }
       }
     },
-    "可更新 %@ 条": {},
+    "可更新 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可更新 %@ 條"
+          }
+        }
+      }
+    },
     "合并重复 %@ 条": {
       "localizations": {
         "zh-Hant": {
@@ -2415,9 +3089,36 @@
         }
       }
     },
-    "同步失败：条目 %@ 上传到 Bangumi 失败": {},
-    "同步完成": {},
-    "同步没能完成：%@": {},
+    "同步失败：条目 %@ 上传到 Bangumi 失败": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同步失敗：條目 %@ 上傳到 Bangumi 失敗"
+          }
+        }
+      }
+    },
+    "同步完成": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同步完成"
+          }
+        }
+      }
+    },
+    "同步没能完成：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同步沒能完成：%@"
+          }
+        }
+      }
+    },
     "同步结果": {
       "localizations": {
         "zh-Hant": {
@@ -2458,8 +3159,26 @@
         }
       }
     },
-    "同步跳过：没配地址": {},
-    "名称路径": {},
+    "同步跳过：没配地址": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同步略過：沒設定位址"
+          }
+        }
+      }
+    },
+    "名称路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名稱路徑"
+          }
+        }
+      }
+    },
     "后台自动画中画": {
       "localizations": {
         "zh-Hant": {
@@ -2470,7 +3189,16 @@
         }
       }
     },
-    "吐槽": {},
+    "吐槽": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "吐槽"
+          }
+        }
+      }
+    },
     "否": {
       "localizations": {
         "zh-Hant": {
@@ -2561,14 +3289,86 @@
         }
       }
     },
-    "周%@": {},
-    "周一": {},
-    "周三": {},
-    "周二": {},
-    "周五": {},
-    "周六": {},
-    "周四": {},
-    "周日": {},
+    "周%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週%@"
+          }
+        }
+      }
+    },
+    "周一": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週一"
+          }
+        }
+      }
+    },
+    "周三": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週三"
+          }
+        }
+      }
+    },
+    "周二": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週二"
+          }
+        }
+      }
+    },
+    "周五": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週五"
+          }
+        }
+      }
+    },
+    "周六": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週六"
+          }
+        }
+      }
+    },
+    "周四": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週四"
+          }
+        }
+      }
+    },
+    "周日": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "週日"
+          }
+        }
+      }
+    },
     "响应格式": {
       "localizations": {
         "zh-Hant": {
@@ -2619,7 +3419,16 @@
         }
       }
     },
-    "图标作者": {},
+    "图标作者": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "圖示作者"
+          }
+        }
+      }
+    },
     "图片会在下次加载时重新下载。视频、记录与设置不会删除。": {
       "localizations": {
         "zh-Hant": {
@@ -2830,7 +3639,16 @@
         }
       }
     },
-    "基本信息": {},
+    "基本信息": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "基本資訊"
+          }
+        }
+      }
+    },
     "声道": {
       "localizations": {
         "zh-Hant": {
@@ -2861,9 +3679,36 @@
         }
       }
     },
-    "备份文件格式跟当前版本对不上（缺少或多余的字段）。": {},
-    "备份文件读取失败，格式不对。": {},
-    "备份时间：%@\\n": {},
+    "备份文件格式跟当前版本对不上（缺少或多余的字段）。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "備份檔案格式跟目前版本對不上（缺少或多餘的欄位）。"
+          }
+        }
+      }
+    },
+    "备份文件读取失败，格式不对。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "備份檔案讀取失敗，格式不對。"
+          }
+        }
+      }
+    },
+    "备份时间：%@\n": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "備份時間：%@\n"
+          }
+        }
+      }
+    },
     "备份来自更新版本的 Kazumi，请先升级应用": {
       "localizations": {
         "zh-Hant": {
@@ -3024,7 +3869,16 @@
         }
       }
     },
-    "失败 %@ 条": {},
+    "失败 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "失敗 %@ 條"
+          }
+        }
+      }
+    },
     "好": {
       "localizations": {
         "zh-Hant": {
@@ -3085,9 +3939,36 @@
         }
       }
     },
-    "字段分隔符": {},
-    "字符串越界": {},
-    "存不到这个位置，可能是空间不够，或者没有写入权限": {},
+    "字段分隔符": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "欄位分隔符"
+          }
+        }
+      }
+    },
+    "字符串越界": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "字串越界"
+          }
+        }
+      }
+    },
+    "存不到这个位置，可能是空间不够，或者没有写入权限": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存不到這個位置，可能是空間不夠，或者沒有寫入權限"
+          }
+        }
+      }
+    },
     "存储": {
       "localizations": {
         "zh-Hant": {
@@ -3188,8 +4069,26 @@
         }
       }
     },
-    "定义如何在站点内检索条目": {},
-    "定义如何获取播放线路与剧集列表": {},
+    "定义如何在站点内检索条目": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "定義如何在站點內檢索條目"
+          }
+        }
+      }
+    },
+    "定义如何获取播放线路与剧集列表": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "定義如何取得播放線路與劇集清單"
+          }
+        }
+      }
+    },
     "定时关闭": {
       "localizations": {
         "zh-Hant": {
@@ -3280,9 +4179,36 @@
         }
       }
     },
-    "导出到剪贴板": {},
-    "导出到文件": {},
-    "封面保存失败，请重试": {},
+    "导出到剪贴板": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出到剪貼簿"
+          }
+        }
+      }
+    },
+    "导出到文件": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出到檔案"
+          }
+        }
+      }
+    },
+    "封面保存失败，请重试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "封面儲存失敗，請重試"
+          }
+        }
+      }
+    },
     "将覆盖同名规则：%@%@": {
       "localizations": {
         "zh-Hant": {
@@ -3313,7 +4239,16 @@
         }
       }
     },
-    "屏蔽词 %@ 条": {},
+    "屏蔽词 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遮蔽詞 %@ 條"
+          }
+        }
+      }
+    },
     "屏蔽词：修改规则后自动同步。": {
       "localizations": {
         "zh-Hant": {
@@ -3394,8 +4329,26 @@
         }
       }
     },
-    "已从时间表移除": {},
-    "已保存": {},
+    "已从时间表移除": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已從時間表移除"
+          }
+        }
+      }
+    },
+    "已保存": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已儲存"
+          }
+        }
+      }
+    },
     "已保存 %@ 个登录凭证，这条规则之后的请求会带上它。": {
       "localizations": {
         "zh-Hant": {
@@ -3476,7 +4429,16 @@
         }
       }
     },
-    "已同步，但没能写回旧版格式：%@": {},
+    "已同步，但没能写回旧版格式：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已同步，但沒能寫回舊版格式：%@"
+          }
+        }
+      }
+    },
     "已复制": {
       "localizations": {
         "zh-Hant": {
@@ -3487,8 +4449,26 @@
         }
       }
     },
-    "已复制「%@」的分享链接": {},
-    "已复制到剪贴板": {},
+    "已复制「%@」的分享链接": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已複製「%@」的分享連結"
+          }
+        }
+      }
+    },
+    "已复制到剪贴板": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已複製到剪貼簿"
+          }
+        }
+      }
+    },
     "已安装": {
       "localizations": {
         "zh-Hant": {
@@ -3529,10 +4509,46 @@
         }
       }
     },
-    "已导入 %@ 条规则": {},
-    "已导出到文件": {},
-    "已开启": {},
-    "已恢复 %@ 项设置": {},
+    "已导入 %@ 条规则": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已匯入 %@ 條規則"
+          }
+        }
+      }
+    },
+    "已导出到文件": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已匯出到檔案"
+          }
+        }
+      }
+    },
+    "已开启": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已開啟"
+          }
+        }
+      }
+    },
+    "已恢复 %@ 项设置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已回復 %@ 項設定"
+          }
+        }
+      }
+    },
     "已恢复默认弹幕设置": {
       "localizations": {
         "zh-Hant": {
@@ -3583,8 +4599,26 @@
         }
       }
     },
-    "已收到响应（%@ 个字符）": {},
-    "已是最新 %@ 条": {},
+    "已收到响应（%@ 个字符）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已收到回應（%@ 個字元）"
+          }
+        }
+      }
+    },
+    "已是最新 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已是最新 %@ 條"
+          }
+        }
+      }
+    },
     "已是最新版本": {
       "localizations": {
         "zh-Hant": {
@@ -3595,7 +4629,16 @@
         }
       }
     },
-    "已显示 %@ / %@ 条": {},
+    "已显示 %@ / %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已顯示 %@ / %@ 條"
+          }
+        }
+      }
+    },
     "已显示 %@ / %@ 条评论": {
       "localizations": {
         "zh-Hant": {
@@ -3616,8 +4659,26 @@
         }
       }
     },
-    "已更新 %@ 条": {},
-    "已更新「%@」": {},
+    "已更新 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新 %@ 條"
+          }
+        }
+      }
+    },
+    "已更新「%@」": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新「%@」"
+          }
+        }
+      }
+    },
     "已标为%@": {
       "localizations": {
         "zh-Hant": {
@@ -3628,7 +4689,16 @@
         }
       }
     },
-    "已标记为在看，并添加到时间表": {},
+    "已标记为在看，并添加到时间表": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已標記為在看，並加入時間表"
+          }
+        }
+      }
+    },
     "已标记本集看过": {
       "localizations": {
         "zh-Hant": {
@@ -3639,7 +4709,16 @@
         }
       }
     },
-    "已添加到时间表": {},
+    "已添加到时间表": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入時間表"
+          }
+        }
+      }
+    },
     "已清除全部离线下载。": {
       "localizations": {
         "zh-Hant": {
@@ -3660,7 +4739,16 @@
         }
       }
     },
-    "已登录 · %@": {},
+    "已登录 · %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已登入 · %@"
+          }
+        }
+      }
+    },
     "已看完": {
       "localizations": {
         "zh-Hant": {
@@ -3801,7 +4889,16 @@
         }
       }
     },
-    "已连接 · %@": {},
+    "已连接 · %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已連線 · %@"
+          }
+        }
+      }
+    },
     "帧率": {
       "localizations": {
         "zh-Hant": {
@@ -3812,7 +4909,16 @@
         }
       }
     },
-    "帧长越界（偏移 %@，帧长 %@）": {},
+    "帧长越界（偏移 %@，帧长 %@）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "影格長度越界（偏移 %@，影格長度 %@）"
+          }
+        }
+      }
+    },
     "年": {
       "localizations": {
         "zh-Hant": {
@@ -3943,7 +5049,16 @@
         }
       }
     },
-    "开始同步 Bangumi 状态": {},
+    "开始同步 Bangumi 状态": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開始同步 Bangumi 狀態"
+          }
+        }
+      }
+    },
     "开始测试": {
       "localizations": {
         "zh-Hant": {
@@ -3964,7 +5079,16 @@
         }
       }
     },
-    "开始识别": {},
+    "开始识别": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開始辨識"
+          }
+        }
+      }
+    },
     "开播时间": {
       "localizations": {
         "zh-Hant": {
@@ -3975,7 +5099,16 @@
         }
       }
     },
-    "引导步骤、通知权限、设备同步状态不会被改动。": {},
+    "引导步骤、通知权限、设备同步状态不会被改动。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引導步驟、通知權限、裝置同步狀態不會被改動。"
+          }
+        }
+      }
+    },
     "弹幕不透明度": {
       "localizations": {
         "zh-Hant": {
@@ -4056,7 +5189,16 @@
         }
       }
     },
-    "弹幕屏蔽词已同步": {},
+    "弹幕屏蔽词已同步": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "彈幕遮蔽詞已同步"
+          }
+        }
+      }
+    },
     "弹幕持续时间": {
       "localizations": {
         "zh-Hant": {
@@ -4217,7 +5359,16 @@
         }
       }
     },
-    "弹弹play 弹幕": {},
+    "弹弹play 弹幕": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "彈彈play 彈幕"
+          }
+        }
+      }
+    },
     "强调色": {
       "localizations": {
         "zh-Hant": {
@@ -4278,7 +5429,6 @@
         }
       }
     },
-    "当前没有已排定的提醒。\\n标记「在看」的番剧有更新时间数据时，会自动排定。": {},
     "当前版本": {
       "localizations": {
         "zh-Hant": {
@@ -4399,7 +5549,16 @@
         }
       }
     },
-    "恢复后请回到「同步设置」，确认追番同步和多设备同步还能连上。": {},
+    "恢复后请回到「同步设置」，确认追番同步和多设备同步还能连上。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回復後請回到「同步設定」，確認追番同步和多裝置同步還能連上。"
+          }
+        }
+      }
+    },
     "恢复设置": {
       "localizations": {
         "zh-Hant": {
@@ -4600,7 +5759,16 @@
         }
       }
     },
-    "所有规则都是最新版本。": {},
+    "所有规则都是最新版本。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有規則都是最新版本。"
+          }
+        }
+      }
+    },
     "打不开文件面板": {
       "localizations": {
         "zh-Hant": {
@@ -4801,8 +5969,26 @@
         }
       }
     },
-    "找到 %@ 个相似片段": {},
-    "把同步账号、WebDAV 与代理密码一起导出，请只存放在自己可信的地方": {},
+    "找到 %@ 个相似片段": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找到 %@ 個相似片段"
+          }
+        }
+      }
+    },
+    "把同步账号、WebDAV 与代理密码一起导出，请只存放在自己可信的地方": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把同步帳號、WebDAV 與代理密碼一起匯出，請只存放在自己可信的地方"
+          }
+        }
+      }
+    },
     "抛弃": {
       "localizations": {
         "zh-Hant": {
@@ -5163,8 +6349,26 @@
         }
       }
     },
-    "搜索图片": {},
-    "搜索地址": {},
+    "搜索图片": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋圖片"
+          }
+        }
+      }
+    },
+    "搜索地址": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋位址"
+          }
+        }
+      }
+    },
     "搜索查询参数": {
       "localizations": {
         "zh-Hant": {
@@ -5265,7 +6469,16 @@
         }
       }
     },
-    "搜索请求": {},
+    "搜索请求": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋請求"
+          }
+        }
+      }
+    },
     "搜索请求体": {
       "localizations": {
         "zh-Hant": {
@@ -5396,8 +6609,26 @@
         }
       }
     },
-    "播放线路": {},
-    "播放线路 %@：%@": {},
+    "播放线路": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放線路"
+          }
+        }
+      }
+    },
+    "播放线路 %@：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放線路 %@：%@"
+          }
+        }
+      }
+    },
     "播放线路%@": {
       "localizations": {
         "zh-Hant": {
@@ -5458,7 +6689,16 @@
         }
       }
     },
-    "播放页地址模板": {},
+    "播放页地址模板": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放頁位址範本"
+          }
+        }
+      }
+    },
     "播放页地址模板不能为空": {
       "localizations": {
         "zh-Hant": {
@@ -5479,7 +6719,16 @@
         }
       }
     },
-    "播放页查询参数 (JSON)": {},
+    "播放页查询参数 (JSON)": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放頁查詢參數 (JSON)"
+          }
+        }
+      }
+    },
     "操作失败": {
       "localizations": {
         "zh-Hant": {
@@ -5510,8 +6759,26 @@
         }
       }
     },
-    "收藏 %@ 部": {},
-    "收藏已同步": {},
+    "收藏 %@ 部": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏 %@ 部"
+          }
+        }
+      }
+    },
+    "收藏已同步": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏已同步"
+          }
+        }
+      }
+    },
     "收藏库": {
       "localizations": {
         "zh-Hant": {
@@ -5602,7 +6869,16 @@
         }
       }
     },
-    "放送开始": {},
+    "放送开始": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播出開始"
+          }
+        }
+      }
+    },
     "放送时刻按季度缓存 7 天，离线时用旧数据。": {
       "localizations": {
         "zh-Hant": {
@@ -5673,7 +6949,16 @@
         }
       }
     },
-    "文件不是 UTF-8 文本": {},
+    "文件不是 UTF-8 文本": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檔案不是 UTF-8 文字"
+          }
+        }
+      }
+    },
     "文件不是 UTF-8 文本。": {
       "localizations": {
         "zh-Hant": {
@@ -5684,7 +6969,16 @@
         }
       }
     },
-    "文件已经写上去了，但读回来核对不上，这次不算备份成功。": {},
+    "文件已经写上去了，但读回来核对不上，这次不算备份成功。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檔案已經寫上去了，但讀回來核對不上，這次不算備份成功。"
+          }
+        }
+      }
+    },
     "文件读不出来": {
       "localizations": {
         "zh-Hant": {
@@ -5725,7 +7019,16 @@
         }
       }
     },
-    "新番，切换放送季度，当前 %@": {},
+    "新番，切换放送季度，当前 %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新番，切換播出季度，目前 %@"
+          }
+        }
+      }
+    },
     "方向": {
       "localizations": {
         "zh-Hant": {
@@ -5756,7 +7059,16 @@
         }
       }
     },
-    "无法打开浏览器": {},
+    "无法打开浏览器": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法開啟瀏覽器"
+          }
+        }
+      }
+    },
     "无法打开浏览器，请稍后重试": {
       "localizations": {
         "zh-Hant": {
@@ -5767,7 +7079,16 @@
         }
       }
     },
-    "无法解析版本": {},
+    "无法解析版本": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法解析版本"
+          }
+        }
+      }
+    },
     "无法识别的 JSON 值": {
       "localizations": {
         "zh-Hant": {
@@ -5778,7 +7099,16 @@
         }
       }
     },
-    "无法读取这张图片，请换一张": {},
+    "无法读取这张图片，请换一张": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法讀取這張圖片，請換一張"
+          }
+        }
+      }
+    },
     "无法连接 WebDAV": {
       "localizations": {
         "zh-Hant": {
@@ -5910,7 +7240,16 @@
         }
       }
     },
-    "星期%@": {},
+    "星期%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "星期%@"
+          }
+        }
+      }
+    },
     "春": {
       "localizations": {
         "zh-Hant": {
@@ -6021,9 +7360,36 @@
         }
       }
     },
-    "暂无关联条目": {},
-    "暂无制作人员信息": {},
-    "暂无封面": {},
+    "暂无关联条目": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚無關聯條目"
+          }
+        }
+      }
+    },
+    "暂无制作人员信息": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚無製作人員資訊"
+          }
+        }
+      }
+    },
+    "暂无封面": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚無封面"
+          }
+        }
+      }
+    },
     "暂无搜索历史": {
       "localizations": {
         "zh-Hant": {
@@ -6054,7 +7420,16 @@
         }
       }
     },
-    "暂无简介": {},
+    "暂无简介": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚無簡介"
+          }
+        }
+      }
+    },
     "暂无观看历史": {
       "localizations": {
         "zh-Hant": {
@@ -6065,7 +7440,16 @@
         }
       }
     },
-    "暂无角色信息": {},
+    "暂无角色信息": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚無角色資訊"
+          }
+        }
+      }
+    },
     "暂无评分": {
       "localizations": {
         "zh-Hant": {
@@ -6086,7 +7470,16 @@
         }
       }
     },
-    "暂时无法打开链接，请稍后再试": {},
+    "暂时无法打开链接，请稍后再试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暫時無法開啟連結，請稍後再試"
+          }
+        }
+      }
+    },
     "更多": {
       "localizations": {
         "zh-Hant": {
@@ -6207,7 +7600,16 @@
         }
       }
     },
-    "更新进度": {},
+    "更新进度": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新進度"
+          }
+        }
+      }
+    },
     "最新优先": {
       "localizations": {
         "zh-Hant": {
@@ -6268,8 +7670,26 @@
         }
       }
     },
-    "服务器上还没有备份，先点「立即备份」上传一份": {},
-    "服务器出错了（%@），请稍后再试。": {},
+    "服务器上还没有备份，先点「立即备份」上传一份": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器上還沒有備份，先點「立即備份」上傳一份"
+          }
+        }
+      }
+    },
+    "服务器出错了（%@），请稍后再试。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器出錯了（%@），請稍後再試。"
+          }
+        }
+      }
+    },
     "服务器地址": {
       "localizations": {
         "zh-Hant": {
@@ -6310,7 +7730,16 @@
         }
       }
     },
-    "未发现状态差异，无需同步": {},
+    "未发现状态差异，无需同步": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未發現狀態差異，無需同步"
+          }
+        }
+      }
+    },
     "未命名番剧": {
       "localizations": {
         "zh-Hant": {
@@ -6431,7 +7860,16 @@
         }
       }
     },
-    "未连接": {},
+    "未连接": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未連線"
+          }
+        }
+      }
+    },
     "未追": {
       "localizations": {
         "zh-Hant": {
@@ -6442,8 +7880,26 @@
         }
       }
     },
-    "未选择内容": {},
-    "未配置": {},
+    "未选择内容": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未選取內容"
+          }
+        }
+      }
+    },
+    "未配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未設定"
+          }
+        }
+      }
+    },
     "未配置 DanDanPlay 凭据，无法加载弹幕": {
       "localizations": {
         "zh-Hant": {
@@ -6454,7 +7910,16 @@
         }
       }
     },
-    "本地优先": {},
+    "本地优先": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本機優先"
+          }
+        }
+      }
+    },
     "本地截图": {
       "localizations": {
         "zh-Hant": {
@@ -6615,7 +8080,16 @@
         }
       }
     },
-    "来源路径": {},
+    "来源路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "來源路徑"
+          }
+        }
+      }
+    },
     "来源：%@": {
       "localizations": {
         "zh-Hant": {
@@ -6766,8 +8240,26 @@
         }
       }
     },
-    "查询参数 (JSON)": {},
-    "标签": {},
+    "查询参数 (JSON)": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查詢參數 (JSON)"
+          }
+        }
+      }
+    },
+    "标签": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標籤"
+          }
+        }
+      }
+    },
     "标记为在看并添加": {
       "localizations": {
         "zh-Hant": {
@@ -6778,8 +8270,26 @@
         }
       }
     },
-    "标题已复制": {},
-    "检查「%@」更新失败，请稍后重试": {},
+    "标题已复制": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標題已複製"
+          }
+        }
+      }
+    },
+    "检查「%@」更新失败，请稍后重试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查「%@」更新失敗，請稍後重試"
+          }
+        }
+      }
+    },
     "检查地址和端口，或确认代理软件已启动": {
       "localizations": {
         "zh-Hant": {
@@ -6830,7 +8340,16 @@
         }
       }
     },
-    "检测值": {},
+    "检测值": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "偵測值"
+          }
+        }
+      }
+    },
     "检测更新": {
       "localizations": {
         "zh-Hant": {
@@ -6881,7 +8400,16 @@
         }
       }
     },
-    "概览": {},
+    "概览": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "概覽"
+          }
+        }
+      }
+    },
     "横右": {
       "localizations": {
         "zh-Hant": {
@@ -6932,11 +8460,56 @@
         }
       }
     },
-    "正在上传合并结果…": {},
-    "正在上传本地新增状态": {},
-    "正在写回原版观看记录 · %@ / %@": {},
-    "正在加载关联条目…": {},
-    "正在加载制作人员…": {},
+    "正在上传合并结果…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在上傳合併結果…"
+          }
+        }
+      }
+    },
+    "正在上传本地新增状态": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在上傳本機新增狀態"
+          }
+        }
+      }
+    },
+    "正在写回原版观看记录 · %@ / %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在寫回原版觀看紀錄 · %@ / %@"
+          }
+        }
+      }
+    },
+    "正在加载关联条目…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在載入關聯條目…"
+          }
+        }
+      }
+    },
+    "正在加载制作人员…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在載入製作人員…"
+          }
+        }
+      }
+    },
     "正在加载剧集列表…": {
       "localizations": {
         "zh-Hant": {
@@ -6947,7 +8520,16 @@
         }
       }
     },
-    "正在加载吐槽…": {},
+    "正在加载吐槽…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在載入吐槽…"
+          }
+        }
+      }
+    },
     "正在加载第 %@ 集": {
       "localizations": {
         "zh-Hant": {
@@ -6958,7 +8540,16 @@
         }
       }
     },
-    "正在加载角色…": {},
+    "正在加载角色…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在載入角色…"
+          }
+        }
+      }
+    },
     "正在加载评论…": {
       "localizations": {
         "zh-Hant": {
@@ -7009,9 +8600,36 @@
         }
       }
     },
-    "正在同步弹幕屏蔽词…": {},
-    "正在同步收藏…": {},
-    "正在同步观看记录…": {},
+    "正在同步弹幕屏蔽词…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在同步彈幕遮蔽詞…"
+          }
+        }
+      }
+    },
+    "正在同步收藏…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在同步收藏…"
+          }
+        }
+      }
+    },
+    "正在同步观看记录…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在同步觀看紀錄…"
+          }
+        }
+      }
+    },
     "正在寻找这一幕": {
       "localizations": {
         "zh-Hant": {
@@ -7074,7 +8692,16 @@
         }
       }
     },
-    "正在查看 %@": {},
+    "正在查看 %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在檢視 %@"
+          }
+        }
+      }
+    },
     "正在检查…": {
       "localizations": {
         "zh-Hant": {
@@ -7105,7 +8732,6 @@
         }
       }
     },
-    "正在比对动画画面，匹配番名、集数与时间。\\n请稍等片刻。": {},
     "正在测试…": {
       "localizations": {
         "zh-Hant": {
@@ -7156,7 +8782,16 @@
         }
       }
     },
-    "正在获取…": {},
+    "正在获取…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在取得…"
+          }
+        }
+      }
+    },
     "正在获取更新日志…": {
       "localizations": {
         "zh-Hant": {
@@ -7187,7 +8822,16 @@
         }
       }
     },
-    "正在补全本地缺失状态": {},
+    "正在补全本地缺失状态": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在補齊本機缺少的狀態"
+          }
+        }
+      }
+    },
     "正在解析播放地址": {
       "localizations": {
         "zh-Hant": {
@@ -7208,10 +8852,46 @@
         }
       }
     },
-    "正在识别": {},
-    "正在请求…": {},
-    "正在读取云盘…": {},
-    "正在读取图片": {},
+    "正在识别": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在辨識"
+          }
+        }
+      }
+    },
+    "正在请求…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在請求…"
+          }
+        }
+      }
+    },
+    "正在读取云盘…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在讀取雲端…"
+          }
+        }
+      }
+    },
+    "正在读取图片": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在讀取圖片"
+          }
+        }
+      }
+    },
     "正在载入使用约定…": {
       "localizations": {
         "zh-Hant": {
@@ -7222,8 +8902,26 @@
         }
       }
     },
-    "正在连接": {},
-    "正在连接 Bangumi…": {},
+    "正在连接": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在連線"
+          }
+        }
+      }
+    },
+    "正在连接 Bangumi…": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在連線 Bangumi…"
+          }
+        }
+      }
+    },
     "正在连接云盘…": {
       "localizations": {
         "zh-Hant": {
@@ -7274,7 +8972,16 @@
         }
       }
     },
-    "比较两边的更新时间": {},
+    "比较两边的更新时间": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "比較兩邊的更新時間"
+          }
+        }
+      }
+    },
     "没找到这部剧的播放源": {
       "localizations": {
         "zh-Hant": {
@@ -7295,7 +9002,16 @@
         }
       }
     },
-    "没有可导出的设置": {},
+    "没有可导出的设置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有可匯出的設定"
+          }
+        }
+      }
+    },
     "没有可更新的规则": {
       "localizations": {
         "zh-Hant": {
@@ -7316,7 +9032,16 @@
         }
       }
     },
-    "没有找到匹配画面": {},
+    "没有找到匹配画面": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有找到符合的畫面"
+          }
+        }
+      }
+    },
     "没有找到番剧": {
       "localizations": {
         "zh-Hant": {
@@ -7377,7 +9102,16 @@
         }
       }
     },
-    "没见过的类型编号 %@（偏移 %@）": {},
+    "没见过的类型编号 %@（偏移 %@）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒見過的類型編號 %@（偏移 %@）"
+          }
+        }
+      }
+    },
     "没解析到播放地址": {
       "localizations": {
         "zh-Hant": {
@@ -7398,7 +9132,16 @@
         }
       }
     },
-    "测试关键词": {},
+    "测试关键词": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "測試關鍵字"
+          }
+        }
+      }
+    },
     "测试地址": {
       "localizations": {
         "zh-Hant": {
@@ -7659,7 +9402,16 @@
         }
       }
     },
-    "源码仓库": {},
+    "源码仓库": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原始碼倉庫"
+          }
+        }
+      }
+    },
     "滚动弹幕": {
       "localizations": {
         "zh-Hant": {
@@ -7760,7 +9512,16 @@
         }
       }
     },
-    "版本": {},
+    "版本": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "版本"
+          }
+        }
+      }
+    },
     "版本 %@": {
       "localizations": {
         "zh-Hant": {
@@ -7791,7 +9552,16 @@
         }
       }
     },
-    "用 Bangumi 状态更新本机": {},
+    "用 Bangumi 状态更新本机": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用 Bangumi 狀態更新本機"
+          }
+        }
+      }
+    },
     "用%@打开番剧": {
       "localizations": {
         "zh-Hant": {
@@ -7822,7 +9592,16 @@
         }
       }
     },
-    "用截图找到番名": {},
+    "用截图找到番名": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用截圖找到番名"
+          }
+        }
+      }
+    },
     "用户名": {
       "localizations": {
         "zh-Hant": {
@@ -7833,7 +9612,16 @@
         }
       }
     },
-    "用本机状态更新 Bangumi": {},
+    "用本机状态更新 Bangumi": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用本機狀態更新 Bangumi"
+          }
+        }
+      }
+    },
     "由 trace.moe 识别动画截图": {
       "localizations": {
         "zh-Hant": {
@@ -8224,7 +10012,16 @@
         }
       }
     },
-    "站点地址 (baseURL)": {},
+    "站点地址 (baseURL)": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "站點位址 (baseURL)"
+          }
+        }
+      }
+    },
     "第 %@ 条：%@": {
       "localizations": {
         "zh-Hant": {
@@ -8326,8 +10123,26 @@
         }
       }
     },
-    "简介": {},
-    "类型": {},
+    "简介": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "簡介"
+          }
+        }
+      }
+    },
+    "类型": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "類型"
+          }
+        }
+      }
+    },
     "粉红色": {
       "localizations": {
         "zh-Hant": {
@@ -8468,9 +10283,36 @@
         }
       }
     },
-    "线路分隔符": {},
-    "线路列表路径": {},
-    "线路名称路径": {},
+    "线路分隔符": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "線路分隔符"
+          }
+        }
+      }
+    },
+    "线路列表路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "線路清單路徑"
+          }
+        }
+      }
+    },
+    "线路名称路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "線路名稱路徑"
+          }
+        }
+      }
+    },
     "线路节点 %@ 没有有效剧集，已跳过": {
       "localizations": {
         "zh-Hant": {
@@ -8501,8 +10343,26 @@
         }
       }
     },
-    "结果列表路径": {},
-    "结果解析": {},
+    "结果列表路径": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "結果清單路徑"
+          }
+        }
+      }
+    },
+    "结果解析": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "結果解析"
+          }
+        }
+      }
+    },
     "继续": {
       "localizations": {
         "zh-Hant": {
@@ -8683,7 +10543,16 @@
         }
       }
     },
-    "网络异常": {},
+    "网络异常": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "網路異常"
+          }
+        }
+      }
+    },
     "网络设置": {
       "localizations": {
         "zh-Hant": {
@@ -8804,7 +10673,16 @@
         }
       }
     },
-    "获取到 %@ 个播放线路%@": {},
+    "获取到 %@ 个播放线路%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取得 %@ 個播放線路%@"
+          }
+        }
+      }
+    },
     "获取授权码": {
       "localizations": {
         "zh-Hant": {
@@ -8825,7 +10703,16 @@
         }
       }
     },
-    "行为、网络与反反爬虫": {},
+    "行为、网络与反反爬虫": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "行為、網路與反反爬蟲"
+          }
+        }
+      }
+    },
     "行为设置": {
       "localizations": {
         "zh-Hant": {
@@ -8886,9 +10773,36 @@
         }
       }
     },
-    "观看记录 %@ 条": {},
-    "观看记录 %@ 条 / 收藏 %@ 部 / 屏蔽词 %@ 条": {},
-    "观看记录已同步": {},
+    "观看记录 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "觀看紀錄 %@ 條"
+          }
+        }
+      }
+    },
+    "观看记录 %@ 条 / 收藏 %@ 部 / 屏蔽词 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "觀看紀錄 %@ 條 / 收藏 %@ 部 / 遮蔽詞 %@ 條"
+          }
+        }
+      }
+    },
+    "观看记录已同步": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "觀看紀錄已同步"
+          }
+        }
+      }
+    },
     "观看足迹": {
       "localizations": {
         "zh-Hant": {
@@ -8919,7 +10833,16 @@
         }
       }
     },
-    "规则 API 级别 %@": {},
+    "规则 API 级别 %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "規則 API 級別 %@"
+          }
+        }
+      }
+    },
     "规则 API 级别 %lld": {
       "localizations": {
         "zh-Hant": {
@@ -9020,7 +10943,16 @@
         }
       }
     },
-    "规则名称": {},
+    "规则名称": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "規則名稱"
+          }
+        }
+      }
+    },
     "规则名称不能为空": {
       "localizations": {
         "zh-Hant": {
@@ -9061,7 +10993,16 @@
         }
       }
     },
-    "规则的名称、版本与站点地址": {},
+    "规则的名称、版本与站点地址": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "規則的名稱、版本與站點位址"
+          }
+        }
+      }
+    },
     "规则目录为空": {
       "localizations": {
         "zh-Hant": {
@@ -9142,8 +11083,26 @@
         }
       }
     },
-    "角色": {},
-    "解析出 %@ 个条目": {},
+    "角色": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "角色"
+          }
+        }
+      }
+    },
+    "解析出 %@ 个条目": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析出 %@ 個條目"
+          }
+        }
+      }
+    },
     "解析剧集失败，换条线路或换个源试试": {
       "localizations": {
         "zh-Hant": {
@@ -9374,8 +11333,26 @@
         }
       }
     },
-    "识别由 trace.moe 提供。开始识别后，所选图片或图片链接会发送至该服务。": {},
-    "识别这张截图": {},
+    "识别由 trace.moe 提供。开始识别后，所选图片或图片链接会发送至该服务。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "辨識由 trace.moe 提供。開始辨識後，選取的圖片或圖片連結會傳送至該服務。"
+          }
+        }
+      }
+    },
+    "识别这张截图": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "辨識這張截圖"
+          }
+        }
+      }
+    },
     "诊断": {
       "localizations": {
         "zh-Hant": {
@@ -9456,8 +11433,26 @@
         }
       }
     },
-    "详情页模板": {},
-    "请先在 Bangumi 配置中填写并保存 Access Token": {},
+    "详情页模板": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "詳細頁範本"
+          }
+        }
+      }
+    },
+    "请先在 Bangumi 配置中填写并保存 Access Token": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先在 Bangumi 設定中填寫並儲存 Access Token"
+          }
+        }
+      }
+    },
     "请先在「代理配置」里完成测试": {
       "localizations": {
         "zh-Hant": {
@@ -9478,8 +11473,26 @@
         }
       }
     },
-    "请先完善规则名称与必填字段": {},
-    "请先开启 Bangumi 同步": {},
+    "请先完善规则名称与必填字段": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先填妥規則名稱與必填欄位"
+          }
+        }
+      }
+    },
+    "请先开启 Bangumi 同步": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先開啟 Bangumi 同步"
+          }
+        }
+      }
+    },
     "请填入代理地址": {
       "localizations": {
         "zh-Hant": {
@@ -9490,7 +11503,16 @@
         }
       }
     },
-    "请填写 Access Token": {},
+    "请填写 Access Token": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請填寫 Access Token"
+          }
+        }
+      }
+    },
     "请检查网络、规则或 Cookie。": {
       "localizations": {
         "zh-Hant": {
@@ -9532,7 +11554,16 @@
       }
     },
     "请求了但系统没转（等满 3 秒）": {},
-    "请求体": {},
+    "请求体": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請求主體"
+          }
+        }
+      }
+    },
     "请求体无法编码为 UTF-8": {
       "localizations": {
         "zh-Hant": {
@@ -9553,8 +11584,26 @@
         }
       }
     },
-    "请求地址": {},
-    "请求头 (JSON)": {},
+    "请求地址": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請求位址"
+          }
+        }
+      }
+    },
+    "请求头 (JSON)": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請求標頭 (JSON)"
+          }
+        }
+      }
+    },
     "请求已取消": {
       "localizations": {
         "zh-Hant": {
@@ -9565,9 +11614,36 @@
         }
       }
     },
-    "请求方法": {},
-    "请稍后重试": {},
-    "请输入一个番剧名称作为测试关键词。": {},
+    "请求方法": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請求方法"
+          }
+        }
+      }
+    },
+    "请稍后重试": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請稍後重試"
+          }
+        }
+      }
+    },
+    "请输入一个番剧名称作为测试关键词。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請輸入一個動畫名稱作為測試關鍵字。"
+          }
+        }
+      }
+    },
     "请输入大于0的数字": {
       "localizations": {
         "zh-Hant": {
@@ -9588,7 +11664,16 @@
         }
       }
     },
-    "请输入有效的 HTTP 或 HTTPS 图片链接": {},
+    "请输入有效的 HTTP 或 HTTPS 图片链接": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請輸入有效的 HTTP 或 HTTPS 圖片連結"
+          }
+        }
+      }
+    },
     "请输入要搜索的番剧名称。": {
       "localizations": {
         "zh-Hant": {
@@ -9629,7 +11714,16 @@
         }
       }
     },
-    "读不到这个文件，可能已被移动，或者没有访问权限": {},
+    "读不到这个文件，可能已被移动，或者没有访问权限": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讀不到這個檔案，可能已被移動，或者沒有存取權限"
+          }
+        }
+      }
+    },
     "读取所选番剧在本机最近一次观看记录，保留来源和记录时间，不查询云端。": {
       "localizations": {
         "zh-Hant": {
@@ -9650,9 +11744,36 @@
         }
       }
     },
-    "读越界": {},
-    "贡献指南": {},
-    "账号信息已修改，请先保存并测试。": {},
+    "读越界": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讀取越界"
+          }
+        }
+      }
+    },
+    "贡献指南": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "貢獻指南"
+          }
+        }
+      }
+    },
+    "账号信息已修改，请先保存并测试。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "帳號資訊已修改，請先儲存並測試。"
+          }
+        }
+      }
+    },
     "质量档": {
       "localizations": {
         "zh-Hant": {
@@ -9754,7 +11875,16 @@
         }
       }
     },
-    "跳过的节点（%@）": {},
+    "跳过的节点（%@）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "略過的節點（%@）"
+          }
+        }
+      }
+    },
     "跳过秒数": {
       "localizations": {
         "zh-Hant": {
@@ -9765,7 +11895,16 @@
         }
       }
     },
-    "跳过追番同步、WebDAV 和代理的账号密码，其余设置照常恢复": {},
+    "跳过追番同步、WebDAV 和代理的账号密码，其余设置照常恢复": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "略過追番同步、WebDAV 和代理的帳號密碼，其餘設定照常回復"
+          }
+        }
+      }
+    },
     "输入要屏蔽的文字": {
       "localizations": {
         "zh-Hant": {
@@ -9916,7 +12055,16 @@
         }
       }
     },
-    "还没有人吐槽这部番": {},
+    "还没有人吐槽这部番": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還沒有人吐槽這部動畫"
+          }
+        }
+      }
+    },
     "还没有人评论": {
       "localizations": {
         "zh-Hant": {
@@ -9927,9 +12075,36 @@
         }
       }
     },
-    "还没有发出请求": {},
-    "还没有取到线路": {},
-    "还没有可展示的解析结果": {},
+    "还没有发出请求": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還沒有送出請求"
+          }
+        }
+      }
+    },
+    "还没有取到线路": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還沒有取得線路"
+          }
+        }
+      }
+    },
+    "还没有可展示的解析结果": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還沒有可顯示的解析結果"
+          }
+        }
+      }
+    },
     "还没有可用的播放规则": {
       "localizations": {
         "zh-Hant": {
@@ -10010,7 +12185,16 @@
         }
       }
     },
-    "这一幕，\\n出自哪部番？": {},
+    "这一幕，\n出自哪部番？": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這一幕，\n出自哪部動畫？"
+          }
+        }
+      }
+    },
     "这一部已经下好的文件会一起删掉。": {
       "localizations": {
         "zh-Hant": {
@@ -10161,7 +12345,16 @@
         }
       }
     },
-    "这次识别未完成": {},
+    "这次识别未完成": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這次辨識未完成"
+          }
+        }
+      }
+    },
     "进度与备份": {
       "localizations": {
         "zh-Hant": {
@@ -10202,7 +12395,16 @@
         }
       }
     },
-    "连不上服务器，请检查网络或服务器地址。": {},
+    "连不上服务器，请检查网络或服务器地址。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連不上伺服器，請檢查網路或伺服器位址。"
+          }
+        }
+      }
+    },
     "连不上这个源的服务器（域名解析不了），可能是源挂了或者网络有问题": {
       "localizations": {
         "zh-Hant": {
@@ -10243,7 +12445,16 @@
         }
       }
     },
-    "连接异常": {},
+    "连接异常": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線異常"
+          }
+        }
+      }
+    },
     "连接正常": {
       "localizations": {
         "zh-Hant": {
@@ -10314,8 +12525,26 @@
         }
       }
     },
-    "追番状态已同步": {},
-    "追番状态：%@": {},
+    "追番状态已同步": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追番狀態已同步"
+          }
+        }
+      }
+    },
+    "追番状态：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追番狀態：%@"
+          }
+        }
+      }
+    },
     "退出全屏": {
       "localizations": {
         "zh-Hant": {
@@ -10457,7 +12686,16 @@
         }
       }
     },
-    "选集响应变量 (JSON)": {},
+    "选集响应变量 (JSON)": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選集回應變數 (JSON)"
+          }
+        }
+      }
+    },
     "选集查询参数": {
       "localizations": {
         "zh-Hant": {
@@ -10488,7 +12726,16 @@
         }
       }
     },
-    "选集规则": {},
+    "选集规则": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選集規則"
+          }
+        }
+      }
+    },
     "选集请求体": {
       "localizations": {
         "zh-Hant": {
@@ -10549,7 +12796,16 @@
         }
       }
     },
-    "通过自己的云盘，在其他设备接着看": {},
+    "通过自己的云盘，在其他设备接着看": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "透過自己的雲端，在其他裝置接著看"
+          }
+        }
+      }
+    },
     "配色方案": {
       "localizations": {
         "zh-Hant": {
@@ -10680,7 +12936,16 @@
         }
       }
     },
-    "问题反馈": {},
+    "问题反馈": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "問題回饋"
+          }
+        }
+      }
+    },
     "限定排名": {
       "localizations": {
         "zh-Hant": {
@@ -10831,7 +13096,16 @@
         }
       }
     },
-    "项目主页": {},
+    "项目主页": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "專案首頁"
+          }
+        }
+      }
+    },
     "预览片段": {
       "localizations": {
         "zh-Hant": {
@@ -10872,7 +13146,16 @@
         }
       }
     },
-    "验证失败": {},
+    "验证失败": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "驗證失敗"
+          }
+        }
+      }
+    },
     "验证失败，请稍后重试": {
       "localizations": {
         "zh-Hant": {
@@ -10913,7 +13196,16 @@
         }
       }
     },
-    "验证码输入框": {},
+    "验证码输入框": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "驗證碼輸入框"
+          }
+        }
+      }
+    },
     "验证类型": {
       "localizations": {
         "zh-Hant": {
@@ -10924,7 +13216,16 @@
         }
       }
     },
-    "验证脚本": {},
+    "验证脚本": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "驗證腳本"
+          }
+        }
+      }
+    },
     "验证范围": {
       "localizations": {
         "zh-Hant": {
@@ -10965,7 +13266,16 @@
         }
       }
     },
-    "高级设置": {},
+    "高级设置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "進階設定"
+          }
+        }
+      }
+    },
     "黄色": {
       "localizations": {
         "zh-Hant": {
@@ -11046,7 +13356,16 @@
         }
       }
     },
-    "（合并重复 %@ 条）": {},
+    "（合并重复 %@ 条）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（合併重複 %@ 條）"
+          }
+        }
+      }
+    },
     "（未返回用户名）": {
       "localizations": {
         "zh-Hant": {
@@ -11087,8 +13406,26 @@
         }
       }
     },
-    "，覆盖了 %@ 条同名规则": {},
-    "，跳过 %@ 条": {},
+    "，覆盖了 %@ 条同名规则": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，覆蓋了 %@ 條同名規則"
+          }
+        }
+      }
+    },
+    "，跳过 %@ 条": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，略過 %@ 條"
+          }
+        }
+      }
+    },
     "，这里只列出最近更新的30部": {
       "localizations": {
         "zh-Hant": {
@@ -11109,8 +13446,26 @@
         }
       }
     },
-    "；%@ 条失败": {},
-    "；原版旧数据：%@": {},
+    "；%@ 条失败": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "；%@ 條失敗"
+          }
+        }
+      }
+    },
+    "；原版旧数据：%@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "；原版舊資料：%@"
+          }
+        }
+      }
+    },
     "？？ 集": {
       "localizations": {
         "zh-Hant": {

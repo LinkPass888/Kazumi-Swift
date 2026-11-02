@@ -344,8 +344,10 @@ struct PluginListView: View {
 
     private var footerText: String {
         let updatable = plugins.updatablePluginCount
-        let updateNote = updatable > 0 ? String(localized: ")，\(updatable) 条可更新") : ""
-        return String(localized: "共 \(plugins.pluginList.count) 条规则\(updateNote)。")
+        if updatable > 0 {
+            return String(localized: "共 \(String(describing: plugins.pluginList.count)) 条规则，\(String(describing: updatable)) 条可更新。")
+        }
+        return String(localized: "共 \(String(describing: plugins.pluginList.count)) 条规则。")
     }
 
     /// 单条规则检查更新。
