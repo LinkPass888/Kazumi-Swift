@@ -4340,7 +4340,7 @@ struct PlayerScreen: View {
                             ForEach(comments) { comment in
                                 CommentRowView(
                                     comment: comment,
-                                    rateText: comment.rate > 0 ? "★ \(comment.rate)" : nil,
+                                    score: comment.rate > 0 ? comment.rate : nil,
                                     onExpand: { proxy.scrollTo(comment.id, anchor: .center) }
                                 )
                                 // 行自己也要铺满：不然行宽只到内容那么宽，还是会被居中。

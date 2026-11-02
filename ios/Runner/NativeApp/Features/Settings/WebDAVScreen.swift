@@ -309,7 +309,7 @@ struct WebDAVScreen: View {
         let time = KazumiTimeText.clock(date)
         if calendar.isDateInToday(date) { return "上次同步 今天 \(time)" }
         if calendar.isDateInYesterday(date) { return "上次同步 昨天 \(time)" }
-        return "上次同步 \(KazumiTimeText.day(date)) \(time)"
+        return "上次同步 \(SystemDateText.date(date, includeYear: false)) \(time)"
     }
 
     // MARK: - 绑定

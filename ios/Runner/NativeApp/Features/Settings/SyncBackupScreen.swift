@@ -517,9 +517,7 @@ struct SyncBackupScreen: View {
 
     private static func timestampText(_ date: Date?) -> String {
         guard let date else { return "时间未知" }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
+        // 日期跟手机格式走，时刻写死 24 小时（LP 6109 / 6118）。
+        return "\(SystemDateText.date(date, includeYear: true)) \(KazumiTimeText.clock(date))"
     }
 }

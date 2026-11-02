@@ -13,10 +13,14 @@ struct AppRoot: View {
     var failure: AppEnvironment.StartupFailure?
 
     @Environment(AppEnvironment.self) private var environment
+    @Environment(SettingsStore.self) private var settings
     @Environment(\.openURL) private var openURL
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var isShowingAppUpdate = false
+    /// 首次引导还开着没有。完成页已经写过 `onboardingCompleted`，
+    /// 这里多按住一会儿，等用户点「开始使用」再切到主界面。
+    @State private var isOnboardingActive = false
 
     /// 强调色。`KazumiPalette` 是静态取值，这里显式读一下配色设置，
     /// 换配色时 AppRoot 才会重算（视图树不再整体重建，见 `KazumiApp` 那段注释）。
@@ -29,6 +33,8 @@ struct AppRoot: View {
         Group {
             if let failure {
                 StorageErrorView(failure: failure)
+            } else if !settings.onboardingCompleted || isOnboardingActive {
+                OnboardingFlow(isActive: $isOnboardingActive)
             } else {
                 KazumiTabShell()
             }

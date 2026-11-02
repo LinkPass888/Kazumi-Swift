@@ -283,7 +283,7 @@ struct BangumiSyncScreen: View {
         let time = KazumiTimeText.clock(date)
         if Calendar.current.isDateInToday(date) { return "上次同步 今天 \(time)" }
         if Calendar.current.isDateInYesterday(date) { return "上次同步 昨天 \(time)" }
-        return "上次同步 \(KazumiTimeText.day(date)) \(time)"
+        return "上次同步 \(SystemDateText.date(date, includeYear: false)) \(time)"
     }
 
     // MARK: - 段四 同步偏好

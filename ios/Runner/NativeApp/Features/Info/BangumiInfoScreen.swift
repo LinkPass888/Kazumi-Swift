@@ -397,7 +397,7 @@ extension BangumiInfoScreen {
         let item = controller.item
         return VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
-                infoLine(label: "放送开始", value: item.airDate.isEmpty ? "未知" : item.airDate)
+                infoLine(label: "放送开始", value: item.airDate.isEmpty ? "未知" : item.airDateText)
 
                 broadcastRow(controller)
 

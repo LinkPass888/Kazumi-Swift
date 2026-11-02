@@ -348,17 +348,20 @@ struct InfoCommentsPanel: View {
                         CommentRowView(
                             comment: comment,
                             showsDate: true,
-                            rateText: comment.rate > 0 ? "\(comment.rate) 分" : nil,
+                            score: comment.rate > 0 ? comment.rate : nil,
                             onExpand: { onExpandComment?(comment.id) }
                         )
+                        // 上下各 10、行距 0：跟播放器那版评论一样，靠 padding 撑开（Colo 6149）。
+                        .padding(.vertical, 10)
                         .id(comment.id)
-                        Divider().padding(.leading, 42)
+                        Divider()
                     }
                     if total > comments.count {
                         Text("已显示 \(comments.count) / \(total) 条")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .padding(.top, 10)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 10)
                     }
                 }
             }

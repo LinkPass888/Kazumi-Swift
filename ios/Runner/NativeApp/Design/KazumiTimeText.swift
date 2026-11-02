@@ -17,34 +17,19 @@ enum KazumiTimeText {
         clockFormatter.string(from: date)
     }
 
-    /// `10月30日`。
-    static func day(_ date: Date) -> String {
-        dayFormatter.string(from: date)
-    }
-
-    /// `今天 18:00` / `昨天 18:00` / `10月30日`。
+    /// `今天 18:00` / `昨天 18:00` / `10/30`。
     static func relative(_ date: Date) -> String {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) { return "今天 \(clock(date))" }
         if calendar.isDateInYesterday(date) { return "昨天 \(clock(date))" }
-        return day(date)
+        return SystemDateText.date(date, includeYear: false)
     }
 
     private static let clockFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
-        // 小时制跟手机的「24 小时制」开关走（Camo 4919，LP 4923）：开着写「18:00」，
-        // 关着写「下午6:00」。模板 `j` 用 `Locale.current` 解出来是 `H` 还是 `h`，
-        // 就是那台手机当前的偏好；语言本身仍旧固定中文，不跟着变。
-        let template = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current) ?? "H"
-        formatter.dateFormat = template.contains("H") ? "H:mm" : "ah:mm"
-        return formatter
-    }()
-
-    private static let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "M月d日"
+        // 24 小时制写死（LP 6118：时间不跟系统，跟了会出现「6:00 PM」那种，排版放不下）。
+        formatter.dateFormat = "H:mm"
         return formatter
     }()
 }

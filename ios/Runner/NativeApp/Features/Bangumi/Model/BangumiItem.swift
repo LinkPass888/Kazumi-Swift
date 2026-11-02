@@ -56,6 +56,13 @@ struct BangumiItem: Identifiable, Hashable, Sendable {
     var nameCn: String
     var summary: String
     var airDate: String
+
+    /// 放送开始日期，按手机自己的日期格式印（LP 6109）。
+    /// 解析不了就原样回显，不编个日期出来。
+    var airDateText: String {
+        guard let date = DateTimeHelper.parseISO(airDate) else { return airDate }
+        return SystemDateText.date(date, includeYear: true)
+    }
     var airWeekday: Int
     var rank: Int
     var images: [String: String]

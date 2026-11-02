@@ -70,6 +70,7 @@ extension SettingsStore {
         "downloadDirectory",
         "downloadDirectoryBookmark",
         "onboardingCompleted",
+        "onboardingAgreementVersion",
         "shortcutDialogShown",
     ]
 

@@ -275,6 +275,10 @@ enum SettingsKey {
     static let enableGitProxy = "enableGitProxy"
     /// 图片加速方式（原版 `imageAcceleration`，direct / mirror）。
     static let imageAcceleration = "imageAcceleration"
+    /// 首次引导是否已完成（这台设备自己的状态，不进设置备份）。
+    static let onboardingCompleted = "onboardingCompleted"
+    /// 已经同意的使用约定版本。
+    static let onboardingAgreementVersion = "onboardingAgreementVersion"
     static let meteredNetworkLimit = "meteredNetworkLimit"
     static let updateNotificationEnabled = "updateNotificationEnabled"
     /// 下载并发数，沿用原版 `SettingsKeys.downloadParallelEpisodes` 的键名。
@@ -737,6 +741,16 @@ final class SettingsStore {
         didSet { persist(meteredNetworkLimit, SettingsKey.meteredNetworkLimit) }
     }
 
+    /// 首次引导走完没有。跟着设备走，恢复别人的设置备份不会把引导跳过去。
+    var onboardingCompleted: Bool {
+        didSet { persist(onboardingCompleted, SettingsKey.onboardingCompleted) }
+    }
+
+    /// 同意过的使用约定版本号，欢迎页点「继续」时写入。
+    var onboardingAgreementVersion: Int {
+        didSet { persist(onboardingAgreementVersion, SettingsKey.onboardingAgreementVersion) }
+    }
+
     var updateNotificationEnabled: Bool {
         didSet { persist(updateNotificationEnabled, SettingsKey.updateNotificationEnabled) }
     }
@@ -926,6 +940,8 @@ final class SettingsStore {
         proxyConfigured = Self.read(defaults, SettingsKey.proxyConfigured, false)
         proxyTestUrl = Self.read(defaults, SettingsKey.proxyTestUrl, "")
         enableGitProxy = Self.read(defaults, SettingsKey.enableGitProxy, false)
+        onboardingCompleted = Self.read(defaults, SettingsKey.onboardingCompleted, false)
+        onboardingAgreementVersion = Self.read(defaults, SettingsKey.onboardingAgreementVersion, 0)
         imageAcceleration = Self.read(defaults, SettingsKey.imageAcceleration, ImageAcceleration.mirror.rawValue)
         meteredNetworkLimit = Self.read(defaults, SettingsKey.meteredNetworkLimit, false)
         // LP 2530：提醒范围默认关，用户自己打开时才申请通知权限。

@@ -141,6 +141,15 @@ private struct PluginCatalogRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            Image(systemName: "globe.asia.australia")
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+                .frame(width: 29, height: 29)
+                .background(
+                    KazumiPalette.accent(for: colorScheme).opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(item.name)
@@ -156,8 +165,8 @@ private struct PluginCatalogRow: View {
                 HStack(spacing: 10) {
                     Text(item.author)
                     Label(item.version, systemImage: "tag")
-                    if item.lastUpdate > 0 {
-                        Label(Self.dateText(item.lastUpdate), systemImage: "clock")
+                    if let updated = item.updatedDateText {
+                        Label(updated, systemImage: "clock")
                     }
                 }
                 .font(.caption)
@@ -201,19 +210,5 @@ private struct PluginCatalogRow: View {
         case .install, .update: KazumiPalette.accent(for: colorScheme)
         case .installed: KazumiPalette.secondaryText(for: colorScheme)
         }
-    }
-
-    /// 仓库里的 lastUpdate 是毫秒，按量级先换算成秒再格式化。
-    /// 语言跟界面走（界面目前只有中文，所以固定 zh-Hans），
-    /// 年月日的顺序跟系统的地区设置。
-    private static func dateText(_ epochValue: Int) -> String {
-        var seconds = epochValue
-        if seconds > 100_000_000_000 { seconds /= 1000 }
-        let date = Date(timeIntervalSince1970: TimeInterval(seconds))
-        let region = Locale.current.region?.identifier ?? "CN"
-        let locale = Locale(identifier: "zh-Hans_\(region)")
-        return date.formatted(
-            Date.FormatStyle(date: .abbreviated, time: .omitted, locale: locale)
-        )
     }
 }

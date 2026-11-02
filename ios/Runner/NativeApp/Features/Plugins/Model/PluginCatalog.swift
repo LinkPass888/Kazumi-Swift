@@ -60,6 +60,26 @@ struct PluginHTTPItem: Hashable, Sendable, Identifiable {
     }
 }
 
+extension PluginHTTPItem {
+    /// 规则仓库里的更新时间。引导页的规则行和规则仓库那屏共用这一份写法，
+    /// 免得两处各写一套、以后改一处另一处跟着飘。
+    /// 用手机自己的日期格式（LP 6109），今年的不印年份（LP 6113）。
+    var updatedDateText: String? {
+        guard let updateDate else { return nil }
+        let isThisYear = Calendar.current.component(.year, from: updateDate)
+            == Calendar.current.component(.year, from: Date())
+        return SystemDateText.date(updateDate, includeYear: !isThisYear)
+    }
+
+    private var updateDate: Date? {
+        guard lastUpdate > 0 else { return nil }
+        // 仓库里的 lastUpdate 是毫秒，按量级先换算成秒。
+        var seconds = lastUpdate
+        if seconds > 100_000_000_000 { seconds /= 1000 }
+        return Date(timeIntervalSince1970: TimeInterval(seconds))
+    }
+}
+
 struct PluginCatalogParseResult: Sendable {
     var items: [PluginHTTPItem]
     var skippedItems: Int

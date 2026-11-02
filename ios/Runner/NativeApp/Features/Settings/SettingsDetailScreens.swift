@@ -892,10 +892,9 @@ private struct UpdateScheduleSheet: View {
     }
 
     private static func format(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "M月d日 EEEE HH:mm"
-        return formatter.string(from: date)
+        // 星期和日期一起交给系统（Ato 6122），顺序由系统定；时刻写死 24 小时。
+        let day = date.formatted(Date.FormatStyle(date: .complete, time: .omitted))
+        return "\(day) \(KazumiTimeText.clock(date))"
     }
 }
 
