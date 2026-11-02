@@ -90,7 +90,8 @@ struct TraceResultItem: Identifiable, Sendable {
             value.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(value)) : String(value)
         }
         // 带序号的集数用「话」，与播放器、历史页一致（不带序号的指代才用「集」）。
-        return "第 \(numbers.joined(separator: " / ")) 集"
+        let numberList = numbers.joined(separator: " / ")
+        return String(localized: "第 \(numberList) 集")
     }
 
     /// 相似度文案：对应 _similarity(result)。

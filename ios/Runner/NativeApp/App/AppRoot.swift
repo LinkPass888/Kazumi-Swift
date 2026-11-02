@@ -107,7 +107,7 @@ struct AppRoot: View {
             }
         }
         .alert(
-            "发现新版本 \(environment.updates.appUpdate?.version ?? "")",
+            String(localized: "发现新版本 \(environment.updates.appUpdate?.version ?? "")"),
             isPresented: $isShowingAppUpdate
         ) {
             Button("查看更新日志") {

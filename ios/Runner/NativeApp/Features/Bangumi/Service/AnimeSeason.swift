@@ -55,7 +55,8 @@ enum AnimeSeason {
         let year = calendar.component(.year, from: date)
         let month = calendar.component(.month, from: date)
         let season = (month - 1) / 3
-        return "\(year)年\(["冬季", "春季", "夏季", "秋季"][season])新番"
+        let seasonName = String(localized: ["冬季", "春季", "夏季", "秋季"][season])
+        return String(localized: "\(String(describing: year))年\(seasonName)新番")
     }
 
     /// 对应 formatDateTime：yyyy-MM-dd。

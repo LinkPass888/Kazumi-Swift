@@ -102,7 +102,9 @@ struct PluginImportSheet: View {
                 Label(String(localized: "合并重复 \(String(describing: summary.duplicateCount)) 条"), systemImage: "arrow.triangle.merge")
             }
             if !summary.replacedNames.isEmpty {
-                Label("将覆盖同名规则：\(summary.replacedNames.prefix(3).joined(separator: "、"))\(summary.replacedNames.count > 3 ? " 等" : "")", systemImage: "exclamationmark.triangle")
+                let nameList = summary.replacedNames.prefix(3).joined(separator: "、")
+                let more = summary.replacedNames.count > 3 ? String(localized: " 等") : ""
+                Label(String(localized: "将覆盖同名规则：\(nameList)\(more)"), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
             ForEach(summary.failures.prefix(3), id: \.self) { failure in

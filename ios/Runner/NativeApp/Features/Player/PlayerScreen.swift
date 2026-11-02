@@ -2490,7 +2490,8 @@ struct PlayerScreen: View {
         case .portrait, .portraitUpsideDown: current = "竖"
         default: current = "—"
         }
-        return "支持 \(names.joined(separator: "+")) · 当前 \(current) · \(lastOrientationResult)"
+        let nameList = names.joined(separator: "+")
+        return String(localized: "支持 \(nameList) · 当前 \(current) · \(lastOrientationResult)")
     }
 
     /// 播放信息里的一条：左标题、右值。

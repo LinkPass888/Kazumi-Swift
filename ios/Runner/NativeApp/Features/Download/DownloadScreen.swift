@@ -58,7 +58,7 @@ struct DownloadScreen: View {
         }
         // 只删记录也要问一句：连同文件一起删，捡不回来。
         .confirmationDialog(
-            "删除「\(pendingDelete?.title ?? "")」的全部下载？",
+            String(localized: "删除「\(pendingDelete?.title ?? "")」的全部下载？"),
             isPresented: Binding(
                 get: { pendingDelete != nil },
                 set: { if !$0 { pendingDelete = nil } }
