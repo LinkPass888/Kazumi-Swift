@@ -131,7 +131,7 @@ struct BangumiTimelineCard: View {
                         .font(.system(size: Self.labelFontSize, weight: .bold))
                         .foregroundStyle(.primary)
                 }
-                .accessibilityLabel(Text("评分 \(item.ratingScore, specifier: "%.1f")"))
+                .accessibilityLabel(Text("评分 \(String(format: "%.1f", item.ratingScore))"))
             }
         }
     }

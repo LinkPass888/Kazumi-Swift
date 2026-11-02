@@ -4319,6 +4319,17 @@
         }
       }
     },
+    "已%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已%@"
+          }
+        }
+      }
+    },
     "已下载完 · %@": {
       "localizations": {
         "zh-Hant": {
@@ -11283,6 +11294,17 @@
         }
       }
     },
+    "评分与排名": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "評分與排名"
+          }
+        }
+      }
+    },
     "评分优先": {
       "localizations": {
         "zh-Hant": {
@@ -13122,6 +13144,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "題材、播出時間與評分"
+          }
+        }
+      }
+    },
+    "题材标签": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "題材標籤"
           }
         }
       }

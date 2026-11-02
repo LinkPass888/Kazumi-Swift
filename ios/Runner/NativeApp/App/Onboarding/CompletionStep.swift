@@ -65,9 +65,9 @@ struct CompletionStep: View {
         }
     }
 
-    private var detail: LocalizedStringKey {
+    private var detail: String {
         installedCount > 0
-            ? "已安装 \(installedCount) 条规则，可以开始追番了。"
-            : "还没安装规则，进去后随时可以添加。"
+            ? String(localized: "已安装 \(String(installedCount)) 条规则，可以开始追番了。")
+            : String(localized: "还没安装规则，进去后随时可以添加。")
     }
 }
