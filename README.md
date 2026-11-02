@@ -51,9 +51,9 @@
 
 ## 下载
 
-通过本仓库 [Releases](https://github.com/LinkPass888/Kazumi-LiquidGlass-iOS/releases/latest) 选项卡下载：
+通过本仓库 [Releases](https://github.com/LinkPass888/Kazumi-iOS/releases/latest) 选项卡下载：
 
-<a href="https://github.com/LinkPass888/Kazumi-LiquidGlass-iOS/releases">
+<a href="https://github.com/LinkPass888/Kazumi-iOS/releases">
   <img src="static/svg/get_it_on_github.svg" alt="Get it on Github" width="200"/>
 </a>
 
@@ -147,7 +147,7 @@ A: 本项目编译需要良好的网络环境, 除了由 Google 托管的 Flutte
 
 特别感谢 [SyncPlay](https://github.com/Syncplay/syncplay) 本项目使用 SyncPlay 协议并通过 SyncPlay 公共服务器实现一起看功能。
 
-特别感谢 [所有贡献者](https://github.com/LinkPass888/Kazumi-LiquidGlass-iOS/graphs/contributors) 本项目因为你们变得更好。
+特别感谢 [所有贡献者](https://github.com/LinkPass888/Kazumi-iOS/graphs/contributors) 本项目因为你们变得更好。
 
 特别感谢 [trace.moe](https://trace.moe) 本项目使用了 trace.moe 提供的图片识别番剧功能。
 
