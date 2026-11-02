@@ -51,10 +51,10 @@ struct AboutScreen: View {
 
                     Text(KazumiAppInfo.displayName)
                         .font(.title2.bold())
-                    Text("版本 \(KazumiAppInfo.fullVersion)")
+                    Text(String(localized: "版本 \(KazumiAppInfo.fullVersion)"))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    Text("规则 API 级别 \(KazumiAppInfo.ruleAPILevel)")
+                    Text(String(localized: "规则 API 级别 \(KazumiAppInfo.ruleAPILevel)"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -135,9 +135,9 @@ struct AboutScreen: View {
 
     /// 「检测更新 / 查看日志」这类动作行：图标 + 标题 + 右侧状态。
     private func actionRow(
-        title: String,
+        title: LocalizedStringKey,
         symbol: String,
-        detail: String,
+        detail: LocalizedStringKey,
         isBusy: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
@@ -175,7 +175,7 @@ struct AboutScreen: View {
         .disabled(isBusy)
     }
 
-    private var updateDetail: String {
+    private var updateDetail: LocalizedStringKey {
         switch updateState {
         case .idle: "检查是否有新版本"
         case .checking: "正在检查…"
@@ -223,7 +223,7 @@ struct AboutScreen: View {
 
 
     /// 进到 App 内那一页的链接行（跟 linkRow 同一套外观，右边是箭头而不是外链图标）。
-    private func licensesRow(_ title: String) -> some View {
+    private func licensesRow(_ title: LocalizedStringKey) -> some View {
         HStack(spacing: 10) {
             Text(title)
                 .font(.subheadline)

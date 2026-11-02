@@ -88,7 +88,7 @@ struct ProfileScreen: View {
     }
 
     /// 一块：数字 24 semibold 主题色，隔 6 点接名字 13 次要色，整块左对齐、左留 14。
-    private func stat(value: String, title: String) -> some View {
+    private func stat(value: String, title: LocalizedStringKey) -> some View {
         HStack(spacing: 6) {
             Text(value)
                 .font(.system(size: 24, weight: .semibold))
@@ -101,8 +101,10 @@ struct ProfileScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 14)
         // 两块各自念成一件事：「12，看过番剧」。
+        // 数字用 verbatim、名字用 Text(title) 各自解析，不能拼进同一个插值里——
+        // 那样 LocalizedStringKey 会被当成参数描述念出来。
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("\(value)，\(title)"))
+        .accessibilityLabel(Text(verbatim: value + "，") + Text(title))
     }
 
     // MARK: - 内容与偏好
@@ -257,18 +259,19 @@ struct ProfileScreen: View {
 
     /// 底部状态，跟观看历史页同一份写法：看完的写「已看完」，否则写具体看到哪儿了
     /// （LP 4892：不要百分比），一集都没看下去就说「继续观看」。
-    private func statusText(for record: WatchRecord) -> String {
+    private func statusText(for record: WatchRecord) -> LocalizedStringKey {
         if record.isFinished { return "已看完" }
-        return record.positionText ?? "继续观看"
+        // positionText 是算出来的进度（「12:34」这种），查不到译文就原样显示。
+        return LocalizedStringKey(record.positionText ?? "继续观看")
     }
 
     /// 「第 1 集」或「第 1 集 · 标题」，跟观看历史页同一份写法。
     private func episodeLine(for record: WatchRecord) -> String {
-        let number = "第 \(record.episodeNumber) 集"
+        let number = String(localized: "第 \(record.episodeNumber) 集")
         let title = record.episodeTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         // 老记录里的集标题是「第 N 话」（LP 4824「已经记录的就算了」，不迁移数据），
         // 跟新的「第 N 集」并排比一次，别把同一句话拼成「第 3 集 · 第 3 话」。
-        let legacy = "第 \(record.episodeNumber) 话"
+        let legacy = String(localized: "第 \(record.episodeNumber) 话")
         return title.isEmpty || title == number || title == legacy ? number : "\(number) · \(title)"
     }
 

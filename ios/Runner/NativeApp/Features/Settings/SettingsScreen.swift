@@ -64,14 +64,14 @@ extension SettingsGroup {
                 SettingsCategory(
                     id: "player",
                     label: String(localized: "播放设置"),
-                    description: "解码、渲染与播放行为",
+                    description: String(localized: "解码、渲染与播放行为"),
                     symbol: "play.rectangle.on.rectangle",
                     destination: .player
                 ),
                 SettingsCategory(
                     id: "danmaku",
                     label: String(localized: "弹幕设置"),
-                    description: "弹幕来源与显示效果",
+                    description: String(localized: "弹幕来源与显示效果"),
                     symbol: "captions.bubble",
                     destination: .danmaku
                 ),
@@ -84,7 +84,7 @@ extension SettingsGroup {
                 SettingsCategory(
                     id: "plugin",
                     label: String(localized: "规则管理"),
-                    description: "番剧资源规则",
+                    description: String(localized: "番剧资源规则"),
                     symbol: "puzzlepiece.extension",
                     destination: .pluginList
                 ),
@@ -93,7 +93,7 @@ extension SettingsGroup {
                     label: String(localized: "下载设置"),
                     // LP 清单第四项。并发那几行这一版没有（没有下载器），
                     // 说明就不许再写「并发数」。
-                    description: "离线下载",
+                    description: String(localized: "离线下载"),
                     symbol: "arrow.down.circle",
                     destination: .download
                 ),
@@ -106,7 +106,7 @@ extension SettingsGroup {
                 SettingsCategory(
                     id: "notification",
                     label: String(localized: "通知设置"),
-                    description: "追番更新提醒",
+                    description: String(localized: "追番更新提醒"),
                     symbol: "bell",
                     destination: .notification
                 ),
@@ -115,7 +115,7 @@ extension SettingsGroup {
                 SettingsCategory(
                     id: "theme",
                     label: String(localized: "外观与界面"),
-                    description: "主题、显示效果与启动页",
+                    description: String(localized: "主题、显示效果与启动页"),
                     symbol: "paintpalette",
                     destination: .theme
                 ),
@@ -124,14 +124,14 @@ extension SettingsGroup {
                     // LP 清单第八项叫「同步设置」；Ato 2026-10-24 定：只改名字，
                     // 备份那部分先留在里面不动（备份不在清单里）。
                     label: String(localized: "同步设置"),
-                    description: "追番同步与多设备同步",
+                    description: String(localized: "追番同步与多设备同步"),
                     symbol: "icloud",
                     destination: .syncBackup
                 ),
                 SettingsCategory(
                     id: "network",
                     label: String(localized: "网络设置"),
-                    description: "访问加速",
+                    description: String(localized: "访问加速"),
                     symbol: "globe",
                     destination: .network
                 ),
@@ -144,21 +144,21 @@ extension SettingsGroup {
                 SettingsCategory(
                     id: "update",
                     label: String(localized: "更新设置"),
-                    description: "应用与规则更新",
+                    description: String(localized: "应用与规则更新"),
                     symbol: "arrow.down.app",
                     destination: .update
                 ),
                 SettingsCategory(
                     id: "storage",
                     label: String(localized: "存储与日志"),
-                    description: "图片缓存与错误日志",
+                    description: String(localized: "图片缓存与错误日志"),
                     symbol: "externaldrive",
                     destination: .storage
                 ),
                 SettingsCategory(
                     id: "about",
                     label: String(localized: "关于"),
-                    description: "版本与开源信息",
+                    description: String(localized: "版本与开源信息"),
                     symbol: "info.circle",
                     destination: .about
                 ),
