@@ -132,7 +132,7 @@ private enum LocalIntentData {
         }.sorted { $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt }
         guard !entries.isEmpty else { return "本机没有“\(filter.title)”收藏记录；未查询云端。" }
         let names = entries.prefix(30).map { "《\($0.displayName)》（\($0.collectType.title)）" }.joined(separator: "、")
-        let suffix = entries.count > 30 ? "，这里只列出最近更新的30部" : ""
+        let suffix = entries.count > 30 ? String(localized: "，这里只列出最近更新的30部") : ""
         return "本机“\(filter.title)”收藏共\(entries.count)部\(suffix)：\(names)。仅本机已保存记录，未查询云端。"
     }
 
@@ -184,7 +184,7 @@ private enum LocalIntentData {
             text = "缓存中今天计划\(ordered.count)部\(more)：\(names)。"
         }
         let saved = snapshot.savedAt.map { "缓存保存时间：\(dateText($0))。" } ?? "缓存保存时间未知。"
-        return "\(text)\(saved)按设备当地星期及本机手动星期设置读取；仅当季缓存计划，不使用页面筛选，不校正播出时刻，不代表片源已更新。本次未联网。"
+        return String(localized: "\(text)\(saved)按设备当地星期及本机手动星期设置读取；仅当季缓存计划，不使用页面筛选，不校正播出时刻，不代表片源已更新。本次未联网。")
     }
 }
 

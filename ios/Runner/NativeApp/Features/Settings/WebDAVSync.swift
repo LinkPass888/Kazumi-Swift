@@ -385,7 +385,7 @@ enum WebDAVSync {
         let message = cloudBackupWasEmpty
             ? String(localized: "\(base)（云盘上原来那份是空的，已用这次的结果覆盖）")
             : base
-        let emptyNote = cloudBackupWasEmpty ? String(localized: ")；云盘原文件为 0 字节，已覆盖") : ""
+        let emptyNote = cloudBackupWasEmpty ? ")；云盘原文件为 0 字节，已覆盖" : ""
         return Outcome(
             ok: true,
             message: message,

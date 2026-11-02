@@ -2346,7 +2346,8 @@ struct PlayerScreen: View {
         guard sleepTimerMinutes == minutes, let remaining = sleepTimerRemaining else {
             return String(localized: "\(String(describing: minutes)) 分钟")
         }
-        return "\(minutes) 分钟 · 还剩 \(remaining / 60):\(String(format: "%02d", remaining % 60))"
+        let clock = String(format: "%02d", remaining % 60)
+        return String(localized: "\(String(describing: minutes)) 分钟 · 还剩 \(String(describing: remaining / 60)):\(clock)")
     }
 
     /// 到点暂停。定时器是一次性的 Task，改定或取消都要把上一个收掉。
@@ -4696,11 +4697,13 @@ private struct SyncPlaySheet: View {
                 Section {
                     Button("创建房间") {
                         showingSyncPlay = false
-                        surface.toastMessage = "一起看：\(settings.syncPlayRoom.isEmpty ? "默认房间" : settings.syncPlayRoom)（创建）"
+                        let roomName = settings.syncPlayRoom.isEmpty ? String(localized: "默认房间") : settings.syncPlayRoom
+                        surface.toastMessage = String(localized: "一起看：\(roomName)（创建）")
                     }
                     Button("加入房间") {
                         showingSyncPlay = false
-                        surface.toastMessage = "一起看：\(settings.syncPlayRoom.isEmpty ? "默认房间" : settings.syncPlayRoom)（加入）"
+                        let roomName = settings.syncPlayRoom.isEmpty ? String(localized: "默认房间") : settings.syncPlayRoom
+                        surface.toastMessage = String(localized: "一起看：\(roomName)（加入）")
                     }
                 } header: {
                     Text("房间操作")
