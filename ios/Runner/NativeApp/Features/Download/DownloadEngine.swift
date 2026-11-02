@@ -47,6 +47,7 @@ enum DownloadEngineError: LocalizedError, Equatable {
     case notMedia
     case emptyPlaylist
     case encrypted
+    case multipleInitSegments
     case cancelled
     case diskFull
 
@@ -56,6 +57,7 @@ enum DownloadEngineError: LocalizedError, Equatable {
         case .notMedia: "这个地址不是视频，可能规则给错了"
         case .emptyPlaylist: "播放列表是空的"
         case .encrypted: "这一集是加密的，下不了"
+        case .multipleInitSegments: "这一集有多个初始化段，下不了"
         case .cancelled: "已取消"
         case .diskFull: "存储空间不够"
         }
@@ -436,7 +438,7 @@ final class DownloadEngine: @unchecked Sendable {
 }
 
 /// 给 `URLSession.download` 报进度用。它只在 session 的 delegate 队列上被调用。
-private final class ProgressSink: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+private final class ProgressSink: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let expectedBytes: Int64
     private let onProgress: (@Sendable (DownloadProgress) -> Void)?
     private let cancellation: CancellationFlag
@@ -451,6 +453,12 @@ private final class ProgressSink: NSObject, URLSessionTaskDelegate, @unchecked S
         self.onProgress = onProgress
         self.cancellation = cancellation
     }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {}
 
     func urlSession(
         _ session: URLSession,

@@ -451,7 +451,10 @@ final class PlayerController {
         danmakuStatus = .loading
         danmakuMessage = nil
 
-        let result = await DanmakuAPI.fetch(bangumiID: bangumiID, episode: currentEpisode)
+        let episode = currentEpisode
+        let road = selectedRoad
+        let result = await DanmakuAPI.fetch(bangumiID: bangumiID, episode: episode)
+        guard currentEpisode == episode, selectedRoad == road else { return }
         switch result {
         case .success(let comments):
             danmakuComments = comments

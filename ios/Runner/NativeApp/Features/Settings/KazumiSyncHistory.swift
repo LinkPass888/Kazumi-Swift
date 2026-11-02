@@ -221,6 +221,7 @@ enum KazumiHistoryMerge {
     /// itemVersions（看状态）或 progressVersions（单集进度），已存在且更新的跳过。
     static func apply(events: [KazumiHistoryEvent], to snapshot: inout KazumiHistorySnapshot) {
         var byKey = Dictionary(uniqueKeysWithValues: snapshot.histories.map { ($0.entityKey, $0) })
+        var pendingProgress: [KazumiHistoryEvent] = []
 
         for event in events {
             // 原版对没有 entityKey 的事件（clearAll 之类）不参与合并。
@@ -237,9 +238,11 @@ enum KazumiHistoryMerge {
                 guard let episode = event.episode else { continue }
                 let existing = snapshot.progressVersions[key]?[String(episode)]
                 if let existing, existing >= version { continue }
-                snapshot.progressVersions[key, default: [:]][String(episode)] = version
 
-                guard var entry = byKey[key] else { continue }
+                guard var entry = byKey[key] else {
+                    pendingProgress.append(event)
+                    continue
+                }
                 let episodeKey = String(episode)
                 if let current = entry.progresses[episodeKey], current.updatedAtMs > event.updatedAt { continue }
                 entry.progresses[episodeKey] = KazumiProgress(
@@ -249,6 +252,7 @@ enum KazumiHistoryMerge {
                     updatedAtMs: event.updatedAt
                 )
                 byKey[key] = entry
+                snapshot.progressVersions[key, default: [:]][episodeKey] = version
             } else {
                 let existing = snapshot.itemVersions[key]
                 if let existing, existing >= version { continue }
@@ -277,6 +281,27 @@ enum KazumiHistoryMerge {
                     if let name = event.lastWatchEpisodeName { entry.lastWatchEpisodeName = name }
                     if let item = event.bangumiItem { entry.bangumiItem = item }
                 }
+                for pending in pendingProgress where pending.entityKey == key {
+                    guard let episode = pending.episode else { continue }
+                    let episodeKey = String(episode)
+                    let pendingVersion = Self.version(
+                        pending.updatedAt,
+                        key: key,
+                        episode: episode,
+                        road: pending.road
+                    )
+                    let existing = snapshot.progressVersions[key]?[episodeKey]
+                    if let existing, existing >= pendingVersion { continue }
+                    if let current = entry.progresses[episodeKey], current.updatedAtMs > pending.updatedAt { continue }
+                    entry.progresses[episodeKey] = KazumiProgress(
+                        episode: episode,
+                        road: pending.road ?? 0,
+                        progressMs: pending.progressMs ?? 0,
+                        updatedAtMs: pending.updatedAt
+                    )
+                    snapshot.progressVersions[key, default: [:]][episodeKey] = pendingVersion
+                }
+                pendingProgress.removeAll { $0.entityKey == key }
                 byKey[key] = entry
             }
         }

@@ -326,7 +326,7 @@ final class DanmakuOverlayView: UIView {
     /// 滚动弹幕按设置里的秒数走；固定弹幕（顶/底）按 main 的比例停 4.5/8。
     private func duration(for mode: Int) -> Double {
         let base = max(2, min(16, style.duration))
-        let scaled = style.followSpeed ? base / playbackRate : base
+        let scaled = style.followSpeed ? base : base * playbackRate
         return mode == 1 ? scaled : scaled * (4.5 / 8)
     }
 

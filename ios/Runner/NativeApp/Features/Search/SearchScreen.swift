@@ -362,6 +362,12 @@ struct SearchScreen: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
+
+            Color.clear
+                .frame(height: 1)
+                .task(id: "\(controller.bangumiList.count)/\(visibleItems.count)") {
+                    await loadMoreIfNeeded()
+                }
         }
     }
 
@@ -410,9 +416,15 @@ struct SearchScreen: View {
 
     private func loadMoreIfNeeded(current item: BangumiItem) async {
         guard !controller.isLoading, controller.hasMoreSearchResults else { return }
-        let items = controller.bangumiList
+        let items = visibleItems
         guard let index = items.firstIndex(where: { $0.id == item.id }),
               index >= items.count - 6,
+              let query = submittedQuery else { return }
+        await controller.searchBangumi(query)
+    }
+
+    private func loadMoreIfNeeded() async {
+        guard !controller.isLoading, controller.hasMoreSearchResults,
               let query = submittedQuery else { return }
         await controller.searchBangumi(query)
     }

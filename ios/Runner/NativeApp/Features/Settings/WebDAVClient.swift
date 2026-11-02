@@ -331,21 +331,22 @@ struct WebDAVClient {
             let tag = token[..<end]
             let value = String(token[token.index(after: end)...])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let localName = (tag.hasPrefix("/") ? tag.dropFirst() : tag).split(separator: ":").last ?? ""
             if tag.hasPrefix("/") {
                 // 收尾标签：一块 response 读完了，登记这一条。
-                if tag.hasSuffix(":response"), let entryName = name, let entryDate = modified {
+                if localName == "response", let entryName = name, let entryDate = modified {
                     results.append((entryName, entryDate))
                 }
-                if tag.hasSuffix(":response") {
+                if localName == "response" {
                     name = nil
                     modified = nil
                 }
                 continue
             }
-            if tag.hasSuffix(":href") {
+            if localName == "href" {
                 let decoded = value.removingPercentEncoding ?? value
                 name = decoded.split(separator: "/").last.map(String.init)
-            } else if tag.hasSuffix(":getlastmodified") {
+            } else if localName == "getlastmodified" {
                 modified = Self.httpDate(value)
             }
         }

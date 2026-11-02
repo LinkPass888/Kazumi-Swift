@@ -233,7 +233,15 @@ final class VideoSourceWebView: NSObject {
         isVideoSourceLoaded = true
         isLoading = false
         onVideoLoading?(false)
-        let event = VideoParserEvent(url: message, offset: offset)
+        let resolved: String
+        if message.contains("://") {
+            resolved = message
+        } else if let base = webView?.url, let url = URL(string: message, relativeTo: base) {
+            resolved = url.absoluteURL.absoluteString
+        } else {
+            resolved = message
+        }
+        let event = VideoParserEvent(url: resolved, offset: offset)
         onVideoURLParser?(event)
     }
 
@@ -259,10 +267,10 @@ final class VideoSourceWebView: NSObject {
         onVideoURLParser?(VideoParserEvent(url: decoded, offset: offset))
     }
 
-    /// 新版解析器：只接受 http(s) 且尚未解析过的地址。
+    /// 新版解析器：接受绝对或相对地址，且尚未解析过。
     private func handleModernMessage(_ message: String) {
         emit("Callback received: \(message)")
-        guard message.contains("http"), !isVideoSourceLoaded else { return }
+        guard !message.isEmpty, !isVideoSourceLoaded else { return }
         emit("Loading video source: \(message)")
         isIframeLoaded = true
         Task { @MainActor in await self.unloadPage() }

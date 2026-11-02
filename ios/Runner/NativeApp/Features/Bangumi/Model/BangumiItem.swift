@@ -289,6 +289,7 @@ enum DateTimeHelper {
     static func isoWeekday(_ date: Date) -> Int {
         var calendar = Calendar(identifier: .gregorian)
         calendar.firstWeekday = 2
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? .current
         // Calendar 的 weekday：1 = 周日 ... 7 = 周六，转换为 ISO 的 1 = 周一 ... 7 = 周日。
         let weekday = calendar.component(.weekday, from: date)
         return ((weekday + 5) % 7) + 1

@@ -114,30 +114,138 @@ enum WebDAVLegacy {
 
     // MARK: - 弹幕屏蔽词
 
+    /// 一条屏蔽词在同步状态里的样子（对应 main 的 `DanmakuShieldSyncEntry`）。
+    ///
+    /// 删掉的规则也要留着：`deleted` + `updatedAt` 就是墓碑，
+    /// 少了它，另一台设备那份旧文件会把规则重新带回来。
+    struct ShieldEntry: Sendable {
+        let rule: String
+        let updatedAt: Int
+        let deviceId: String
+        let deleted: Bool
+    }
+
+    /// 合并后的屏蔽词状态（对应 main 的 `DanmakuShieldSyncState`）。
+    ///
+    /// `order` 记住每条规则第一次出现的顺序：写回时 main 按 rule 排序，
+    /// 这里读的时候仍按文件里的顺序保留，用户看到的行序不会被这次改动打乱。
+    struct ShieldState: Sendable {
+        private(set) var entries: [String: ShieldEntry] = [:]
+        private(set) var order: [String] = []
+
+        /// 只返回没删的；跟 main 的 `DanmakuShieldSyncState.rules` 一样。
+        var rules: [String] {
+            order.compactMap { entries[$0] }.filter { !$0.deleted }.map(\.rule)
+        }
+
+        var latestTimestamp: Int {
+            entries.values.reduce(0) { max($0, $1.updatedAt) }
+        }
+
+        /// main 的 `_compareTo`：先 updatedAt，再 deviceId，最后 deleted。
+        /// 相等时保留先到的那条（main 的 `_mergeEntries` 也是 `> 0` 才换）。
+        private static func wins(_ candidate: ShieldEntry, over current: ShieldEntry) -> Bool {
+            if candidate.updatedAt != current.updatedAt {
+                return candidate.updatedAt > current.updatedAt
+            }
+            if candidate.deviceId != current.deviceId {
+                return candidate.deviceId > current.deviceId
+            }
+            return (candidate.deleted ? 1 : 0) > (current.deleted ? 1 : 0)
+        }
+
+        mutating func insert(_ entry: ShieldEntry) {
+            if let current = entries[entry.rule] {
+                if Self.wins(entry, over: current) { entries[entry.rule] = entry }
+            } else {
+                entries[entry.rule] = entry
+                order.append(entry.rule)
+            }
+        }
+
+        mutating func merge(_ other: ShieldState) {
+            for rule in other.order {
+                guard let entry = other.entries[rule] else { continue }
+                insert(entry)
+            }
+        }
+
+        /// 原版写回的格式：`{version:1, entries:[...]}`，entries 按 rule 排序。
+        func encoded() throws -> Data {
+            let sorted = order.compactMap { entries[$0] }.sorted { $0.rule < $1.rule }
+            let json: [String: Any] = [
+                "version": 1,
+                "entries": sorted.map { entry in
+                    [
+                        "rule": entry.rule,
+                        "updatedAt": entry.updatedAt,
+                        "deviceId": entry.deviceId,
+                        "deleted": entry.deleted
+                    ] as [String: Any]
+                }
+            ]
+            return try JSONSerialization.data(withJSONObject: json)
+        }
+    }
+
+    /// 一份云盘状态的快照：所有设备并起来的结果，以及本机那一份。
+    struct ShieldSnapshot: Sendable {
+        var merged = ShieldState()
+        /// 本机上次写上去的那份，用来判断本机这次删掉了哪条规则。
+        var own = ShieldState()
+    }
+
     /// 原版每一台设备一个文件，形状是 `{version, entries:[{rule, updatedAt, deviceId, deleted}]}`。
+    ///
+    /// 字段都可缺：老文件只有 `rule` / `deleted` 也要能读，缺的按「不知道」处理。
     private struct ShieldFile: Decodable {
         struct Entry: Decodable {
             let rule: String?
+            let updatedAt: Int?
+            let deviceId: String?
             let deleted: Bool?
         }
 
+        let version: Int?
         let entries: [Entry]?
     }
 
-    /// 把所有设备那份的屏蔽词并起来，按原版的行序（先本机已有的，后云盘多出来的）。
-    static func shieldRules(client: WebDAVClient) async throws -> [String] {
+    /// 把所有设备那份的屏蔽词并起来（包括墓碑），本机那份单独留一份。
+    ///
+    /// 对应 main 的 `syncDanmakuShield`：读 `danmakuShield/` 下每个
+    /// `<deviceId>.json`，逐个 `DanmakuShieldSyncState.decode` 后 merge。
+    static func shieldState(client: WebDAVClient, deviceID: String) async throws -> ShieldSnapshot {
         let names = try await client.listFolder(path: shieldFolder)
-        var rules: [String] = []
+        var snapshot = ShieldSnapshot()
+        let ownName = "\(deviceID).json"
         for name in names.sorted() where name.hasSuffix(".json") {
             guard let data = try await client.rawDownload(path: "\(shieldFolder)/\(name)"),
                   let file = try? JSONDecoder().decode(ShieldFile.self, from: data)
             else { continue }
-            for entry in file.entries ?? [] where entry.deleted != true {
+            // main 只认 version 1；没有 version 的老文件仍按兼容读。
+            if let version = file.version, version != 1 { continue }
+            // 老文件缺 deviceId 时用文件名兜底：main 那边 deviceId 为空会
+            // 直接判整份文件无效，写回去时不能留空。
+            let fileDevice = String(name.dropLast(".json".count))
+            let fallbackDevice = fileDevice.isEmpty ? deviceID : fileDevice
+            var state = ShieldState()
+            for entry in file.entries ?? [] {
                 let rule = entry.rule?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !rule.isEmpty { rules.append(rule) }
+                guard !rule.isEmpty else { continue }
+                // 缺字段的老文件按「不知道」处理：updatedAt 0 盖不过云端的墓碑，
+                // deleted 缺省当没删。
+                let deviceId = entry.deviceId.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackDevice
+                state.insert(ShieldEntry(
+                    rule: rule,
+                    updatedAt: max(entry.updatedAt ?? 0, 0),
+                    deviceId: deviceId,
+                    deleted: entry.deleted ?? false
+                ))
             }
+            snapshot.merged.merge(state)
+            if name == ownName { snapshot.own = state }
         }
-        return rules
+        return snapshot
     }
 
     // MARK: - 收藏
@@ -420,22 +528,12 @@ enum WebDAVLegacy {
         return 0
     }
 
-    /// 把本机的屏蔽词写成「本机设备」那一份，原版会把各设备的文件并起来。
-    static func writeShield(_ rules: [String], deviceID: String, client: WebDAVClient) async throws {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        var seen = Set<String>()
-        let entries: [[String: Any]] = rules.compactMap { raw in
-            let rule = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !rule.isEmpty, seen.insert(rule).inserted else { return nil }
-            return [
-                "rule": rule,
-                "updatedAt": now,
-                "deviceId": deviceID,
-                "deleted": false
-            ]
-        }
-        let file: [String: Any] = ["version": 1, "entries": entries]
-        let data = try JSONSerialization.data(withJSONObject: file)
+    /// 把合并后的整份屏蔽词状态写成「本机设备」那一份，原版会把各设备的文件并起来。
+    ///
+    /// 必须把墓碑一起写上去（`deleted: true` + `updatedAt`），否则本机删掉的规则
+    /// 会被另一台设备的旧文件重新带回来。
+    static func writeShield(_ state: ShieldState, deviceID: String, client: WebDAVClient) async throws {
+        let data = try state.encoded()
         try await client.uploadRaw(path: "\(shieldFolder)/\(deviceID).json", data: data)
     }
 

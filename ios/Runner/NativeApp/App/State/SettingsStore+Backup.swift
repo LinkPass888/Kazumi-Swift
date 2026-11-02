@@ -424,7 +424,8 @@ extension SettingsStore {
             bangumiAccessToken = text
             restored += 1
         }
-        if let text = value(SettingsKey.bangumiUsername)?.stringValue {
+        if !Self.isExcludedKey(SettingsKey.bangumiUsername),
+           let text = value(SettingsKey.bangumiUsername)?.stringValue {
             bangumiUsername = text
             restored += 1
         }
@@ -466,7 +467,8 @@ extension SettingsStore {
             proxyUrl = text
             restored += 1
         }
-        if let flag = value(SettingsKey.proxyConfigured)?.boolValue {
+        if !Self.isExcludedKey(SettingsKey.proxyConfigured),
+           let flag = value(SettingsKey.proxyConfigured)?.boolValue {
             proxyConfigured = flag
             restored += 1
         }

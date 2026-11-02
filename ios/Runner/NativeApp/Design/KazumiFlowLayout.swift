@@ -49,7 +49,7 @@ struct KazumiFlowLayout: Layout {
             }
             x += width
             itemsInRow += 1
-            rowHeight = max(rowHeight, ideal.height)
+            rowHeight = max(rowHeight, sub.sizeThatFits(ProposedViewSize(width: width, height: nil)).height)
         }
         widest = max(widest, x)
         return CGSize(width: proposal.width ?? widest, height: y + rowHeight)

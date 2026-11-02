@@ -21,6 +21,8 @@ struct PluginTestScreen: View {
 
     @State private var keyword = ""
     @State private var isTesting = false
+    @State private var testTask: Task<Void, Never>?
+    @State private var testGeneration = 0
     @State private var errorMessage: String?
 
     @State private var searchRaw = ""
@@ -124,7 +126,7 @@ struct PluginTestScreen: View {
                     if isTesting {
                         reset()
                     } else {
-                        Task { await startTest() }
+                        startTest()
                     }
                 } label: {
                     Label(isTesting ? "停止测试" : "开始测试",
@@ -363,6 +365,9 @@ struct PluginTestScreen: View {
     // MARK: - 测试流程
 
     private func reset() {
+        testTask?.cancel()
+        testTask = nil
+        testGeneration &+= 1
         isTesting = false
         errorMessage = nil
         searchRaw = ""
@@ -375,7 +380,7 @@ struct PluginTestScreen: View {
         expanded = ["parse"]
     }
 
-    private func startTest() async {
+    private func startTest() {
         guard let plugin else { return }
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -383,30 +388,36 @@ struct PluginTestScreen: View {
             return
         }
         reset()
+        let generation = testGeneration
         isTesting = true
-        defer { isTesting = false }
+        testTask = Task { @MainActor in
+            defer { if generation == testGeneration { isTesting = false } }
 
-        // 与原版一致：搜索成功后再用第一条结果去取线路；中途失败就停在这里，
-        // 已经拿到的部分结果留在界面上。
-        let config = RuleExecutionConfig(plugin: plugin)
-        do {
-            let trace = try await engine.search(config, keyword: trimmed)
-            searchRaw = trace.rawResponse
-            searchResponse = trace.response
-            searchDiagnostics = trace.diagnostics
-            matchedFragments = trace.matchedFragments
+            // 与原版一致：搜索成功后再用第一条结果去取线路；中途失败就停在这里，
+            // 已经拿到的部分结果留在界面上。
+            let config = RuleExecutionConfig(plugin: plugin)
+            do {
+                let trace = try await engine.search(config, keyword: trimmed)
+                guard generation == testGeneration else { return }
+                searchRaw = trace.rawResponse
+                searchResponse = trace.response
+                searchDiagnostics = trace.diagnostics
+                matchedFragments = trace.matchedFragments
 
-            guard needsChapterParse, let first = trace.response.data.first,
-                  !first.src.isEmpty else { return }
-            let chapterTrace = try await engine.queryChapters(config, source: first.src)
-            chapterRaw = chapterTrace.rawResponse
-            chapters = chapterTrace.roads
-            chapterDiagnostics = chapterTrace.diagnostics
-        } catch {
-            errorMessage = error.localizedDescription
-            KazumiLog.plugin.warning(
-                "PluginTest: \(plugin.name, privacy: .public) 测试中断：\(error.localizedDescription, privacy: .public)"
-            )
+                guard needsChapterParse, let first = trace.response.data.first,
+                      !first.src.isEmpty else { return }
+                let chapterTrace = try await engine.queryChapters(config, source: first.src)
+                guard generation == testGeneration else { return }
+                chapterRaw = chapterTrace.rawResponse
+                chapters = chapterTrace.roads
+                chapterDiagnostics = chapterTrace.diagnostics
+            } catch {
+                guard generation == testGeneration else { return }
+                errorMessage = error.localizedDescription
+                KazumiLog.plugin.warning(
+                    "PluginTest: \(plugin.name, privacy: .public) 测试中断：\(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 

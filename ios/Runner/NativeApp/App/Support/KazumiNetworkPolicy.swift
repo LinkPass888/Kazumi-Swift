@@ -61,14 +61,21 @@ enum KazumiNetworkPolicy {
 
     /// 替代 `URLSession.shared` 的那一份：shared 的配置改不了，也就永远不走我们
     /// 填的代理。各调用点自己设 `request.timeoutInterval`，所以这里用默认配置。
-    static let requestSession = ProxyAwareURLSession { URLSessionConfiguration.default }
+    static let requestSession = ProxyAwareURLSession {
+        let configuration = URLSessionConfiguration.default
+        KazumiNetworkPolicy.applyProxy(to: configuration)
+        return configuration
+    }
 
     /// 把当前手动代理套到一份 session 配置上。
     ///
     /// 没开代理、或者地址写错了（`ProxyURL.parse` 返回 nil）就什么都不做，
     /// 交给系统代理——跟 main 的 `findProxy` 为空时一样。
     static func applyProxy(to configuration: URLSessionConfiguration) {
-        guard !proxyURL.isEmpty, let parsed = ProxyURL.parse(proxyURL) else { return }
+        guard !proxyURL.isEmpty, let parsed = ProxyURL.parse(proxyURL) else {
+            configuration.connectionProxyDictionary = nil
+            return
+        }
         configuration.connectionProxyDictionary = proxyDictionary(host: parsed.host, port: parsed.port)
     }
 

@@ -208,7 +208,7 @@ final class PopularController {
         let items = BangumiAcceleration.isMirrorEnabled
             ? await BangumiAPI.mirrorPopular(limit: limit, offset: 0)
             : await BangumiAPI.trends(limit: limit, offset: 0)
-        return items.map(PopularPoster.init)
+        return (items ?? []).map(PopularPoster.init)
     }
 
     private static func fetchSeason() async -> [PopularPoster] {
@@ -221,11 +221,11 @@ final class PopularController {
 
     private static func fetchRanked() async -> [PopularPoster] {
         let items = await BangumiAPI.ranked(limit: rowSize, offset: 0)
-        return items.map(PopularPoster.init)
+        return (items ?? []).map(PopularPoster.init)
     }
 
     private static func fetchCollected() async -> [PopularPoster] {
         let items = await BangumiAPI.collected(limit: rowSize, offset: 0)
-        return items.map(PopularPoster.init)
+        return (items ?? []).map(PopularPoster.init)
     }
 }

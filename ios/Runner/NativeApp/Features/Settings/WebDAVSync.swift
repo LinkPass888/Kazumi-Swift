@@ -11,7 +11,8 @@
 //  合并规则：
 //  · 观看记录以「规则 + 番剧」为主键，同一条内部把每集进度并起来（新的一份赢）；
 //    收藏以番剧 ID 为主键，同一条留 `updatedAt` 新的那份；
-//  · 弹幕屏蔽词是文本，两边按行求并集，本机的顺序在前，云盘多出来的接在后面。
+//  · 弹幕屏蔽词按规则合并（含删除墓碑，按 updatedAt/deviceId/deleted 取新的那份），
+//    本机的顺序在前，云盘多出来的接在后面。
 //
 //  关掉的那一类不拉、不写本机，写回云盘时也原样用云盘那份，
 //  免得「只开了观看记录」把云盘上的收藏冲成空。
@@ -131,6 +132,8 @@ enum WebDAVSync {
         // 不需要「并过没有」的记号（LP 2026-10-28）。
         var legacyHistoryCount = 0
         var legacyRules: [String] = []
+        /// 这一轮合并出来的屏蔽词状态（含墓碑），写回本机那份文件时用。
+        var mergedShieldState: WebDAVLegacy.ShieldState?
         // 云盘上那份原版快照读到了没有：没读到就不许写回，
         // 否则一次网络抖动就会把云盘上的老记录冲成本机这几条。
         var legacyHistoryRead = false
@@ -148,7 +151,7 @@ enum WebDAVSync {
                 history = mergeHistory(local: library.history, remote: history)
             }
         } else {
-            history = remote?.history ?? library.history
+            history = remote?.history ?? []
         }
 
         // 收藏：只有它换格式（旧版是 Hive 二进制箱体），所以只有它带记号，而且带时间。
@@ -195,17 +198,81 @@ enum WebDAVSync {
                 .map { RemovedEntry(id: $0.key, removedAt: $0.value) }
                 .sorted { $0.id < $1.id }
         } else {
-            entries = remote?.entries ?? library.entries
+            entries = remote?.entries ?? []
         }
 
         if contents.contains(.shield) {
-            legacyRules = (try? await WebDAVLegacy.shieldRules(client: client)) ?? []
-            let cloudRules = legacyRules.isEmpty
-                ? rules
-                : mergeRules(local: rules, remote: legacyRules.joined(separator: "\n"))
-            rules = mergeRules(local: localRules, remote: cloudRules)
+            // 本机当前的规则（设置里那串文本）。
+            let localList = Self.ruleLines(localRules)
+            // 本端备份里那份也是云端数据，没有编辑时间，按 updatedAt 0 参与合并。
+            let backupList = Self.ruleLines(rules)
+            let readSnapshot = try? await WebDAVLegacy.shieldState(
+                client: client,
+                deviceID: settings.webDAVDeviceID
+            )
+            let snapshot = readSnapshot ?? WebDAVLegacy.ShieldSnapshot()
+            legacyRules = snapshot.merged.rules
+
+            var merged = snapshot.merged
+            // 本机有、状态里没有的规则：updatedAt 0，盖不过云端带时间戳的墓碑。
+            for rule in localList where merged.entries[rule] == nil {
+                merged.insert(WebDAVLegacy.ShieldEntry(
+                    rule: rule,
+                    updatedAt: 0,
+                    deviceId: settings.webDAVDeviceID,
+                    deleted: false
+                ))
+            }
+            // 本端备份里的规则：同样没有编辑时间，用本机设备号补上，
+            // 写回去时 deviceId 不能为空（main 会判整份文件无效）。
+            for rule in backupList where merged.entries[rule] == nil {
+                merged.insert(WebDAVLegacy.ShieldEntry(
+                    rule: rule,
+                    updatedAt: 0,
+                    deviceId: settings.webDAVDeviceID,
+                    deleted: false
+                ))
+            }
+            // 本机上次写上去时还是可见、这次设置里已经没有的规则 = 本机删掉的。
+            // 写成墓碑，时间取 max(now, latest + 1)，保证比云端已有的都新。
+            let localSet = Set(localList)
+            let now = Int(Date().timeIntervalSince1970 * 1000)
+            var latest = merged.latestTimestamp
+            for rule in snapshot.own.order {
+                guard let entry = snapshot.own.entries[rule],
+                      !entry.deleted,
+                      !localSet.contains(rule),
+                      merged.entries[rule]?.deleted == false
+                else { continue }
+                latest = latest == Int.max ? Int.max : max(now, latest + 1)
+                merged.insert(WebDAVLegacy.ShieldEntry(
+                    rule: rule,
+                    updatedAt: latest,
+                    deviceId: settings.webDAVDeviceID,
+                    deleted: true
+                ))
+            }
+            // 用户看到的行序跟以前一致：本机在前，备份多出来的其次，
+            // 云盘原版多出来的最后。
+            var lines: [String] = []
+            var seen = Set<String>()
+            for rule in localList {
+                guard let entry = merged.entries[rule], !entry.deleted else { continue }
+                if seen.insert(rule).inserted { lines.append(rule) }
+            }
+            for rule in backupList {
+                guard let entry = merged.entries[rule], !entry.deleted else { continue }
+                if seen.insert(rule).inserted { lines.append(rule) }
+            }
+            for rule in merged.order {
+                guard let entry = merged.entries[rule], !entry.deleted else { continue }
+                if seen.insert(rule).inserted { lines.append(rule) }
+            }
+            rules = lines.joined(separator: "\n")
+            // 云盘没读到就不写回：拿空状态盖上去会把本机那份里的墓碑冲掉。
+            mergedShieldState = readSnapshot == nil ? nil : merged
         } else {
-            rules = remote?.danmakuRules ?? localRules
+            rules = remote?.danmakuRules ?? ""
         }
 
         progress?(ProgressEvent(text: "正在上传合并结果…", current: 0, total: 0))
@@ -279,12 +346,11 @@ enum WebDAVSync {
                 writeBackError = Self.technicalText(error)
             }
         }
-        if contents.contains(.shield) {
-            // 只写本机那一份，别的设备的文件一概不碰 —— 这个不用等读成功，
-            // 写坏了也只影响本机这一份。
+        if contents.contains(.shield), let mergedShieldState {
+            // 只写本机那一份，别的设备的文件一概不碰。整份状态都要写，墓碑不能丢。
             do {
                 try await WebDAVLegacy.writeShield(
-                    Self.ruleLines(rules),
+                    mergedShieldState,
                     deviceID: settings.webDAVDeviceID,
                     client: client
                 )
@@ -386,26 +452,14 @@ enum WebDAVSync {
         return merged
     }
 
-    /// 屏蔽词：本机顺序在前，云盘多出来的行接在后面，重复的行只留一份。
-    private static func mergeRules(local: String, remote: String) -> String {
-        var lines: [String] = []
-        var seen = Set<String>()
-        for text in [local, remote] {
-            for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
-                let line = raw.trimmingCharacters(in: .whitespaces)
-                guard !line.isEmpty, seen.insert(line).inserted else { continue }
-                lines.append(line)
-            }
-        }
-        return lines.joined(separator: "\n")
-    }
-
     private static func ruleCount(_ text: String) -> Int {
         text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
     }
 
     private static func ruleLines(_ text: String) -> [String] {
-        text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        text.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     static func technicalText(_ error: Error) -> String {

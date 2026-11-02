@@ -342,6 +342,7 @@ struct PlayerScreen: View {
     @State private var comments: [BangumiCommentItem] = []
     @State private var commentTotal = 0
     @State private var isLoadingComments = false
+    @State private var commentRequestGeneration = 0
     @State private var commentLoadFailed = false
     /// 评论：最新优先还是最早优先；切换时只在本地重排，不再请求。
     @State private var isCommentsAscending = false
@@ -1881,9 +1882,11 @@ struct PlayerScreen: View {
         showControls()
         // 先作废按设置计时的那一条，免得两套计时同时跑。
         hideGeneration &+= 1
+        let generation = hideGeneration
         Task {
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled, surface.isPlaying else { return }
+            guard generation == hideGeneration, canHideControls else { return }
             withAnimation(.easeOut(duration: 0.2)) { controlsVisible = false }
         }
     }
@@ -4395,20 +4398,27 @@ struct PlayerScreen: View {
     }
 
     private func reloadComments() async {
-        guard !isLoadingComments else { return }
+        commentRequestGeneration &+= 1
+        let generation = commentRequestGeneration
         isLoadingComments = true
-        defer { isLoadingComments = false }
+        defer {
+            if generation == commentRequestGeneration { isLoadingComments = false }
+        }
         // 评论区默认只看当集：没定过就按当前集补上，失败才退回上一口径
         if commentEpisode == nil, let c = controller, let ep = defaultCommentEpisode(c) {
             commentEpisode = ep
         }
+        let episode = commentEpisode
         let page: BangumiCommentPage
-        if let ep = commentEpisode, let eid = await BangumiAPI.episodeID(subjectID: bangumiID, episode: ep) {
+        if let ep = episode, let eid = await BangumiAPI.episodeID(subjectID: bangumiID, episode: ep) {
+            guard generation == commentRequestGeneration, episode == commentEpisode else { return }
             page = await BangumiAPI.episodeComments(episodeID: eid)
         } else {
             // 兜底：当集还没解析出来或取不到 episodeID 时，退回整部番（避免空屏）
+            guard generation == commentRequestGeneration, episode == commentEpisode else { return }
             page = await BangumiAPI.comments(subjectID: bangumiID)
         }
+        guard generation == commentRequestGeneration, episode == commentEpisode else { return }
         var items = page.items
         // 排序：主分支在拿到就排好，这里沿用同一规则（按 updatedAt）
         items.sort { isCommentsAscending ? $0.updatedAt < $1.updatedAt : $0.updatedAt > $1.updatedAt }
@@ -4417,6 +4427,7 @@ struct PlayerScreen: View {
     }
 
     private func switchCommentEpisode(_ episode: Int?) {
+        commentRequestGeneration &+= 1
         commentEpisode = episode
         comments = []
         commentTotal = 0

@@ -231,7 +231,8 @@ final class TimelineController {
         guard selectedDate == date else { return }
         // 默认顺序按当天时刻从早到晚，所以时刻到了要重排一次；
         // 其余排序不依赖时刻，重算一遍结果不变。
-        bangumiCalendar = applySort(merged)
+        let refreshed = await mergeCustomEntries(into: groupedBaseCalendar(), collectTypes: collectTypes)
+        bangumiCalendar = applySort(refreshed)
     }
 
     /// 把缓存那份先铺上去（`baseCalendar` 随后会被网络那轮盖掉）。

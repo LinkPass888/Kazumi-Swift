@@ -189,7 +189,7 @@ extension PopularListScreen {
         private func loadNext() async {
             guard !isLoadingMore, !reachedEnd else { return }
             isLoadingMore = true
-            let page: [BangumiItem]
+            let page: [BangumiItem]?
             switch source {
             case .trending:
                 page = BangumiAcceleration.isMirrorEnabled
@@ -212,6 +212,12 @@ extension PopularListScreen {
                     : await BangumiAPI.listByTag(rank: Int.random(in: 1...8000), tag: tag)
             }
 
+            // 取数失败不能当成"到底了"，否则这一页永远不再重试。
+            guard let page else {
+                isLoadingMore = false
+                isFailed = items.isEmpty
+                return
+            }
             if page.isEmpty {
                 reachedEnd = true
             } else {

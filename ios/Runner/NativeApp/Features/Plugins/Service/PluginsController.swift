@@ -242,14 +242,13 @@ final class PluginsController {
     func move(fromOffsets source: IndexSet, toOffset destination: Int) async throws {
         let previous = pluginList
         pluginList.move(fromOffsets: source, toOffset: destination)
-        let snapshot = pluginList
         let revision = reorderRevision &+ 1
         reorderRevision = revision
         do {
-            // enqueue 的闭包要求 @Sendable，这里只把不可变的快照与路径带进去。
-            let snapshotToWrite = snapshot
-            let targetURL = fileURL
+            // enqueue 的闭包要求 @Sendable，快照在轮到本次写入时再取，避免覆盖更早的变更。
             try await enqueue {
+                let snapshotToWrite = self.pluginList
+                let targetURL = self.fileURL
                 do {
                     try Self.write(snapshotToWrite, to: targetURL)
                     return .success(())

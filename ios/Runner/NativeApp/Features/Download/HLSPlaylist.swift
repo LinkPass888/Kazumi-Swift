@@ -107,6 +107,9 @@ enum HLSPlaylist {
 
             if line.hasPrefix("#EXT-X-MAP") {
                 if let uri = attribute("URI", in: line), let url = resolve(uri, against: baseURL) {
+                    if let existing = initURL, existing != url {
+                        throw DownloadEngineError.multipleInitSegments
+                    }
                     initURL = url
                     let name = "\(prefix)-init.mp4"
                     initFileName = name

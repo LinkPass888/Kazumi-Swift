@@ -707,7 +707,12 @@ private struct DoubleRangeSlider: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let target = nearestKnob(at: value.startLocation.x, lowX: lowX, highX: highX)
+                        if dragging == nil {
+                            dragging = lowX == highX
+                                ? (value.location.x > value.startLocation.x ? .high : .low)
+                                : nearestKnob(at: value.startLocation.x, lowX: lowX, highX: highX)
+                        }
+                        guard let target = dragging else { return }
                         let x = min(max(value.location.x - knobSize / 2, 0), width)
                         let raw = bounds.lowerBound + (bounds.upperBound - bounds.lowerBound) * Double(x / width)
                         let snapped = snap(raw)
@@ -718,6 +723,7 @@ private struct DoubleRangeSlider: View {
                             onChange(low, max(snapped, low))
                         }
                     }
+                    .onEnded { _ in dragging = nil }
             )
         }
         .frame(height: knobSize)

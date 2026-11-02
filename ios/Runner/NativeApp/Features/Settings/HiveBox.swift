@@ -163,24 +163,28 @@ enum HiveBox {
             case 6:
                 let count = Int(try u32())
                 var items: [Value] = []
+                guard count <= remaining else { throw DecodeError(description: "读越界") }
                 items.reserveCapacity(count)
                 for _ in 0..<count { items.append(.number(try f64())) }
                 return .list(items)
             case 9:
                 let count = Int(try u32())
                 var items: [Value] = []
+                guard count <= remaining else { throw DecodeError(description: "读越界") }
                 items.reserveCapacity(count)
                 for _ in 0..<count { items.append(.string(try text())) }
                 return .list(items)
             case 10:
                 let count = Int(try u32())
                 var items: [Value] = []
+                guard count <= remaining else { throw DecodeError(description: "读越界") }
                 items.reserveCapacity(count)
                 for _ in 0..<count { items.append(try value()) }
                 return .list(items)
             case 11:
                 let count = Int(try u32())
                 var pairs: [(key: Value, value: Value)] = []
+                guard count <= remaining else { throw DecodeError(description: "读越界") }
                 pairs.reserveCapacity(count)
                 for _ in 0..<count {
                     let key = try value()

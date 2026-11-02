@@ -105,9 +105,13 @@ struct KazumiSyncClient {
         guard let text = String(data: data, encoding: .utf8) else { return [] }
         var files: [RemoteFile] = []
 
-        let responses = text.components(separatedBy: "<d:response")
+        let responses = text.replacingOccurrences(
+            of: "<(?i)(?:[\\w.-]+:)?response\\b",
+            with: "\u{0}",
+            options: .regularExpression
+        ).components(separatedBy: "\u{0}")
         for response in responses.dropFirst() {
-            guard let href = firstMatch(in: response, pattern: "<d:href>([^<]*)</d:href>") else { continue }
+            guard let href = firstMatch(in: response, pattern: "<(?:[\\w.-]+:)?href>([^<]*)</(?:[\\w.-]+:)?href>") else { continue }
             let decoded = href.removingPercentEncoding ?? href
             var name = decoded.hasSuffix("/") ? String(decoded.dropLast()) : decoded
             if let slash = name.lastIndex(of: "/") { name = String(name[name.index(after: slash)...]) }
@@ -115,9 +119,9 @@ struct KazumiSyncClient {
             // 目录自身那条会被上面过滤掉；子目录（href 以 / 结尾）也跳过。
             if decoded.hasSuffix("/") { continue }
 
-            let size = firstMatch(in: response, pattern: "<d:getcontentlength>(\\d+)</d:getcontentlength>")
+            let size = firstMatch(in: response, pattern: "<(?:[\\w.-]+:)?getcontentlength>(\\d+)</(?:[\\w.-]+:)?getcontentlength>")
                 .flatMap(Int.init) ?? 0
-            let modified = firstMatch(in: response, pattern: "<d:getlastmodified>([^<]*)</d:getlastmodified>")
+            let modified = firstMatch(in: response, pattern: "<(?:[\\w.-]+:)?getlastmodified>([^<]*)</(?:[\\w.-]+:)?getlastmodified>")
                 .flatMap(Self.httpDate)
             files.append(RemoteFile(name: name, size: size, modified: modified))
         }

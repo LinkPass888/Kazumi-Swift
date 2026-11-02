@@ -245,15 +245,16 @@ final class DownloadDirectoryStore {
             return .failure(error)
         }
 
-        let bookmarked = persistBookmark(for: url)
-        KazumiLogBuffer.storage("下载目录：书签=\(bookmarked ? "成" : "败")")
-        guard bookmarked else {
-            return bail(.bookmarkFailed)
-        }
         let writable = FileManager.default.isWritableFile(atPath: url.path(percentEncoded: false))
         KazumiLogBuffer.storage("下载目录：可写=\(writable ? "是" : "否")")
         guard writable else {
             return bail(.notWritable)
+        }
+
+        let bookmarked = persistBookmark(for: url)
+        KazumiLogBuffer.storage("下载目录：书签=\(bookmarked ? "成" : "败")")
+        guard bookmarked else {
+            return bail(.bookmarkFailed)
         }
 
         // 访问权直接接管成常驻，不再「先放掉、再靠书签重开」：

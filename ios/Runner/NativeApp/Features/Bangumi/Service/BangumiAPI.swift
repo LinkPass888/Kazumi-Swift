@@ -157,7 +157,7 @@ enum BangumiAPI {
     // MARK: - 推荐列表
 
     /// 对应 getBangumiTrendsList：next.bgm.tv 的趋势榜，每页 24 条。
-    static func trends(limit: Int = 24, offset: Int = 0, type: Int = 2) async -> [BangumiItem] {
+    static func trends(limit: Int = 24, offset: Int = 0, type: Int = 2) async -> [BangumiItem]? {
         do {
             let url = BangumiEndpoints.apiNextDomain + BangumiEndpoints.trendsNext
             let json = try await get(
@@ -176,12 +176,12 @@ enum BangumiAPI {
             return items
         } catch {
             KazumiLog.network.error("Resolve bangumi trends failed: \(error.localizedDescription, privacy: .public)")
-            return []
+            return nil
         }
     }
 
     /// 对应 getBangumiMirrorPopularSubjects：走 Kazumi 镜像缓存，支持标签。
-    static func mirrorPopular(tag: String = "", limit: Int = 24, offset: Int = 0) async -> [BangumiItem] {
+    static func mirrorPopular(tag: String = "", limit: Int = 24, offset: Int = 0) async -> [BangumiItem]? {
         do {
             var components = URLComponents()
             components.path = BangumiEndpoints.mirrorPopularSubjects
@@ -196,7 +196,7 @@ enum BangumiAPI {
             return list.compactMap { BangumiItem.fromJSON($0) }
         } catch {
             KazumiLog.network.error("Resolve bangumi mirror popular failed: \(error.localizedDescription, privacy: .public)")
-            return []
+            return nil
         }
     }
 
@@ -205,7 +205,7 @@ enum BangumiAPI {
     /// 推荐页「综合排名」那行和它的列表页用这一个口子。原来的 `listByTag`
     /// 按标签取的时候用的是随机名次（`Int.random(in: 1...8000)`），同一行两次
     /// 打开内容不一样，Ato 定过这种不稳的源不能进首页。
-    static func ranked(limit: Int = 10, offset: Int = 0) async -> [BangumiItem] {
+    static func ranked(limit: Int = 10, offset: Int = 0) async -> [BangumiItem]? {
         let params = searchParams(
             keyword: "",
             tags: ["日本"],
@@ -225,7 +225,7 @@ enum BangumiAPI {
             return items
         } catch {
             KazumiLog.network.error("Resolve bangumi ranked failed: \(error.localizedDescription, privacy: .public)")
-            return []
+            return nil
         }
     }
 
@@ -233,7 +233,7 @@ enum BangumiAPI {
     ///
     /// next.bgm.tv 的 SubjectSearchSort 里 `heat` 的定义就是「收藏人数」，
     /// 所以这是收藏总数榜——跟「本周热门」（趋势，正在涨的）不是一回事。
-    static func collected(limit: Int = 10, offset: Int = 0) async -> [BangumiItem] {
+    static func collected(limit: Int = 10, offset: Int = 0) async -> [BangumiItem]? {
         let params = searchParams(keyword: "", sort: "heat")
         do {
             let url = BangumiEndpoints.format(
@@ -248,12 +248,12 @@ enum BangumiAPI {
             return items
         } catch {
             KazumiLog.network.error("Resolve bangumi collected failed: \(error.localizedDescription, privacy: .public)")
-            return []
+            return nil
         }
     }
 
     /// 对应 getBangumiList：按标签（或随机名次）从官方搜索接口取 100 条。
-    static func listByTag(rank: Int = 2, tag: String = "") async -> [BangumiItem] {
+    static func listByTag(rank: Int = 2, tag: String = "") async -> [BangumiItem]? {
         let params = searchParams(
             keyword: "",
             tags: tag.isEmpty ? ["日本"] : [tag],
@@ -269,7 +269,7 @@ enum BangumiAPI {
             return (json["data"].arrayValue ?? []).compactMap { BangumiItem.fromJSON($0) }
         } catch {
             KazumiLog.network.error("Resolve bangumi list failed: \(error.localizedDescription, privacy: .public)")
-            return []
+            return nil
         }
     }
 
@@ -553,6 +553,7 @@ enum BangumiAPI {
                 break
             }
         } while (total ?? Int.max) > offset
+        if let total, offset < total { return [] }
         if !raw.isEmpty {
             await BangumiSubjectCache.shared.store(episodes: raw, for: subjectID)
         }
