@@ -80,12 +80,12 @@ struct TraceResultItem: Identifiable, Sendable {
                 return value.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        return "未知番剧"
+        return String(localized: "未知番剧")
     }
 
     /// 集数文案：对应 _episode(episode)。
     var episodeText: String {
-        guard !episode.isEmpty else { return "集数未知" }
+        guard !episode.isEmpty else { return String(localized: "集数未知") }
         let numbers = episode.map { value -> String in
             value.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(value)) : String(value)
         }
@@ -113,7 +113,7 @@ struct TraceResultItem: Identifiable, Sendable {
         }
         let start = from ?? at
         let end = to
-        guard let start, start.isFinite, start >= 0 else { return "时间未知" }
+        guard let start, start.isFinite, start >= 0 else { return String(localized: "时间未知") }
         guard let end, end.isFinite, end >= start else { return time(start) }
         return "\(time(start)) – \(time(end))"
     }

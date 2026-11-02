@@ -53,13 +53,13 @@ enum DownloadEngineError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .badStatus(let code): "服务器返回 \(code)"
-        case .notMedia: "这个地址不是视频，可能规则给错了"
-        case .emptyPlaylist: "播放列表是空的"
-        case .encrypted: "这一集是加密的，下不了"
-        case .multipleInitSegments: "这一集有多个初始化段，下不了"
-        case .cancelled: "已取消"
-        case .diskFull: "存储空间不够"
+        case .badStatus(let code): String(localized: "服务器返回 \(String(describing: code))")
+        case .notMedia: String(localized: "这个地址不是视频，可能规则给错了")
+        case .emptyPlaylist: String(localized: "播放列表是空的")
+        case .encrypted: String(localized: "这一集是加密的，下不了")
+        case .multipleInitSegments: String(localized: "这一集有多个初始化段，下不了")
+        case .cancelled: String(localized: "已取消")
+        case .diskFull: String(localized: "存储空间不够")
         }
     }
 }

@@ -116,7 +116,7 @@ enum WebDAVSync {
             return Outcome(
                 ok: false,
                 message: String(localized: "同步没能完成：\(Self.friendlyText(error))"),
-                log: "同步读云盘失败：\(Self.technicalText(error))"
+                log: String(localized: "同步读云盘失败：\(String(describing: Self.technicalText(error)))")
             )
         }
 
@@ -289,7 +289,7 @@ enum WebDAVSync {
             return Outcome(
                 ok: false,
                 message: String(localized: "同步没能完成：\(Self.friendlyText(error))"),
-                log: "同步写云盘失败：\(Self.technicalText(error))"
+                log: String(localized: "同步写云盘失败：\(String(describing: Self.technicalText(error)))")
             )
         }
 
@@ -376,7 +376,7 @@ enum WebDAVSync {
             return Outcome(
                 ok: false,
                 message: String(localized: "已同步，但没能写回旧版格式：\(writeBackError)"),
-                log: "多设备同步完成但写回原版格式失败（\(counts)\(legacy)）：\(writeBackError)",
+                log: String(localized: "多设备同步完成但写回原版格式失败（\(String(describing: counts))\(String(describing: legacy))）：\(String(describing: writeBackError))"),
                 summary: String(localized: "\(summary) · 写回旧版格式失败")
             )
         }
@@ -385,11 +385,11 @@ enum WebDAVSync {
         let message = cloudBackupWasEmpty
             ? String(localized: "\(base)（云盘上原来那份是空的，已用这次的结果覆盖）")
             : base
-        let emptyNote = cloudBackupWasEmpty ? ")；云盘原文件为 0 字节，已覆盖" : ""
+        let emptyNote = cloudBackupWasEmpty ? String(localized: ")；云盘原文件为 0 字节，已覆盖") : ""
         return Outcome(
             ok: true,
             message: message,
-            log: "多设备同步完成（\(counts)\(legacy)\(emptyNote)",
+            log: String(localized: "多设备同步完成（\(String(describing: counts))\(String(describing: legacy))\(String(describing: emptyNote))"),
             summary: summary
         )
     }

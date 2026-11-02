@@ -142,14 +142,14 @@ final class NowPlayingSessionPublisher: NowPlayingModernPublishing {
                     } catch {
                         guard !self.terminated else { return }
                         KazumiLogBuffer.player(
-                            "正在播放（iOS 27）：申请系统主会话失败（\(error)），保留应用主会话"
+                            String(localized: "正在播放（iOS 27）：申请系统主会话失败（\(String(describing: error))），保留应用主会话")
                         )
                     }
                 }
                 guard !self.terminated else { return }
                 self.onActive?()
                 KazumiLogBuffer.player(
-                    "正在播放（iOS 27）：主会话状态 application=\(session.isApplicationPrimary) system=\(session.isSystemPrimary)"
+                    String(localized: "正在播放（iOS 27）：主会话状态 application=\(String(describing: session.isApplicationPrimary)) system=\(String(describing: session.isSystemPrimary))")
                 )
             } catch {
                 guard let self, !self.terminated else { return }

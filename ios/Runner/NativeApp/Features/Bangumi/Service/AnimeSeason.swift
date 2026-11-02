@@ -11,10 +11,10 @@ import Foundation
 enum AnimeSeason {
     /// 对应 getSeasonStringByMonth。
     static func seasonString(month: Int) -> String {
-        if month <= 3 { return "冬" }
-        if month <= 6 { return "春" }
-        if month <= 9 { return "夏" }
-        return "秋"
+        if month <= 3 { return String(localized: "冬") }
+        if month <= 6 { return String(localized: "春") }
+        if month <= 9 { return String(localized: "夏") }
+        return String(localized: "秋")
     }
 
     /// 对应 isSameSeason：同一年且同一季度。

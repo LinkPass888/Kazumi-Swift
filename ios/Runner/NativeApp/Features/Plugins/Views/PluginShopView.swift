@@ -59,7 +59,7 @@ struct PluginShopView: View {
                         }
                     }
                 } footer: {
-                    Text("共 \(filteredItems.count) 条规则，数据来自 KazumiRules 仓库。")
+                    Text(String(localized: "共 \(String(describing: filteredItems.count)) 条规则，数据来自 KazumiRules 仓库。"))
                 }
             }
         }
@@ -128,13 +128,13 @@ struct PluginShopView: View {
         let result = await plugins.tryUpdatePlugin(named: item.name)
         switch result {
         case .updated:
-            showToast("已安装 \(item.name)")
+            showToast(String(localized: "已安装 \(String(describing: item.name))"))
         case .notNewer:
-            showToast("\(item.name) 已是最新版本")
+            showToast(String(localized: "\(String(describing: item.name)) 已是最新版本"))
         case .requiresNewerClient:
-            errorMessage = "规则「\(item.name)」需要更高版本的客户端"
+            errorMessage = String(localized: "规则「\(String(describing: item.name))」需要更高版本的客户端")
         case .failed:
-            errorMessage = "安装「\(item.name)」失败，请稍后重试"
+            errorMessage = String(localized: "安装「\(String(describing: item.name))」失败，请稍后重试")
         }
     }
 
@@ -217,7 +217,7 @@ private struct PluginCatalogRow: View {
         switch status {
         case .install: "安装"
         case .installed: "已安装"
-        case .update: "更新"
+        case .update: String(localized: "更新")
         }
     }
 

@@ -22,9 +22,9 @@ enum TimelineSort: String, CaseIterable, Identifiable, Sendable {
     /// 对应 timeline_options.dart 的 `_TimelineSortLabel`。
     var title: String {
         switch self {
-        case .popularity: "热度优先"
-        case .rating: "评分优先"
-        case .defaultOrder: "默认顺序"
+        case .popularity: String(localized: "热度优先")
+        case .rating: String(localized: "评分优先")
+        case .defaultOrder: String(localized: "默认顺序")
         }
     }
 }
@@ -97,7 +97,7 @@ final class TimelineController {
         let month = calendar.component(.month, from: selectedDate)
         // 年份显式转字符串再拼接：整数插值可能被按千分位渲染成「2,026」。
         // 结果固定为「2026年秋季」，不加分隔符。
-        return String(year) + "年" + AnimeSeason.seasonString(month: month) + "季"
+        return String(year) + String(localized: "年") + AnimeSeason.seasonString(month: month) + String(localized: "季")
     }
 
     var isCurrentSeason: Bool {
@@ -108,7 +108,7 @@ final class TimelineController {
     /// `formatUpdateTime(updateEpoch) + ' 更新'`）。没有可靠时刻时不显示。
     func updateText(for item: BangumiItem) -> String? {
         guard let time = BangumiAirTimeService.shared.airTime(for: item.id) else { return nil }
-        return "\(time) 更新"
+        return String(localized: "\(String(describing: time)) 更新")
     }
 
     /// 卡片底部的集数胶囊：已经播出到第几集（1-based）。

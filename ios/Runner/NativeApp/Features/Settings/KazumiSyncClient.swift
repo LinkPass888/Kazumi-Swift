@@ -32,10 +32,10 @@ struct KazumiSyncClient {
 
         var errorDescription: String? {
             switch self {
-            case .notConfigured: "请先填写 WebDAV 服务器地址"
-            case .invalidURL(let url): "WebDAV 地址无效：\(url)"
-            case .unauthorized: "认证失败，请检查用户名与密码"
-            case .badStatus(let status): "服务器返回 HTTP \(status)"
+            case .notConfigured: String(localized: "请先填写 WebDAV 服务器地址")
+            case .invalidURL(let url): String(localized: "WebDAV 地址无效：\(String(describing: url))")
+            case .unauthorized: String(localized: "认证失败，请检查用户名与密码")
+            case .badStatus(let status): String(localized: "服务器返回 HTTP \(String(describing: status))")
             case .decoding(let message): message
             }
         }

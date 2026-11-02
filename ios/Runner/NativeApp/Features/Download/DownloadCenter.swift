@@ -396,8 +396,8 @@ final class DownloadCenter {
                     episode.errorMessage = error.localizedDescription
                 }
                 // 一律说一句「第 N 集下载失败：原因」，用户才知道发生了什么（LP 5115）。
-                let title = episode.title.isEmpty ? "第 \(item.episodeNumber) 集" : episode.title
-                failureNotice = "「\(title)」下载失败：\(error.localizedDescription)"
+                let title = episode.title.isEmpty ? String(localized: "第 \(String(describing: item.episodeNumber)) 集") : episode.title
+                failureNotice = String(localized: "「\(String(describing: title))」下载失败：\(String(describing: error.localizedDescription))")
                 KazumiLogBuffer.network("下载失败：第 \(item.episodeNumber) 集 \(error.localizedDescription)")
             }
             persist()

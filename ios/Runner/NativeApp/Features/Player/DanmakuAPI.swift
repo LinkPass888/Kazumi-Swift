@@ -81,11 +81,11 @@ enum DanmakuError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .badURL: "弹幕地址无效"
-        case .badResponse: "弹幕接口返回了无效响应"
-        case .unauthorized: "弹幕接口需要有效的 DanDanPlay 凭据"
-        case .status(429): "今日弹幕请求次数已达上限"
-        case .status(let code): "弹幕接口返回 HTTP \(code)"
+        case .badURL: String(localized: "弹幕地址无效")
+        case .badResponse: String(localized: "弹幕接口返回了无效响应")
+        case .unauthorized: String(localized: "弹幕接口需要有效的 DanDanPlay 凭据")
+        case .status(429): String(localized: "今日弹幕请求次数已达上限")
+        case .status(let code): String(localized: "弹幕接口返回 HTTP \(String(describing: code))")
         }
     }
 }
@@ -109,12 +109,12 @@ enum DanmakuAPI {
     /// 取某一集的弹幕。任何失败都折叠成 `.failed` / `.unavailable`，不抛错。
     static func fetch(bangumiID: Int, episode: Int) async -> DanmakuFetchResult {
         guard DanDanCredentials.isConfigured else {
-            return .unavailable("未配置 DanDanPlay 凭据，无法加载弹幕")
+            return .unavailable(String(localized: "未配置 DanDanPlay 凭据，无法加载弹幕"))
         }
         do {
             let danDanID = try await danDanBangumiID(bgmID: bangumiID)
             guard danDanID > 0 else {
-                return .unavailable("DanDanPlay 没有这部番的记录")
+                return .unavailable(String(localized: "DanDanPlay 没有这部番的记录"))
             }
             let comments = try await comments(danDanBangumiID: danDanID, episode: episode)
             guard !comments.isEmpty else {

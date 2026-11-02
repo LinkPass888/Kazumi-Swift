@@ -49,7 +49,7 @@ enum TraceAPI {
 
     private static func makeRequest(anilistInfo: Int, imageURL: String?) throws -> URLRequest {
         guard var components = URLComponents(string: searchEndpoint) else {
-            throw NetworkError.transport("trace.moe 接口地址无效")
+            throw NetworkError.transport(String(localized: "trace.moe 接口地址无效"))
         }
         var query = [URLQueryItem(name: "anilistInfo", value: String(anilistInfo))]
         if let imageURL, !imageURL.isEmpty {
@@ -83,7 +83,7 @@ enum TraceAPI {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw NetworkError.transport("trace.moe 返回了未知响应")
+            throw NetworkError.transport(String(localized: "trace.moe 返回了未知响应"))
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
@@ -94,7 +94,7 @@ enum TraceAPI {
         do {
             json = try JSONValue.decode(data)
         } catch {
-            throw NetworkError.decoding("trace.moe 响应解析失败")
+            throw NetworkError.decoding(String(localized: "trace.moe 响应解析失败"))
         }
         return ImageSearchItem.fromJSON(json)
     }

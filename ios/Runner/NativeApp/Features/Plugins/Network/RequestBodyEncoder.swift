@@ -13,7 +13,7 @@ enum JsonBodyEncoder {
     static func encode(_ value: JSONValue) throws -> Data {
         let text = value.serialized(pretty: false)
         guard let data = text.data(using: .utf8) else {
-            throw NetworkError.decoding("请求体无法编码为 UTF-8")
+            throw NetworkError.decoding(String(localized: "请求体无法编码为 UTF-8"))
         }
         return data
     }

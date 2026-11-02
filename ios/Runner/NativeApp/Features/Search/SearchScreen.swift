@@ -285,12 +285,12 @@ struct SearchScreen: View {
     /// 结果数那行：搜索中 / 共几部 / 被隐藏了几部（与 main 同一句）。
     private var countText: String {
         let all = controller.bangumiList
-        if controller.isLoading && all.isEmpty { return "正在搜索…" }
+        if controller.isLoading && all.isEmpty { return String(localized: "正在搜索…") }
         let shown = visibleItems.count
         if shown < all.count {
-            return "\(shown) 部番剧 · 隐藏 \(all.count - shown) 部"
+            return String(localized: "\(String(describing: shown)) 部番剧 · 隐藏 \(String(describing: all.count - shown)) 部")
         }
-        return "\(shown) 部番剧"
+        return String(localized: "\(String(describing: shown)) 部番剧")
     }
 
     /// 排序：按热度 / 排名 / 评分 / 匹配（原版是同一颗菜单，改完立刻重搜）。
@@ -303,9 +303,9 @@ struct SearchScreen: View {
                     submit(SearchParser.fromFilterState(state))
                 } label: {
                     if value == current {
-                        Label("按\(SearchFilterState.sortLabel(value))排序", systemImage: "checkmark")
+                        Label(String(localized: "按\(String(describing: SearchFilterState.sortLabel(value)))排序"), systemImage: "checkmark")
                     } else {
-                        Text("按\(SearchFilterState.sortLabel(value))排序")
+                        Text(String(localized: "按\(String(describing: SearchFilterState.sortLabel(value)))排序"))
                     }
                 }
             }

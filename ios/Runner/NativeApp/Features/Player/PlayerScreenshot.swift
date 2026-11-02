@@ -23,10 +23,10 @@ enum PlayerScreenshot {
     nonisolated static func save(pngAt fileURL: URL) async -> String? {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
-            return "截图保存失败：没有相册写入权限"
+            return String(localized: "截图保存失败：没有相册写入权限")
         }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return "截图保存失败：截图文件不见了（\(fileURL.lastPathComponent)）"
+            return String(localized: "截图保存失败：截图文件不见了（\(String(describing: fileURL.lastPathComponent))）")
         }
         do {
             // 显式写 isolation: nil：这条闭包不能被绑到任何 actor 上。
@@ -43,7 +43,7 @@ enum PlayerScreenshot {
             }
             return nil
         } catch {
-            return "截图保存失败：\(error.localizedDescription)"
+            return String(localized: "截图保存失败：\(String(describing: error.localizedDescription))")
         }
     }
 
@@ -56,7 +56,7 @@ enum PlayerScreenshot {
         do {
             try data.write(to: url)
         } catch {
-            return "保存失败：临时文件写不出去"
+            return String(localized: "保存失败：临时文件写不出去")
         }
         defer { try? FileManager.default.removeItem(at: url) }
         return await save(pngAt: url)

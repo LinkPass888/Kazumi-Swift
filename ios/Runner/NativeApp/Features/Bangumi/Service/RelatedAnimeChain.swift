@@ -19,8 +19,8 @@ import Foundation
 
 enum RelatedAnimeChain {
     /// 与 Dart 的 bangumiPrequelRelation / bangumiSequelRelation 一致。
-    static let prequel = "前传"
-    static let sequel = "续集"
+    static let prequel = String(localized: "前传")
+    static let sequel = String(localized: "续集")
     static let mainlineRelations: Set<String> = [prequel, sequel]
 
     private struct Node {

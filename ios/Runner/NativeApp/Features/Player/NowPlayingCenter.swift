@@ -93,8 +93,8 @@ final class NowPlayingCenter {
                 + " localPublished=\(lastSyncSnapshot != nil) playing=\(commands.isPlaying) rate=\(lastRate)"
         case .legacy:
             let center = MPNowPlayingInfoCenter.default()
-            return "NowPlaying=legacy 卡片字段=\(center.nowPlayingInfo?.count ?? 0)"
-                + " 状态=\(center.playbackState.rawValue)"
+            return String(localized: "NowPlaying=legacy 卡片字段=\(String(describing: center.nowPlayingInfo?.count ?? 0))")
+                + String(localized: " 状态=\(String(describing: center.playbackState.rawValue))")
         }
     }
 
@@ -409,7 +409,7 @@ final class NowPlayingCenter {
     ) {
         configureRemoteCommands()
 
-        let artist = episodeTitle.map { "第 \(episode) 集 · \($0)" } ?? "第 \(episode) 集"
+        let artist = episodeTitle.map { String(localized: "第 \(String(describing: episode)) 集 · \(String(describing: $0))") } ?? String(localized: "第 \(String(describing: episode)) 集")
         let next = Info(
             title: title,
             artist: artist,
@@ -650,7 +650,7 @@ final class NowPlayingCenter {
 
     private func logSyncSummary() {
         KazumiLogBuffer.shared.append(
-            "正在播放：已写入 \(writeCount) 次，跳过 \(skipCount) 次轮询",
+            String(localized: "正在播放：已写入 \(String(describing: writeCount)) 次，跳过 \(String(describing: skipCount)) 次轮询"),
             category: .player
         )
     }

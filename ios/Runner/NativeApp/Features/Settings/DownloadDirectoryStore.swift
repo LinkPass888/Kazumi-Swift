@@ -104,7 +104,7 @@ final class DownloadDirectoryStore {
         if let markerIndex = components.firstIndex(of: iCloudMarker) {
             let rest = components[(markerIndex + 1)...]
             let tail = rest.count > 2 ? ["…"] + rest.suffix(2) : Array(rest)
-            return (["iCloud 云盘"] + tail).joined(separator: " › ")
+            return ([String(localized: "iCloud 云盘")] + tail).joined(separator: " › ")
         }
 
         // 本机存储（「我的 iPhone」）。系统把这一层放在 App 组容器下面的
@@ -138,7 +138,7 @@ final class DownloadDirectoryStore {
     }
 
     /// 「文件」App 里本机存储那一层的叫法。iPad 上显示的是设备名，我们按 iPhone 口径写。
-    private static let localRootName = "我的 iPhone"
+    private static let localRootName = String(localized: "我的 iPhone")
 
     /// 选过一个外部目录（不管这次解析成功没有）。
     var hasCustomSelection: Bool { !savedPath.isEmpty }
@@ -208,12 +208,12 @@ final class DownloadDirectoryStore {
             relativeTo: nil,
             bookmarkDataIsStale: &stale
         ) else {
-            log("下载目录：书签换不回地址，退回默认位置")
+            log(String(localized: "下载目录：书签换不回地址，退回默认位置"))
             reset()
             return
         }
         guard url.startAccessingSecurityScopedResource() else {
-            log("下载目录：书签解析到了但拿不到访问权，退回默认位置")
+            log(String(localized: "下载目录：书签解析到了但拿不到访问权，退回默认位置"))
             reset()
             return
         }
@@ -223,7 +223,7 @@ final class DownloadDirectoryStore {
         hasAccess = true
         savedPath = url.path(percentEncoded: false)
         defaults.set(savedPath, forKey: Self.pathKey)
-        log("下载目录：书签已接回访问权 \(savedPath)")
+        log(String(localized: "下载目录：书签已接回访问权 \(String(describing: savedPath))"))
         // 书签过期就趁这次有访问权重新做一份，下次启动还能用。
         if stale { persistBookmark(for: url) }
     }
@@ -307,9 +307,9 @@ final class DownloadDirectoryStore {
 
         var errorDescription: String? {
             switch self {
-            case .noAccess: return "打不开这个文件夹"
-            case .bookmarkFailed: return "记不住这个文件夹，换一个试试"
-            case .notWritable: return "这个文件夹不能写，换一个试试"
+            case .noAccess: return String(localized: "打不开这个文件夹")
+            case .bookmarkFailed: return String(localized: "记不住这个文件夹，换一个试试")
+            case .notWritable: return String(localized: "这个文件夹不能写，换一个试试")
             }
         }
     }

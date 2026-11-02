@@ -81,11 +81,11 @@ final class KazumiImageLoader: @unchecked Sendable {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         let candidates: [(String, URL?)] = [
-            ("准备好的目录", support?.appendingPathComponent("Kazumi/images", isDirectory: true)),
+            (String(localized: "准备好的目录"), support?.appendingPathComponent("Kazumi/images", isDirectory: true)),
             ("Application Support", support?.appendingPathComponent("Kazumi/Images", isDirectory: true)),
             ("Caches", caches?.appendingPathComponent("Kazumi/Images", isDirectory: true)),
             ("Documents", documents?.appendingPathComponent("Kazumi/Images", isDirectory: true)),
-            ("临时目录", URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("KazumiImages", isDirectory: true)),
+            (String(localized: "临时目录"), URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("KazumiImages", isDirectory: true)),
         ]
         // 逐个试写，用第一个真能写的位置：Application Support 下的子目录
         // 在某些容器里建不出来（大小写不同的同名目录冲突），写盘会一直失败。

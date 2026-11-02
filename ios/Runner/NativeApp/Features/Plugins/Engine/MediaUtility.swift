@@ -46,7 +46,7 @@ enum MediaUtility {
 
     /// 对应 extractEpisodeNumber：匹配 `第?(\d+)[话集]?`，无法识别时返回 0。
     static func extractEpisodeNumber(_ input: String) -> Int {
-        let pattern = try! NSRegularExpression(pattern: "第?(\\d+)[话集]?")
+        let pattern = try! NSRegularExpression(pattern: String(localized: "第?(\\d+)[话集]?"))
         let range = NSRange(input.startIndex..<input.endIndex, in: input)
         guard let match = pattern.firstMatch(in: input, options: [], range: range),
               match.numberOfRanges > 1,

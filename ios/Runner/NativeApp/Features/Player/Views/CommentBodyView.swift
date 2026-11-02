@@ -49,7 +49,7 @@ struct CommentBodyView: View {
                                     viewer = CommentImageViewerTarget(index: index(of: url))
                                 }
                                 .accessibilityAddTraits(.isButton)
-                                .accessibilityLabel("查看第 \(index(of: url) + 1) 张图片")
+                                .accessibilityLabel(String(localized: "查看第 \(String(describing: index(of: url) + 1)) 张图片"))
                         }
                     }
                 }

@@ -139,7 +139,7 @@ struct DownloadScreen: View {
             Button {
                 deleteSelected()
             } label: {
-                Text(selection.isEmpty ? "删除" : "删除所选 \(selection.count) 集")
+                Text(selection.isEmpty ? "删除" : String(localized: "删除所选 \(String(describing: selection.count)) 集"))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
@@ -221,14 +221,14 @@ struct DownloadScreen: View {
     }
 
     private func subtitle(record: DownloadRecord, done: Int, total: Int, running: Bool) -> String {
-        let count = "\(done)/\(total) 集"
+        let count = String(localized: "\(String(describing: done))/\(String(describing: total)) 集")
         let size = ByteCountFormatter.string(fromByteCount: record.totalBytes, countStyle: .file)
         let body = record.totalBytes > 0 ? "\(count) · \(size)" : count
         if running {
-            return "下载中 · \(body)"
+            return String(localized: "下载中 · \(String(describing: body))")
         }
         if done == total, total > 0 {
-            return "已下载完 · \(body)"
+            return String(localized: "已下载完 · \(String(describing: body))")
         }
         return body
     }
@@ -328,22 +328,22 @@ struct DownloadScreen: View {
     private func statusText(_ episode: DownloadEpisode) -> String {
         switch episode.status {
         case .pending:
-            return "排队中"
+            return String(localized: "排队中")
         case .resolving:
-            return "正在解析播放地址"
+            return String(localized: "正在解析播放地址")
         case .downloading:
             let percent = Int((episode.progress * 100).rounded())
             let size = ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
-            return episode.totalBytes > 0 ? "下载中 \(percent)% · \(size)" : "下载中 \(percent)%"
+            return episode.totalBytes > 0 ? String(localized: "下载中 \(String(describing: percent))% · \(String(describing: size))") : String(localized: "下载中 \(String(describing: percent))%")
         case .paused:
-            return "已暂停"
+            return String(localized: "已暂停")
         case .completed:
             // 文件不在时大小是假的，写清楚能重下，别只写一个数。
-            guard episode.fileName != nil else { return "文件不在，可重新下载" }
+            guard episode.fileName != nil else { return String(localized: "文件不在，可重新下载") }
             return ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
         case .failed:
             // 失败原因直接说，不再只画个红点。
-            return episode.errorMessage ?? "下载失败"
+            return episode.errorMessage ?? String(localized: "下载失败")
         }
     }
 

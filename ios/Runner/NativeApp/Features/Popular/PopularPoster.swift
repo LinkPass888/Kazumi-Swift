@@ -37,7 +37,7 @@ struct PopularPoster: Identifiable, Codable, Hashable, Sendable {
         if year.count == 4, year.allSatisfy(\.isNumber) { parts.append(year) }
         // 话数拿不到就写「？？ 话」：跟原版 main 一样，宁可露出不知道，
         // 也不拿信息框里那个累计话数顶（LP 2026-10-27）。
-        parts.append(totalEpisodes > 0 ? "\(totalEpisodes) 集" : "？？ 集")
+        parts.append(totalEpisodes > 0 ? String(localized: "\(String(describing: totalEpisodes)) 集") : String(localized: "？？ 集"))
         if rating > 0 { parts.append(String(format: "%.1f", rating)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

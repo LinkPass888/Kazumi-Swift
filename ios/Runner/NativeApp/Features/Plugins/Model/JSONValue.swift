@@ -167,7 +167,7 @@ extension JSONValue {
 
     static func decode(_ string: String) throws -> JSONValue {
         guard let data = string.data(using: .utf8) else {
-            throw ApiRuleFormatError(message: "JSON 文本不是有效 UTF-8")
+            throw ApiRuleFormatError(message: String(localized: "JSON 文本不是有效 UTF-8"))
         }
         return try decode(data)
     }

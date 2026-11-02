@@ -201,10 +201,10 @@ struct PluginDraft {
             request: ApiRequestConfig(
                 method: searchMethod.uppercased(),
                 url: value(searchURL),
-                headers: try parseJSONMap(searchHeaders, label: "搜索请求头"),
-                query: try parseJSONMap(searchQuery, label: "搜索查询参数"),
+                headers: try parseJSONMap(searchHeaders, label: String(localized: "搜索请求头")),
+                query: try parseJSONMap(searchQuery, label: String(localized: "搜索查询参数")),
                 bodyType: searchBodyType,
-                body: try parseBody(searchBody, bodyType: searchBodyType, label: "搜索请求体")
+                body: try parseBody(searchBody, bodyType: searchBodyType, label: String(localized: "搜索请求体"))
             ),
             listPath: value(searchListPath),
             namePath: value(searchNamePath),
@@ -213,7 +213,7 @@ struct PluginDraft {
         )
         guard shouldValidate else { return config }
         guard !config.request.url.isEmpty else {
-            throw EditorError.emptyRequestURL("搜索请求地址")
+            throw EditorError.emptyRequestURL(String(localized: "搜索请求地址"))
         }
         let strategy = ApiRuleStrategy()
         _ = try strategy.prepareRequest(config.request, variables: ["keyword": .string("test")])
@@ -223,12 +223,12 @@ struct PluginDraft {
 
     private func buildChapterConfig() throws -> ApiChapterConfig {
         let pageURL = chapterPageURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let variablesRaw = try parseJSONMap(chapterVariables, label: "选集响应变量")
+        let variablesRaw = try parseJSONMap(chapterVariables, label: String(localized: "选集响应变量"))
         var variables: [String: String] = [:]
         for (key, value) in variablesRaw {
             variables[key] = value.stringValue ?? value.serialized(pretty: false)
         }
-        let pageQuery = try parseJSONMap(chapterPageQuery, label: "播放页查询参数")
+        let pageQuery = try parseJSONMap(chapterPageQuery, label: String(localized: "播放页查询参数"))
         // ApiEpisodePageConfig 只提供 json: 构造器，这里按 toJSON() 的同构形态回填。
         let episodePage = pageURL.isEmpty
             ? nil
@@ -240,10 +240,10 @@ struct PluginDraft {
             request: ApiRequestConfig(
                 method: chapterMethod.uppercased(),
                 url: chapterURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                headers: try parseJSONMap(chapterHeaders, label: "选集请求头"),
-                query: try parseJSONMap(chapterQuery, label: "选集查询参数"),
+                headers: try parseJSONMap(chapterHeaders, label: String(localized: "选集请求头")),
+                query: try parseJSONMap(chapterQuery, label: String(localized: "选集查询参数")),
                 bodyType: chapterBodyType,
-                body: try parseBody(chapterBody, bodyType: chapterBodyType, label: "选集请求体")
+                body: try parseBody(chapterBody, bodyType: chapterBodyType, label: String(localized: "选集请求体"))
             ),
             format: chapterFormat,
             roadsPath: chapterRoadsPath.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -261,7 +261,7 @@ struct PluginDraft {
         )
         guard chapterMode == .api else { return config }
         guard !config.request.url.isEmpty else {
-            throw EditorError.emptyRequestURL("选集请求地址")
+            throw EditorError.emptyRequestURL(String(localized: "选集请求地址"))
         }
         let strategy = ApiRuleStrategy()
         _ = try strategy.prepareRequest(config.request, variables: ["source": .string("test")])

@@ -26,32 +26,32 @@ enum PlayerErrorMessage {
             || raw.contains("name or service not known")
             || raw.contains("getaddrinfo")
             || raw.contains("resolve") {
-            return "连不上这个源的服务器（域名解析不了），可能是源挂了或者网络有问题"
+            return String(localized: "连不上这个源的服务器（域名解析不了），可能是源挂了或者网络有问题")
         }
         if raw.contains("timed out") || raw.contains("timeout") {
-            return "连接超时了，源太慢或者网络断了"
+            return String(localized: "连接超时了，源太慢或者网络断了")
         }
         if raw.contains("connection refused") || raw.contains("connection reset")
             || raw.contains("network is unreachable") || raw.contains("network unreachable") {
-            return "连不上这个源，网络断了或者源挂了"
+            return String(localized: "连不上这个源，网络断了或者源挂了")
         }
         // 源的地址失效：这是「换个源就好了」，要让用户知道该干什么。
         if raw.contains("404") || raw.contains("not found") {
-            return "这个源的播放地址已经失效了（404），换一个源试试"
+            return String(localized: "这个源的播放地址已经失效了（404），换一个源试试")
         }
         if raw.contains("403") || raw.contains("forbidden")
             || raw.contains("401") || raw.contains("unauthorized") {
-            return "这个源拒绝了请求（可能要登录或者有防盗链），换一个源试试"
+            return String(localized: "这个源拒绝了请求（可能要登录或者有防盗链），换一个源试试")
         }
         // 解码层：地址是好的，片子内核解不了。
         if raw.contains("could not open codec") || raw.contains("failed to initialize a decoder")
             || raw.contains("unrecognized file format") || raw.contains("unsupported")
             || raw.contains("no video or audio streams") {
-            return "这个格式内核解不了，换一个源或者换一集试试"
+            return String(localized: "这个格式内核解不了，换一个源或者换一集试试")
         }
         if raw.contains("failed to open") || raw.contains("loading failed") {
-            return "打不开这个播放地址，源可能已经失效了"
+            return String(localized: "打不开这个播放地址，源可能已经失效了")
         }
-        return "播放失败了，换一个源或者重新加载试试"
+        return String(localized: "播放失败了，换一个源或者重新加载试试")
     }
 }

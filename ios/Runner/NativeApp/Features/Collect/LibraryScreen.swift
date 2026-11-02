@@ -254,7 +254,7 @@ struct LibraryScreen: View {
         } label: {
             menuCapsule(title: categoryTitle)
         }
-        .accessibilityLabel(Text("筛选，\(categoryTitle)"))
+        .accessibilityLabel(Text(String(localized: "筛选，\(String(describing: categoryTitle))")))
         .accessibilityHint(Text("选择追番状态"))
     }
 
@@ -279,7 +279,7 @@ struct LibraryScreen: View {
         } label: {
             menuCapsule(title: effectiveSort.label)
         }
-        .accessibilityLabel(Text("排序，\(effectiveSort.label)"))
+        .accessibilityLabel(Text(String(localized: "排序，\(String(describing: effectiveSort.label))")))
         .accessibilityHint(Text("选择排序方式"))
     }
 
@@ -320,13 +320,13 @@ struct LibraryScreen: View {
     /// 当前筛选结果的部数；搜索时跟着筛后条数走。
     private var categoryCount: some View {
         let total = filteredEntries.count
-        return Text("\(total) 部")
+        return Text(String(localized: "\(String(describing: total)) 部"))
             .font(.footnote)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             // 1024 部也不许被搜索条挤压。
             .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel(Text("当前分类，\(total) 部"))
+            .accessibilityLabel(Text(String(localized: "当前分类，\(String(describing: total)) 部")))
     }
 
     private var categoryBinding: Binding<Int> {
@@ -364,7 +364,7 @@ struct LibraryScreen: View {
     }
 
     private var searchHint: String {
-        "在「\(categoryTitle)」里搜索"
+        String(localized: "在「\(String(describing: categoryTitle))」里搜索")
     }
 
     // MARK: - 搜索
@@ -723,11 +723,11 @@ struct LibraryScreen: View {
             )
             pendingID = nil
             guard pushed else {
-                toastMessage = "同步到 Bangumi 失败，已取消本次状态修改"
+                toastMessage = String(localized: "同步到 Bangumi 失败，已取消本次状态修改")
                 return
             }
             commitType(entry, to: type)
-            if settings.bangumiImmediateSyncToastEnable { toastMessage = "已同步到 Bangumi" }
+            if settings.bangumiImmediateSyncToastEnable { toastMessage = String(localized: "已同步到 Bangumi") }
         }
     }
 

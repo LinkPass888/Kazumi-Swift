@@ -208,7 +208,7 @@ enum BangumiAPI {
     static func ranked(limit: Int = 10, offset: Int = 0) async -> [BangumiItem]? {
         let params = searchParams(
             keyword: "",
-            tags: ["日本"],
+            tags: [String(localized: "日本")],
             sort: "rank",
             rankFilter: [">0", "<=99999"]
         )
@@ -659,13 +659,13 @@ enum BangumiAPI {
         requiresAuth: Bool = false
     ) async throws -> JSONValue {
         guard var components = URLComponents(string: url) else {
-            throw NetworkError.transport("Bangumi 接口地址无效: \(url)")
+            throw NetworkError.transport(String(localized: "Bangumi 接口地址无效: \(String(describing: url))"))
         }
         if !query.isEmpty {
             components.queryItems = (components.queryItems ?? []) + query
         }
         guard let finalURL = components.url else {
-            throw NetworkError.transport("Bangumi 接口地址无效: \(url)")
+            throw NetworkError.transport(String(localized: "Bangumi 接口地址无效: \(String(describing: url))"))
         }
 
         var request = URLRequest(url: finalURL)
@@ -701,7 +701,7 @@ enum BangumiAPI {
 
         let text = String(data: data, encoding: .utf8) ?? ""
         guard let http = response as? HTTPURLResponse else {
-            throw NetworkError.transport("Bangumi 返回了非 HTTP 响应")
+            throw NetworkError.transport(String(localized: "Bangumi 返回了非 HTTP 响应"))
         }
         guard (200..<300).contains(http.statusCode) else {
             throw NetworkError.badResponse(status: http.statusCode, body: text, headers: [:])
@@ -719,7 +719,7 @@ enum BangumiAPI {
         do {
             return try JSONValue.decode(data)
         } catch {
-            throw NetworkError.decoding("Bangumi 响应解析失败: \(error.localizedDescription)")
+            throw NetworkError.decoding(String(localized: "Bangumi 响应解析失败: \(String(describing: error.localizedDescription))"))
         }
     }
 
@@ -773,7 +773,7 @@ enum BangumiAPI {
             // 空着不留上一次的值，免得屏幕替一个坏令牌担保身份。
             let id = json["id"].intValue.map(String.init) ?? ""
             return .ok(
-                name: name.isEmpty ? "（未返回用户名）" : name,
+                name: name.isEmpty ? String(localized: "（未返回用户名）") : name,
                 id: id,
                 username: username ?? ""
             )
@@ -845,7 +845,7 @@ enum BangumiAPI {
     ) async throws -> [RemoteCollection] {
         let name = username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
-            throw NetworkError.transport("还没确认 Bangumi 用户名，无法拉取收藏")
+            throw NetworkError.transport(String(localized: "还没确认 Bangumi 用户名，无法拉取收藏"))
         }
         let endpoint = BangumiEndpoints.authMirrorDomain + "/v0/users/\(name)/collections"
         var collected: [RemoteCollection] = []
@@ -864,17 +864,17 @@ enum BangumiAPI {
                 requiresAuth: true
             )
             guard let page = json["data"].arrayValue else {
-                throw NetworkError.decoding("Bangumi 收藏列表里没有 data 字段")
+                throw NetworkError.decoding(String(localized: "Bangumi 收藏列表里没有 data 字段"))
             }
             let total = json["total"].intValue ?? 0
             if total > 0, page.isEmpty, offset == 0 {
-                throw NetworkError.decoding("Bangumi 说有 \(total) 条收藏，但第一页是空的")
+                throw NetworkError.decoding(String(localized: "Bangumi 说有 \(String(describing: total)) 条收藏，但第一页是空的"))
             }
             for element in page {
                 guard let item = RemoteCollection(element), item.type != 0 else { continue }
                 if seen.insert(item.subjectID).inserted { collected.append(item) }
             }
-            onProgress?("正在拉取 Bangumi 收藏", min(collected.count, total), total)
+            onProgress?(String(localized: "正在拉取 Bangumi 收藏"), min(collected.count, total), total)
             offset += page.count
             if page.isEmpty || offset >= total { break }
             try? await Task.sleep(nanoseconds: 200_000_000)

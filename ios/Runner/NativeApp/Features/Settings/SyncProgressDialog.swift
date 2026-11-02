@@ -14,7 +14,7 @@ import SwiftUI
 
 struct SyncProgressDialog: View {
     /// 卡片标题，两套同步都写「正在同步」。
-    var title = "正在同步"
+    var title = String(localized: "正在同步")
     /// 当前阶段：「下载收藏…」「合并…」「上传…」。
     var stage: String
     /// 0…1；没有总数就不画进度条。

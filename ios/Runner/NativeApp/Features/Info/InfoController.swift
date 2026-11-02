@@ -79,11 +79,11 @@ final class InfoController {
 
         var statusLabel: String {
             switch status {
-            case .pending: "检索中…"
-            case .success: results.isEmpty ? "无结果" : "\(results.count) 个结果"
+            case .pending: String(localized: "检索中…")
+            case .success: results.isEmpty ? String(localized: "无结果") : String(localized: "\(String(describing: results.count)) 个结果")
             case .noResult: "无结果"
-            case .error: "检索失败"
-            case .captcha: "需要验证"
+            case .error: String(localized: "检索失败")
+            case .captcha: String(localized: "需要验证")
             }
         }
 
@@ -303,7 +303,7 @@ struct BangumiEpisode: Identifiable, Hashable, Sendable {
         let translated = nameCn.trimmingCharacters(in: .whitespacesAndNewlines)
         if !translated.isEmpty { return translated }
         let original = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return original.isEmpty ? "第 \(Int(sort)) 集" : original
+        return original.isEmpty ? String(localized: "第 \(String(describing: Int(sort))) 集") : original
     }
 
     static func fromJSON(_ json: JSONValue) -> BangumiEpisode {

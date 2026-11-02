@@ -15,8 +15,8 @@ import UIKit
 @Observable
 final class ImageSearchController {
     /// 与原版一致的「空结果」文案，页面据此区分「没找到」和「失败了」。
-    static let emptyResultMessage = "未找到匹配结果"
-    static let failureMessage = "图片搜索失败，请稍后重试"
+    static let emptyResultMessage = String(localized: "未找到匹配结果")
+    static let failureMessage = String(localized: "图片搜索失败，请稍后重试")
 
     private(set) var isSearching = false
     private(set) var errorMessage = ""

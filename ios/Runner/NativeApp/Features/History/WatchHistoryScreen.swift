@@ -184,11 +184,11 @@ struct WatchHistoryScreen: View {
 
     /// 「第 1 集」或「第 1 集 · 标题」：有集标题就用集标题，没有就退回集数。
     private func episodeLine(for record: WatchRecord) -> String {
-        let number = "第 \(record.episodeNumber) 集"
+        let number = String(localized: "第 \(String(describing: record.episodeNumber)) 集")
         let title = record.episodeTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         // 老记录里的集标题是「第 N 话」（LP 4824「已经记录的就算了」，不迁移数据），
         // 跟新的「第 N 集」并排比一次，别把同一句话拼成「第 3 集 · 第 3 话」。
-        let legacy = "第 \(record.episodeNumber) 话"
+        let legacy = String(localized: "第 \(String(describing: record.episodeNumber)) 话")
         return title.isEmpty || title == number || title == legacy ? number : "\(number) · \(title)"
     }
 

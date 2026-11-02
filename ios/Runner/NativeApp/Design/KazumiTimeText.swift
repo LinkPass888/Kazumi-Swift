@@ -20,8 +20,8 @@ enum KazumiTimeText {
     /// `今天 18:00` / `昨天 18:00` / `10/30`。
     static func relative(_ date: Date) -> String {
         let calendar = Calendar.current
-        if calendar.isDateInToday(date) { return "今天 \(clock(date))" }
-        if calendar.isDateInYesterday(date) { return "昨天 \(clock(date))" }
+        if calendar.isDateInToday(date) { return String(localized: "今天 \(String(describing: clock(date)))") }
+        if calendar.isDateInYesterday(date) { return String(localized: "昨天 \(String(describing: clock(date)))") }
         return SystemDateText.date(date, includeYear: false)
     }
 

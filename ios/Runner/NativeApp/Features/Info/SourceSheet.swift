@@ -48,7 +48,7 @@ enum SheetTiming {
         guard tap > 0, listFirst > 0 else { return }
         func ms(_ t: Double) -> Int { t > 0 ? Int(((t - tap) * 1000).rounded()) : -1 }
         KazumiLogBuffer.network(
-            "选源面板耗时 准备 \(ms(ready))ms / 开始画 \(ms(bodyFirst))ms / 上屏 \(ms(appear))ms / 列表 \(ms(listFirst))ms"
+            String(localized: "选源面板耗时 准备 \(String(describing: ms(ready)))ms / 开始画 \(String(describing: ms(bodyFirst)))ms / 上屏 \(String(describing: ms(appear)))ms / 列表 \(String(describing: ms(listFirst)))ms")
         )
         tap = 0
     }
@@ -158,7 +158,7 @@ struct SourceSheet: View {
                 Task { await controller.retrySource(name, keyword: keyword) }
             }
         } message: {
-            Text(keywordTarget.map { "仅检索来源：\($0)" } ?? "")
+            Text(keywordTarget.map { String(localized: "仅检索来源：\(String(describing: $0))") } ?? "")
         }
         .alert("无法打开浏览器，请稍后重试", isPresented: $browserFailure) {
             Button("好", role: .cancel) {}
@@ -343,7 +343,7 @@ struct SourceSheet: View {
                     ) else { return }
                     captchaFlow = CaptchaFlowBox(name: group.name, flow: flow)
                 } label: {
-                    actionRowLabel(icon: "checkmark.shield", title: "进行验证")
+                    actionRowLabel(icon: "checkmark.shield", title: String(localized: "进行验证"))
                 }
                 .buttonStyle(.plain)
             }
@@ -367,7 +367,7 @@ struct SourceSheet: View {
                 Button {
                     aliasPickerTarget = AliasPickerTarget(sourceName: group.name)
                 } label: {
-                    actionRowLabel(icon: nil, title: "使用别名")
+                    actionRowLabel(icon: nil, title: String(localized: "使用别名"))
                 }
                 .buttonStyle(.plain)
             }
@@ -431,7 +431,7 @@ struct SourceSheet: View {
                 .hitTarget44()
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(group.name) 的更多操作")
+        .accessibilityLabel(String(localized: "\(String(describing: group.name)) 的更多操作"))
     }
 
     /// 别名选择器，对应原版 source_alias_dialog.dart 的 _AliasPickerDialog：
@@ -454,7 +454,7 @@ struct SourceSheet: View {
                         }
                     }
                 } header: {
-                    Text("仅检索来源：\(sourceName)")
+                    Text(String(localized: "仅检索来源：\(String(describing: sourceName))"))
                 }
             }
             .navigationTitle("别名检索")

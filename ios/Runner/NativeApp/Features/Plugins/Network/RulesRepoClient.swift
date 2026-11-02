@@ -40,10 +40,10 @@ enum RulesMirror: String, Sendable, CaseIterable {
     /// 展开后跟在名字后面的说明（13 pt 灰字）。
     var note: String {
         switch self {
-        case .ghProxy: "默认镜像"
-        case .ghfast: "备用镜像"
-        case .gitcode: "国内镜像"
-        case .direct: "不走镜像"
+        case .ghProxy: String(localized: "默认镜像")
+        case .ghfast: String(localized: "备用镜像")
+        case .gitcode: String(localized: "国内镜像")
+        case .direct: String(localized: "不走镜像")
         }
     }
 }

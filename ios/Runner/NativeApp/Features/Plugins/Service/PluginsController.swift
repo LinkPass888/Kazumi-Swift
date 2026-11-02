@@ -49,7 +49,7 @@ enum PluginControllerError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .catalogNotLoaded: "规则目录尚未加载"
+        case .catalogNotLoaded: String(localized: "规则目录尚未加载")
         case .persistence(let message): message
         }
     }

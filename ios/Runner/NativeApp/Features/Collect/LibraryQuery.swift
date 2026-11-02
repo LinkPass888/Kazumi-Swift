@@ -29,10 +29,10 @@ enum CollectSort: String, CaseIterable, Identifiable, Hashable, Sendable {
     var label: String {
         switch self {
         case .updateTime: "更新时间"
-        case .recentlyChanged: "最近变更"
-        case .title: "番剧名称"
-        case .rating: "评分最高"
-        case .airDate: "开播时间"
+        case .recentlyChanged: String(localized: "最近变更")
+        case .title: String(localized: "番剧名称")
+        case .rating: String(localized: "评分最高")
+        case .airDate: String(localized: "开播时间")
         }
     }
 }

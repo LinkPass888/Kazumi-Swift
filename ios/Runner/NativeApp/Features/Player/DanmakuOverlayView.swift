@@ -248,7 +248,7 @@ final class DanmakuOverlayView: UIView {
         if !loggedFirstStep {
             loggedFirstStep = true
             KazumiLogBuffer.player(
-                "起播打点：弹幕层第一帧 \(comments.count) 条，画面 \(Int(bounds.width))x\(Int(bounds.height))"
+                String(localized: "起播打点：弹幕层第一帧 \(String(describing: comments.count)) 条，画面 \(String(describing: Int(bounds.width)))x\(String(describing: Int(bounds.height)))")
             )
         }
         let now = clockNow()

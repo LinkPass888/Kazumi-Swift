@@ -83,7 +83,7 @@ final class TimelineCache {
             // 序列化失败时会退回 `{}`（`JSONValue.serialize` 的行为），这时别把烂东西
             // 当成缓存记在内存里；写一行日志，真机上「缓存总是没命中」才查得出来。
             KazumiLogBuffer.shared.append(
-                "时间表缓存：这一份没写出可用的 JSON，跳过",
+                String(localized: "时间表缓存：这一份没写出可用的 JSON，跳过"),
                 category: .network
             )
             return

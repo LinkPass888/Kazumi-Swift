@@ -150,8 +150,8 @@ struct BangumiStaffItem: Identifiable, Hashable, Sendable {
 
     /// 职务优先级表，与 Dart 的 _staffRelationPriority 一致。
     private static let relationPriority = [
-        "动画制作", "原作", "总导演", "导演", "系列构成", "脚本", "人物设定",
-        "总作画监督", "作画监督", "美术监督", "色彩设计", "音乐", "音响监督", "摄影监督",
+        String(localized: "动画制作"), String(localized: "原作"), String(localized: "总导演"), String(localized: "导演"), String(localized: "系列构成"), String(localized: "脚本"), String(localized: "人物设定"),
+        String(localized: "总作画监督"), String(localized: "作画监督"), String(localized: "美术监督"), String(localized: "色彩设计"), String(localized: "音乐"), String(localized: "音响监督"), String(localized: "摄影监督"),
     ]
 
     private static func priority(of relation: String) -> Int {

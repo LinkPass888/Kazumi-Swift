@@ -182,15 +182,15 @@ struct StorageScreen: View {
     }
 
     private var cacheDescription: String {
-        if isClearing { return "正在清除…" }
-        guard let cacheBytes else { return "正在统计…" }
+        if isClearing { return String(localized: "正在清除…") }
+        guard let cacheBytes else { return String(localized: "正在统计…") }
         return String(format: "%.2f MB", Double(cacheBytes) / (1024 * 1024))
     }
 
     /// 离线下载那一行右侧的占用与集数，比如「518.3 MB · 2 集」。
     private var offlineDescription: String {
         guard offlineEpisodes > 0 else { return formattedSize(offlineBytes) }
-        return "\(formattedSize(offlineBytes)) · \(offlineEpisodes) 集"
+        return String(localized: "\(String(describing: formattedSize(offlineBytes))) · \(String(describing: offlineEpisodes)) 集")
     }
 
     /// 旧版本下载那一行右侧只写占用（Camo 5289）：跟「更新时间缓存」那行一个样子。
@@ -238,7 +238,7 @@ struct StorageScreen: View {
             AppEnvironment.clearLegacyDownloads()
         }.value
         await refreshSize()
-        message = "已清除旧版本离线下载。"
+        message = String(localized: "已清除旧版本离线下载。")
     }
 
     /// 清掉全部离线下载：记录和文件一起走（DownloadCenter.removeAllRecords）。
@@ -250,7 +250,7 @@ struct StorageScreen: View {
         }
         try? await Task.sleep(for: .milliseconds(300))
         await refreshSize()
-        message = "已清除全部离线下载。"
+        message = String(localized: "已清除全部离线下载。")
     }
 
     private func clear() async {
@@ -260,6 +260,6 @@ struct StorageScreen: View {
         // 清空是异步的（后台删文件），等一会儿再统计，避免读到旧值。
         try? await Task.sleep(for: .milliseconds(300))
         await refreshSize()
-        message = "图片缓存已清除"
+        message = String(localized: "图片缓存已清除")
     }
 }

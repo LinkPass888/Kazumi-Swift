@@ -22,9 +22,9 @@ enum KazumiThemeMode: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .system: "跟随系统"
-        case .light: "浅色"
-        case .dark: "深色"
+        case .system: String(localized: "跟随系统")
+        case .light: String(localized: "浅色")
+        case .dark: String(localized: "深色")
         }
     }
 
@@ -45,8 +45,8 @@ enum HardwareDecodeMode: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .videotoolbox: "直通"
-        case .videotoolboxCopy: "非直通"
+        case .videotoolbox: String(localized: "直通")
+        case .videotoolboxCopy: String(localized: "非直通")
         }
     }
 }
@@ -68,8 +68,8 @@ enum SuperResolutionMode: Int, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .off: "关闭"
-        case .efficiency: "效率档"
-        case .quality: "质量档"
+        case .efficiency: String(localized: "效率档")
+        case .quality: String(localized: "质量档")
         }
     }
 
@@ -126,7 +126,7 @@ enum PlaybackSpeed {
 
     /// 播放器按钮文案：1 倍时写「倍速」，其余写档位（对应原版的按钮用字）。
     static func buttonLabel(_ value: Double) -> String {
-        abs(value - 1) < 0.001 ? "倍速" : label(value)
+        abs(value - 1) < 0.001 ? String(localized: "倍速") : label(value)
     }
 
     /// 把任意倍速归到最近的档位（越界自然取首 / 末档）。

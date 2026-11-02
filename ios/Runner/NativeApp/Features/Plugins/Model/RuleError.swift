@@ -47,16 +47,16 @@ enum RuleError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .captchaRequired(let plugin):
-            "\(plugin) 需要完成验证"
+            String(localized: "\(String(describing: plugin)) 需要完成验证")
         case .noResult(let plugin):
-            "\(plugin) 没有搜索结果"
+            String(localized: "\(String(describing: plugin)) 没有搜索结果")
         // 上屏不带 cause：cause 是给日志看的，拿不到人话时就是 Swift 的类型转储，
         // 一长串机器话会压在播放页正中间（Camo 3285）。
         // 跟「详情没能加载」「推荐没能加载」「列表没能加载」同一家的说法。
         case .searchFailed(let plugin, _):
-            "\(plugin) 的检索没能加载"
+            String(localized: "\(String(describing: plugin)) 的检索没能加载")
         case .chapterFailed(let plugin, _):
-            "\(plugin) 的剧集没能加载"
+            String(localized: "\(String(describing: plugin)) 的剧集没能加载")
         }
     }
 
@@ -90,14 +90,14 @@ enum XPathRuleField: String, Sendable {
     /// 与原项目 _fieldLabel 的中文措辞保持一致，错误提示可直接复用。
     var label: String {
         switch self {
-        case .searchList: "搜索结果列表"
-        case .searchName: "条目名称"
-        case .searchResult: "条目链接"
-        case .chapterRoads: "播放线路列表"
-        case .chapterResult: "剧集列表"
-        case .captchaDetectValue: "验证页检测"
-        case .captchaImage: "验证码图片"
-        case .captchaButton: "验证按钮"
+        case .searchList: String(localized: "搜索结果列表")
+        case .searchName: String(localized: "条目名称")
+        case .searchResult: String(localized: "条目链接")
+        case .chapterRoads: String(localized: "播放线路列表")
+        case .chapterResult: String(localized: "剧集列表")
+        case .captchaDetectValue: String(localized: "验证页检测")
+        case .captchaImage: String(localized: "验证码图片")
+        case .captchaButton: String(localized: "验证按钮")
         }
     }
 }
@@ -131,8 +131,8 @@ enum NetworkError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .cancelled: "请求已取消"
-        case .badResponse(let status, _, _): "服务器返回 HTTP \(status)"
+        case .cancelled: String(localized: "请求已取消")
+        case .badResponse(let status, _, _): String(localized: "服务器返回 HTTP \(String(describing: status))")
         case .transport(let message): message
         case .decoding(let message): message
         }

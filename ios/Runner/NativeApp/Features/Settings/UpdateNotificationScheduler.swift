@@ -104,8 +104,8 @@ final class UpdateNotificationScheduler {
                   fireAt.timeIntervalSince(now) > 0,
                   fireAt.timeIntervalSince(now) <= Self.maxLead {
                 let content = UNMutableNotificationContent()
-                content.title = "番剧更新"
-                content.body = "「\(entry.displayName)」已更新"
+                content.title = String(localized: "番剧更新")
+                content.body = String(localized: "「\(String(describing: entry.displayName))」已更新")
                 content.sound = .default
                 content.userInfo = ["bangumiID": entry.id, "fireAt": fireAt.timeIntervalSince1970]
 

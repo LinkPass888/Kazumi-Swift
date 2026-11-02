@@ -76,8 +76,8 @@ struct ThirdPartyLicensesScreen: View {
     private var groups: [(title: String, documents: [LicenseDocument])] {
         let titled = Dictionary(grouping: documents, by: \.group)
         let names: [String: String] = [
-            "bangumi-data": "bangumi-data 数据署名",
-            "ech_http": "网络库 ech_http 的依赖",
+            "bangumi-data": String(localized: "bangumi-data 数据署名"),
+            "ech_http": String(localized: "网络库 ech_http 的依赖"),
             "": "其他"
         ]
         return titled
@@ -136,7 +136,7 @@ struct LicenseTextScreen: View {
 
     var body: some View {
         ScrollView {
-            Text(document.text ?? "这个文件在当前包里读不出来。")
+            Text(document.text ?? String(localized: "这个文件在当前包里读不出来。"))
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

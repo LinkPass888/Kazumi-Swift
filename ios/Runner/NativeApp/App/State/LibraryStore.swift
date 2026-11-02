@@ -29,7 +29,7 @@ enum CollectType: Int, Codable, CaseIterable, Sendable, Identifiable {
     /// 收藏库卡片、收藏库筛选栏用的是这一套（未收藏 / 在看 / 想看 / 搁置 / 看过 / 抛弃）。
     var title: String {
         switch self {
-        case .none: "未收藏"
+        case .none: String(localized: "未收藏")
         case .watching: "在看"
         case .wish: "想看"
         case .onHold: "搁置"
@@ -61,7 +61,7 @@ enum CollectType: Int, Codable, CaseIterable, Sendable, Identifiable {
 
     var buttonTitle: String {
         switch self {
-        case .none: "未追"
+        case .none: String(localized: "未追")
         case .watching: "在看"
         case .wish: "想看"
         case .onHold: "搁置"
@@ -185,7 +185,7 @@ struct WatchRecord: Identifiable, Codable, Hashable, Sendable {
     /// 一集都没看下去就没有这一行。
     var positionText: String? {
         guard progressSeconds > 0 else { return nil }
-        return "看到 " + WatchRecord.clock(progressSeconds)
+        return String(localized: "看到 ") + WatchRecord.clock(progressSeconds)
     }
 
     /// 时长写法：`8:21`，过一小时才带小时（`1:02:34`）。

@@ -21,7 +21,7 @@ enum SkipKind: String, Codable, Sendable, Equatable {
     case ending
 
     /// 播放器上给用户看的叫法。
-    var label: String { self == .opening ? "片头" : "片尾" }
+    var label: String { self == .opening ? String(localized: "片头") : String(localized: "片尾") }
 }
 
 /// 一条可跳过的区间（秒）。

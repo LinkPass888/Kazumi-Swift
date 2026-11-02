@@ -136,7 +136,7 @@ final class BangumiProgressService {
             KazumiLog.network.notice(
                 "Bangumi: 已标记看过 \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集"
             )
-            markedNotice = "已标记本集看过"
+            markedNotice = String(localized: "已标记本集看过")
             return false
         case .unauthorized:
             // 令牌没了或过期：这次就算了，不要拿一个失效凭据反复重试。

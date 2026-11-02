@@ -126,11 +126,11 @@ final class PlayerController {
             await resolveSourceFromHistory()
         }
         guard let source else {
-            phase = .failed("没找到这部剧的播放源")
+            phase = .failed(String(localized: "没找到这部剧的播放源"))
             return
         }
         guard let plugin = plugins.plugin(named: source.pluginName) else {
-            phase = .failed("规则「\(source.pluginName)」已不存在，请重新选择")
+            phase = .failed(String(localized: "规则「\(String(describing: source.pluginName))」已不存在，请重新选择"))
             return
         }
 
@@ -161,14 +161,14 @@ final class PlayerController {
                 applyStartPoint(roads: trace.roads)
                 if episodes.isEmpty {
                     isEpisodeIncomplete = false
-                    failed("该播放源没有解析到剧集")
+                    failed(String(localized: "该播放源没有解析到剧集"))
                     return
                 }
             } catch {
                 // 抓不到章节（片源挂了、地址变了）时，只要本地有这一集的文件，
                 // 照样能放——离线播放不能因为在线那头坏了就跟着废掉。
                 if let local = localFile?(currentEpisode) {
-                    appendLog("解析剧集失败，改用本地文件：\(error.localizedDescription)")
+                    appendLog(String(localized: "解析剧集失败，改用本地文件：\(String(describing: error.localizedDescription))"))
                     applyHeaders(plugin: plugin)
                     // 在线列表拿不到：选集退回这份下载记录，已下载的集列出来能点，
                     // 其余留空格子由界面画灰（Colo v3 第 9 条）。
@@ -188,19 +188,19 @@ final class PlayerController {
                 }
                 // 系统给的英文错误串（「The data couldn't be read…」之类）不往用户脸上贴：
                 // 界面上说人话，原始原因写进运行日志。
-                appendLog("解析剧集失败：\(error.localizedDescription)")
-                failed("解析剧集失败，换条线路或换个源试试")
+                appendLog(String(localized: "解析剧集失败：\(String(describing: error.localizedDescription))"))
+                failed(String(localized: "解析剧集失败，换条线路或换个源试试"))
                 return
             }
         }
 
         guard episodes.indices.contains(currentEpisode - 1) else {
-            phase = .failed("第 \(currentEpisode) 集不存在")
+            phase = .failed(String(localized: "第 \(String(describing: currentEpisode)) 集不存在"))
             return
         }
         let target = episodes[currentEpisode - 1]
         guard !target.isEmpty else {
-            failed("该集没有播放地址")
+            failed(String(localized: "该集没有播放地址"))
             return
         }
 
@@ -302,8 +302,8 @@ final class PlayerController {
             self?.skipSegments = segments
             KazumiLogBuffer.player(
                 segments.isEmpty
-                    ? "AniSkip: 这集没有片头片尾"
-                    : "AniSkip: 片头片尾已加载"
+                    ? String(localized: "AniSkip: 这集没有片头片尾")
+                    : String(localized: "AniSkip: 片头片尾已加载")
             )
         }
     }
@@ -354,7 +354,7 @@ final class PlayerController {
         }
 
         phase = .searchingSource
-        appendLog("正在查找播放源：\(plugin.name)")
+        appendLog(String(localized: "正在查找播放源：\(String(describing: plugin.name))"))
         do {
             let trace = try await engine.search(
                 RuleExecutionConfig(plugin: plugin),
@@ -368,8 +368,8 @@ final class PlayerController {
             guard matches.count == 1, let item = matches.first else {
                 appendLog(
                     matches.isEmpty
-                        ? "没有找到与「\(keyword)」同名的条目"
-                        : "「\(keyword)」有 \(matches.count) 个同名条目，无法确定播放哪一部"
+                        ? String(localized: "没有找到与「\(String(describing: keyword))」同名的条目")
+                        : String(localized: "「\(String(describing: keyword))」有 \(String(describing: matches.count)) 个同名条目，无法确定播放哪一部")
                 )
                 return
             }
@@ -381,7 +381,7 @@ final class PlayerController {
                 directMediaURL: MediaUtility.isMediaURL(item.src) ? item.src : nil
             )
         } catch {
-            appendLog("查找播放源失败：\(error.localizedDescription)")
+            appendLog(String(localized: "查找播放源失败：\(String(describing: error.localizedDescription))"))
         }
     }
 
@@ -403,7 +403,7 @@ final class PlayerController {
     /// 出问题时把人往「网络 / 规则 / 登录」三处引，别只说「解析失败」。
     private func failed(_ reason: String) {
         var text = reason
-        let hint = "请检查网络、规则或 Cookie。"
+        let hint = String(localized: "请检查网络、规则或 Cookie。")
         // 只说一遍：调用方自己带了这句就不再重复（LP 5476 看到两遍）。
         if let pluginName = source?.pluginName,
            PluginCookieStore.shared.hasCookies(pluginName: pluginName),
@@ -428,7 +428,7 @@ final class PlayerController {
             try? await Task.sleep(for: .seconds(10))
             guard !Task.isCancelled, let self else { return }
             guard case .parsingMedia = self.phase else { return }
-            self.failed("没解析到播放地址")
+            self.failed(String(localized: "没解析到播放地址"))
         }
     }
 

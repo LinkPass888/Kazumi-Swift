@@ -27,9 +27,9 @@ enum PlayerAspectRatioMode: String, CaseIterable, Identifiable {
     /// 与原版 `PlayerAspectRatio.label` 逐字一致。
     var label: String {
         switch self {
-        case .automatic: "自动"
-        case .crop: "裁切填充"
-        case .stretch: "拉伸填充"
+        case .automatic: String(localized: "自动")
+        case .crop: String(localized: "裁切填充")
+        case .stretch: String(localized: "拉伸填充")
         case .ratio4x3: "4:3"
         }
     }
@@ -254,7 +254,7 @@ struct PlayerScreen: View {
     @State private var containerInsets = EdgeInsets()
     /// 上一次转屏请求的结果，显示在「播放信息」里（Colo 2026-10-28）：
     /// 分得清是系统没给（被拒＋原因），还是我们没请求（一直「未请求」）。
-    @State private var lastOrientationResult = "未请求"
+    @State private var lastOrientationResult = String(localized: "未请求")
     @State private var danmakuDraft = ""
     @FocusState private var danmakuFieldFocused: Bool
     /// 这一次的暂停是「输入弹幕」引起的：收键盘后只恢复这一种（上游 2.4.0 #2708）。
@@ -612,7 +612,7 @@ struct PlayerScreen: View {
             // 进后台 / 锁屏一律放弃常亮；回前台且还在播再重新判断。
             updateIdleTimer()
             // 记录通知回调时的音频会话和卡片字段，不据此推断卡片点击结果。
-            PlayerAudioSession.shared.logSnapshot("切到后台")
+            PlayerAudioSession.shared.logSnapshot(String(localized: "切到后台"))
             handleBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { notification in
@@ -887,7 +887,7 @@ struct PlayerScreen: View {
             guard settingsStore.autoPlayNext else { return }
             guard created.currentEpisode < created.episodes.count else {
                 // 已是末集：停下来并给一句提示，不静默什么都不做。
-                surface.toastMessage = "已经是最新一集"
+                surface.toastMessage = String(localized: "已经是最新一集")
                 return
             }
             let next = created.currentEpisode + 1
@@ -997,7 +997,7 @@ struct PlayerScreen: View {
         guard next != proxyURL else { return }
         proxyURL = next
         KazumiLogBuffer.player(MPVDiagnostics.sanitize(
-            next == nil ? "代理：不走代理，直连" : "代理：走 \(next!)"
+            next == nil ? String(localized: "代理：不走代理，直连") : String(localized: "代理：走 \(String(describing: next!))")
         ))
     }
 
@@ -1632,7 +1632,7 @@ struct PlayerScreen: View {
             } else {
                 // 存成功也要说话（LP 4709）：取景框闪一下只是快门，没人知道到底存没存进去。
                 // 跟倍速/收藏/定时关闭同一条线（LP 4668）——这是动作结果，不是说明。
-                surface.hudToastMessage = "已保存到相册"
+                surface.hudToastMessage = String(localized: "已保存到相册")
             }
         }
     }
@@ -1670,7 +1670,7 @@ struct PlayerScreen: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(PlayerPressStyle())
-        .accessibilityLabel(isForward ? "快进 \(seconds) 秒" : "快退 \(seconds) 秒")
+        .accessibilityLabel(isForward ? String(localized: "快进 \(String(describing: seconds)) 秒") : String(localized: "快退 \(String(describing: seconds)) 秒"))
     }
 
     /// 两侧跳转钮：快进 / 快退那颗符号，数字由**系统符号自带**（LP 2026-10-28）。
@@ -1815,7 +1815,7 @@ struct PlayerScreen: View {
                     // 闭包只要继承主线程隔离，一进去就撞断言闪退（LP 4753）。
                     let failure = orientationFailure
                     scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { @Sendable error in
-                        let message = "系统拒绝：\(error.localizedDescription)"
+                        let message = String(localized: "系统拒绝：\(String(describing: error.localizedDescription))")
                         failure.record(generation: generation, message: message)
                     }
                 }
@@ -1827,7 +1827,7 @@ struct PlayerScreen: View {
                 if scene.interfaceOrientation.isLandscape == wantsLandscape {
                     if attempt > 0 {
                     }
-                    lastOrientationResult = "已转过去"
+                    lastOrientationResult = String(localized: "已转过去")
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(250))
@@ -1838,8 +1838,8 @@ struct PlayerScreen: View {
             // （Colo 2026-10-28 §14.10 / @developer3 4311 第三条）。
             // 退的是**界面状态**；用户再点全屏会重新发一条请求、重设方向锁，
             // 所以不会像以前那样「退过一次就再也转不动」。
-            if !lastOrientationResult.hasPrefix("系统拒绝") {
-                lastOrientationResult = "请求了但系统没转（等满 3 秒）"
+            if !lastOrientationResult.hasPrefix(String(localized: "系统拒绝")) {
+                lastOrientationResult = String(localized: "请求了但系统没转（等满 3 秒）")
             }
             if isFullscreen {
                 isFullscreen = false
@@ -1928,7 +1928,7 @@ struct PlayerScreen: View {
     private func applySuperResolution(_ mode: SuperResolutionMode) {
         settings.playbackSuperResolutionMode = mode
         noteInteraction()
-        let text = mode == .off ? "超分辨率 · 关闭" : "超分辨率 · \(mode.title)"
+        let text = mode == .off ? String(localized: "超分辨率 · 关闭") : String(localized: "超分辨率 · \(String(describing: mode.title))")
         withAnimation(.easeOut(duration: 0.15)) { superResolutionHUD = text }
         superResolutionHUDTask?.cancel()
         superResolutionHUDTask = Task { @MainActor in
@@ -2160,7 +2160,7 @@ struct PlayerScreen: View {
             }),
             title: nil,
             symbol: "aspectratio",
-            accessibilityLabel: "视频比例",
+            accessibilityLabel: String(localized: "视频比例"),
             tint: .white,
             onOpen: { pinControlsWhileMenuOpen() }
         )
@@ -2175,7 +2175,7 @@ struct PlayerScreen: View {
     private var sleepTimerButton: some View {
         SystemMenuButton(
             selection: .init(options: [SystemMenuButton.Selection.Option(
-                title: "不开启",
+                title: String(localized: "不开启"),
                 isSelected: sleepTimerMinutes == nil
             ) {
                 cancelSleepTimer()
@@ -2189,7 +2189,7 @@ struct PlayerScreen: View {
             }),
             title: nil,
             symbol: sleepTimerRemaining == nil ? "moon.zzz" : "moon.zzz.fill",
-            accessibilityLabel: "定时关闭",
+            accessibilityLabel: String(localized: "定时关闭"),
             tint: .white,
             onOpen: { pinControlsWhileMenuOpen() }
         )
@@ -2255,7 +2255,7 @@ struct PlayerScreen: View {
         let showToast = settings.bangumiImmediateSyncToastEnable
         Task {
             if syncEnabled {
-                if showToast { surface.toastMessage = "正在同步到 Bangumi..." }
+                if showToast { surface.toastMessage = String(localized: "正在同步到 Bangumi...") }
                 let pushed = await environment.bangumiSync.pushCollectible(
                     bangumiID: bangumiID,
                     type: type
@@ -2275,7 +2275,7 @@ struct PlayerScreen: View {
                 // 收藏库里没有这部番：从播放器加进去（见 addToLibrary）。
             } else {
                 // 拿不到番剧信息就不假装加过（跟同步失败同一条口径）。
-                surface.toastMessage = "拿不到番剧信息，没能加入收藏"
+                surface.toastMessage = String(localized: "拿不到番剧信息，没能加入收藏")
                 return
             }
             if type == .none {
@@ -2286,7 +2286,7 @@ struct PlayerScreen: View {
             }
             // 收藏状态那句只走 HUD 那条线（LP 4668）；顶部那条只留给同步进度 / 结果。
             // 两处都写就会弹两次（LP 4742）。
-            surface.hudToastMessage = type == .none ? "已取消追番" : "已标为\(type.title)"
+            surface.hudToastMessage = type == .none ? String(localized: "已取消追番") : String(localized: "已标为\(String(describing: type.title))")
         }
     }
 
@@ -2320,14 +2320,14 @@ struct PlayerScreen: View {
 
     /// 定时关闭的菜单标题：定上了就把分钟数写在上面。
     private var sleepTimerTitle: String {
-        if let minutes = sleepTimerRemainingMinutes { return "定时关闭（\(minutes) 分钟）" }
+        if let minutes = sleepTimerRemainingMinutes { return String(localized: "定时关闭（\(String(describing: minutes)) 分钟）") }
         return "定时关闭"
     }
 
     /// 面板右边那行字：没开写「不开启」，开着写还剩几分钟（每分钟自己走）。
     private var sleepTimerValue: String {
         guard let minutes = sleepTimerRemainingMinutes else { return "不开启" }
-        return "还剩 \(minutes) 分钟"
+        return String(localized: "还剩 \(String(describing: minutes)) 分钟")
     }
 
     private var sleepTimerRemainingMinutes: Int? {
@@ -2344,7 +2344,7 @@ struct PlayerScreen: View {
     /// 「15 分钟 · 还剩 12:34」。点它就是按这一档重开倒数。
     private func sleepTimerItemTitle(_ minutes: Int) -> String {
         guard sleepTimerMinutes == minutes, let remaining = sleepTimerRemaining else {
-            return "\(minutes) 分钟"
+            return String(localized: "\(String(describing: minutes)) 分钟")
         }
         return "\(minutes) 分钟 · 还剩 \(remaining / 60):\(String(format: "%02d", remaining % 60))"
     }
@@ -2368,10 +2368,10 @@ struct PlayerScreen: View {
             sleepTimerChosenMinutes = nil
             surface.pause()
             // 定时关闭那句跟倍速、收藏同一条线（LP 4668）。
-            surface.hudToastMessage = "定时关闭：已暂停"
+            surface.hudToastMessage = String(localized: "定时关闭：已暂停")
             showControls()
         }
-        surface.hudToastMessage = "定时关闭：\(minutes) 分钟后暂停"
+        surface.hudToastMessage = String(localized: "定时关闭：\(String(describing: minutes)) 分钟后暂停")
     }
 
     private func cancelSleepTimer() {
@@ -2417,18 +2417,18 @@ struct PlayerScreen: View {
         let info = surface.playbackInfo()
         let mediaURL = controllerURLString
         let rows: [(title: String, value: String)] = [
-            ("视频编码", info?.videoCodec ?? "—"),
-            ("分辨率", info?.resolution ?? "—"),
-            ("帧率", info?.frameRate ?? "—"),
-            ("码率", info?.videoBitrate ?? "—"),
-            ("音频编码", info?.audioCodec ?? "—"),
-            ("声道", info?.audioChannels ?? "—"),
-            ("采样率", info?.sampleRate ?? "—"),
-            ("容器", info?.container ?? "—"),
-            ("方向", orientationSummary),
+            (String(localized: "视频编码"), info?.videoCodec ?? "—"),
+            (String(localized: "分辨率"), info?.resolution ?? "—"),
+            (String(localized: "帧率"), info?.frameRate ?? "—"),
+            (String(localized: "码率"), info?.videoBitrate ?? "—"),
+            (String(localized: "音频编码"), info?.audioCodec ?? "—"),
+            (String(localized: "声道"), info?.audioChannels ?? "—"),
+            (String(localized: "采样率"), info?.sampleRate ?? "—"),
+            (String(localized: "容器"), info?.container ?? "—"),
+            (String(localized: "方向"), orientationSummary),
             // 超分到底有没有喂进 mpv：这里显示真正找到的着色器文件数
             // （Colo 2026-10-28：是 0 就是没挂上，是 6 但画面没变才是着色器本身的问题）。
-            ("超分辨率", "\(settings.playbackSuperResolutionMode.title) · \(surface.appliedShaderCount()) 颗着色器（已挂）"),
+            ("超分辨率", String(localized: "\(String(describing: settings.playbackSuperResolutionMode.title)) · \(String(describing: surface.appliedShaderCount())) 颗着色器（已挂）")),
         ]
         return VStack(spacing: 0) {
             ZStack {
@@ -2476,9 +2476,9 @@ struct PlayerScreen: View {
     private var orientationSummary: String {
         let supported = OrientationLock.mask
         var names: [String] = []
-        if supported.contains(.portrait) { names.append("竖") }
-        if supported.contains(.landscapeLeft) { names.append("横左") }
-        if supported.contains(.landscapeRight) { names.append("横右") }
+        if supported.contains(.portrait) { names.append(String(localized: "竖")) }
+        if supported.contains(.landscapeLeft) { names.append(String(localized: "横左")) }
+        if supported.contains(.landscapeRight) { names.append(String(localized: "横右")) }
         let scene = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
@@ -2546,7 +2546,7 @@ struct PlayerScreen: View {
         .buttonStyle(.plain)
         .disabled(urlString == nil)
         .accessibilityLabel("媒体地址")
-        .accessibilityValue(mediaURLCopied ? "已复制" : (urlString ?? "不可用"))
+        .accessibilityValue(mediaURLCopied ? "已复制" : (urlString ?? String(localized: "不可用")))
         .accessibilityHint("点按复制完整地址")
     }
 
@@ -2794,7 +2794,7 @@ struct PlayerScreen: View {
                 openSheet(.videoInfo)
             },
         ] + redundantInLandscape + [
-            SystemMenuButton.Item(title: "外部播放", symbol: "arrow.up.forward.app") {
+            SystemMenuButton.Item(title: String(localized: "外部播放"), symbol: "arrow.up.forward.app") {
                 closeMenu()
                 openSheet(.externalPlay)
             },
@@ -2850,7 +2850,7 @@ struct PlayerScreen: View {
             )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("快进")
-            .accessibilityHint("快进\(settings.buttonSkipTime)秒，长按修改时间")
+            .accessibilityHint(String(localized: "快进\(String(describing: settings.buttonSkipTime))秒，长按修改时间"))
             .accessibilityAddTraits(.isButton)
     }
 
@@ -2894,7 +2894,7 @@ struct PlayerScreen: View {
                 // 切集时先亮一下目标集数，代替原版的「正在加载${集标题}」
                 // （原生这边只有 URL，没有集标题）。
                 if showsEpisodeLoadingLine(controller.phase) {
-                    Text("正在加载第 \(controller.currentEpisode) 集")
+                    Text(String(localized: "正在加载第 \(String(describing: controller.currentEpisode)) 集"))
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.7))
                 }
@@ -2920,10 +2920,10 @@ struct PlayerScreen: View {
 
     private func phaseTitle(_ phase: PlayerController.Phase) -> String {
         switch phase {
-        case .idle: "准备中…"
-        case .searchingSource: "正在查找播放源…"
-        case .resolvingChapters: "正在加载剧集列表…"
-        case .parsingMedia: "正在解析播放地址…"
+        case .idle: String(localized: "准备中…")
+        case .searchingSource: String(localized: "正在查找播放源…")
+        case .resolvingChapters: String(localized: "正在加载剧集列表…")
+        case .parsingMedia: String(localized: "正在解析播放地址…")
         case .ready: ""
         case .failed: ""
         }
@@ -3076,7 +3076,7 @@ struct PlayerScreen: View {
             }),
             title: nil,
             symbol: "wand.and.stars",
-            accessibilityLabel: "超分辨率 \(settings.playbackSuperResolutionMode.title)",
+            accessibilityLabel: String(localized: "超分辨率 \(String(describing: settings.playbackSuperResolutionMode.title))"),
             onOpen: { pinControlsWhileMenuOpen() }
         )
         .frame(minWidth: 44, minHeight: 40)
@@ -3096,7 +3096,7 @@ struct PlayerScreen: View {
             }),
             title: nil,
             symbol: "speedometer",
-            accessibilityLabel: "倍速 \(speedText(Double(playbackRate)))",
+            accessibilityLabel: String(localized: "倍速 \(String(describing: speedText(Double(playbackRate))))"),
             onOpen: { pinControlsWhileMenuOpen() }
         )
         .frame(minWidth: 44, minHeight: 40)
@@ -3520,7 +3520,7 @@ struct PlayerScreen: View {
         // 章节还没抓回来时不报「已经是第一集」，否则正常加载会被误报成边界。
         guard !controller.episodes.isEmpty else { return }
         guard controller.currentEpisode > 1 else {
-            surface.toastMessage = "已经是第一集"
+            surface.toastMessage = String(localized: "已经是第一集")
             return
         }
         persistProgress(controller)
@@ -3818,11 +3818,11 @@ struct PlayerScreen: View {
     private func commitSkipSeconds() {
         let text = skipSecondsInput.trimmingCharacters(in: .whitespaces)
         guard let value = Int(text) else {
-            skipSecondsError = "请输入数字"
+            skipSecondsError = String(localized: "请输入数字")
             return
         }
         guard value > 0 else {
-            skipSecondsError = "请输入大于0的数字"
+            skipSecondsError = String(localized: "请输入大于0的数字")
             return
         }
         settings.buttonSkipTime = value
@@ -3925,15 +3925,15 @@ struct PlayerScreen: View {
                                 let a = page * pageSize + 1
                                 let b = min(total, (page + 1) * pageSize)
                                 return SystemMenuButton.Selection.Option(
-                                    title: "\(a)–\(b) 集",
+                                    title: String(localized: "\(String(describing: a))–\(String(describing: b)) 集"),
                                     isSelected: episodeGridPage == page
                                 ) {
                                     episodeGridPage = page
                                 }
                             }),
-                            title: "\(lo + 1)–\(hi) 集",
+                            title: String(localized: "\(String(describing: lo + 1))–\(String(describing: hi)) 集"),
                             symbol: "",
-                            accessibilityLabel: "快速跳转，现在显示第 \(lo + 1) 到 \(hi) 集",
+                            accessibilityLabel: String(localized: "快速跳转，现在显示第 \(String(describing: lo + 1)) 到 \(String(describing: hi)) 集"),
                             // 剧集/评论区不算播放器菜单，字和选中态跟主题色
                             // （LP 2026-10-28；Colo 划的界）。
                             tint: .accentColor,
@@ -4203,7 +4203,7 @@ struct PlayerScreen: View {
             Button {
                 startSelectedDownloads(controller)
             } label: {
-                Text(downloadSelection.isEmpty ? "下载" : "下载 \(downloadSelection.count) 集")
+                Text(downloadSelection.isEmpty ? "下载" : String(localized: "下载 \(String(describing: downloadSelection.count)) 集"))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
@@ -4218,7 +4218,7 @@ struct PlayerScreen: View {
             .buttonStyle(PlayerPressStyle())
             .disabled(downloadSelection.isEmpty)
             .opacity(downloadSelection.isEmpty ? 0.4 : 1)
-            .accessibilityLabel("下载选中的 \(downloadSelection.count) 集")
+            .accessibilityLabel(String(localized: "下载选中的 \(String(describing: downloadSelection.count)) 集"))
         }
     }
 
@@ -4270,9 +4270,9 @@ struct PlayerScreen: View {
                 // 点了不执行（LP 3321「剧集和评论下边的都换了吗」）。
                 SystemMenuButton(
                     selection: commentEpisodeSelection(),
-                    title: commentEpisode.map { "第 \($0) 集" } ?? "第 — 集",
+                    title: commentEpisode.map { String(localized: "第 \(String(describing: $0)) 集") } ?? String(localized: "第 — 集"),
                     symbol: "",
-                    accessibilityLabel: commentEpisode.map { "当前查看第 \($0) 集评论" } ?? "当前查看集数评论",
+                    accessibilityLabel: commentEpisode.map { String(localized: "当前查看第 \(String(describing: $0)) 集评论") } ?? String(localized: "当前查看集数评论"),
                     // 评论区那颗，跟选集数 / 排序一样回主题色（LP 2026-10-28）。
                     tint: .accentColor,
                     showsChevron: true,
@@ -4283,7 +4283,7 @@ struct PlayerScreen: View {
                 .frame(height: 44)
                 Spacer(minLength: 8)
                 // 中：只读条数文案
-                Text(commentTotal == 0 ? "还没有人评论" : "共 \(commentTotal) 条评论")
+                Text(commentTotal == 0 ? "还没有人评论" : String(localized: "共 \(String(describing: commentTotal)) 条评论"))
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -4293,14 +4293,14 @@ struct PlayerScreen: View {
                 SystemMenuButton(
                     selection: .init(options: [
                         SystemMenuButton.Selection.Option(
-                            title: "最新优先",
+                            title: String(localized: "最新优先"),
                             isSelected: !isCommentsAscending
                         ) {
                             if isCommentsAscending { isCommentsAscending = false }
                             applyCommentsSort()
                         },
                         SystemMenuButton.Selection.Option(
-                            title: "最早优先",
+                            title: String(localized: "最早优先"),
                             isSelected: isCommentsAscending
                         ) {
                             if !isCommentsAscending { isCommentsAscending = true }
@@ -4309,7 +4309,7 @@ struct PlayerScreen: View {
                     ]),
                     title: isCommentsAscending ? "最早优先" : "最新优先",
                     symbol: "",
-                    accessibilityLabel: "评论排序",
+                    accessibilityLabel: String(localized: "评论排序"),
                     // 同选集数那颗：剧集/评论区的菜单钮用主题色。
                     tint: .accentColor,
                     showsChevron: true,
@@ -4396,7 +4396,7 @@ struct PlayerScreen: View {
                                 Divider().padding(.leading, 16)
                             }
                             if commentTotal > comments.count {
-                                Text("已显示 \(comments.count) / \(commentTotal) 条评论")
+                                Text(String(localized: "已显示 \(String(describing: comments.count)) / \(String(describing: commentTotal)) 条评论"))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .center)
@@ -4417,7 +4417,7 @@ struct PlayerScreen: View {
         let total = controller?.episodes.count ?? 0
         guard total > 0 else { return .init(options: []) }
         return .init(options: (1 ... total).map { ep in
-            .init(title: "第 \(ep) 集", isSelected: commentEpisode == ep) {
+            .init(title: String(localized: "第 \(String(describing: ep)) 集"), isSelected: commentEpisode == ep) {
                 switchCommentEpisode(ep)
             }
         })
@@ -4489,7 +4489,7 @@ struct PlayerScreen: View {
         let number = index + 1
         let isCurrent = number == controller.currentEpisode
         return HStack(spacing: 8) {
-            Text("第 \(number) 集")
+            Text(String(localized: "第 \(String(describing: number)) 集"))
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
             Spacer(minLength: 8)
@@ -4525,9 +4525,9 @@ struct PlayerScreen: View {
             // 也不自己编号（LP 3370 / Colo 3371）。
             title: controller.roads.indices.contains(controller.selectedRoad)
                 ? Self.roadName(controller.roads[controller.selectedRoad])
-                : "线路",
+                : String(localized: "线路"),
             symbol: "",
-            accessibilityLabel: "选择线路",
+            accessibilityLabel: String(localized: "选择线路"),
             // 线路在选集区，跟选集数 / 排序 / 评论集一样算剧集那块，用主题色
             // （LP 2026-10-28；Colo 指的位置）。
             tint: .accentColor,
@@ -4556,7 +4556,7 @@ struct PlayerScreen: View {
     /// 菜单里那一条：线路名 · N 集（集数拿不到就不标，别写 0）。
     private static func roadItemTitle(_ road: Road) -> String {
         let name = roadName(road)
-        return road.data.isEmpty ? name : "\(name) · \(road.data.count) 集"
+        return road.data.isEmpty ? name : String(localized: "\(String(describing: name)) · \(String(describing: road.data.count)) 集")
     }
 
     private func switchEpisode(to number: Int, controller: PlayerController) {

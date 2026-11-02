@@ -30,7 +30,7 @@ enum RestrictedJSONPath {
     static func parse(_ expression: String) throws -> [Segment] {
         let characters = Array(expression)
         guard !characters.isEmpty, characters[0] == "$" else {
-            throw ApiRuleFormatError(message: "JSONPath 必须以 \\$ 开头: \(expression)")
+            throw ApiRuleFormatError(message: String(localized: "JSONPath 必须以 \\$ 开头: \(String(describing: expression))"))
         }
 
         var index = 1
@@ -44,7 +44,7 @@ enum RestrictedJSONPath {
                     index += 1
                 }
                 if index == start {
-                    throw ApiRuleFormatError(message: "不支持的 JSONPath: \(expression)")
+                    throw ApiRuleFormatError(message: String(localized: "不支持的 JSONPath: \(String(describing: expression))"))
                 }
                 segments.append(.key(String(characters[start..<index])))
                 continue
@@ -61,12 +61,12 @@ enum RestrictedJSONPath {
                           (content.hasPrefix("\"") && content.hasSuffix("\"")) {
                     segments.append(.key(unescape(String(content.dropFirst().dropLast()))))
                 } else {
-                    throw ApiRuleFormatError(message: "不支持的 JSONPath 片段: [\(content)]")
+                    throw ApiRuleFormatError(message: String(localized: "不支持的 JSONPath 片段: [\(String(describing: content))]"))
                 }
                 index = end + 1
                 continue
             }
-            throw ApiRuleFormatError(message: "不支持的 JSONPath: \(expression)")
+            throw ApiRuleFormatError(message: String(localized: "不支持的 JSONPath: \(String(describing: expression))"))
         }
         return segments
     }
@@ -121,7 +121,7 @@ enum RestrictedJSONPath {
             if char == "]" { return index }
             index += 1
         }
-        throw ApiRuleFormatError(message: "JSONPath 缺少 ]: \(expression)")
+        throw ApiRuleFormatError(message: String(localized: "JSONPath 缺少 ]: \(String(describing: expression))"))
     }
 
     /// 等价于 json_path 包 `JsonPath(expression).readValues(document)`。

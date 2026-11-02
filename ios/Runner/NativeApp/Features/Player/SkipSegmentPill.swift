@@ -257,13 +257,13 @@ struct SkipSegmentPillView: View {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(Self.foreground)
-                    Text("即将跳过\(kind.label)")
+                    Text(String(localized: "即将跳过\(String(describing: kind.label))"))
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Self.foreground)
                     countdownRing
                 }
                 HStack(spacing: 12) {
-                    pillAction("跳过", prominent: true) { model.skipNow() }
+                    pillAction(String(localized: "跳过"), prominent: true) { model.skipNow() }
                     pillAction("取消") { model.cancel() }
                 }
             }
@@ -297,11 +297,11 @@ struct SkipSegmentPillView: View {
                     Image(systemName: "arrow.counterclockwise")
                         .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(Self.foreground)
-                    Text("已跳过\(kind.label)")
+                    Text(String(localized: "已跳过\(String(describing: kind.label))"))
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Self.foreground)
                 }
-                pillAction("撤销", prominent: true) { model.undo() }
+                pillAction(String(localized: "撤销"), prominent: true) { model.undo() }
             }
         }
     }

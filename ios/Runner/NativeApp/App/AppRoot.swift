@@ -127,7 +127,7 @@ struct AppRoot: View {
         let notes = environment.updates.appUpdate?.notes ?? ""
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return "当前版本 \(KazumiAppInfo.fullVersion)，可以到项目主页下载新版本。"
+            return String(localized: "当前版本 \(String(describing: KazumiAppInfo.fullVersion))，可以到项目主页下载新版本。")
         }
         return String(trimmed.prefix(400))
     }

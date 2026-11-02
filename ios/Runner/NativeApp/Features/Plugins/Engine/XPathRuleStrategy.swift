@@ -23,7 +23,7 @@ struct XPathRuleStrategy: Sendable {
               !(components.scheme ?? "").isEmpty,
               !(components.host ?? "").isEmpty else {
             throw XPathRuleFormatError(
-                message: "搜索 URL 无效: \(queryURL)",
+                message: String(localized: "搜索 URL 无效: \(String(describing: queryURL))"),
                 kind: .invalidUrl
             )
         }
@@ -52,7 +52,7 @@ struct XPathRuleStrategy: Sendable {
               !(components.scheme ?? "").isEmpty,
               !(components.host ?? "").isEmpty else {
             throw XPathRuleFormatError(
-                message: "选集 URL 无效: \(url)",
+                message: String(localized: "选集 URL 无效: \(String(describing: url))"),
                 kind: .invalidUrl
             )
         }
@@ -87,7 +87,7 @@ struct XPathRuleStrategy: Sendable {
                     node.xpath(config.searchResult).first
                 }?.attr("href")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if name.isEmpty || source.isEmpty {
-                    diagnostics.append("搜索节点 \(index) 缺少名称或来源，已跳过")
+                    diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 缺少名称或来源，已跳过"))
                     continue
                 }
                 items.append(SearchItem(name: name, src: source))
@@ -95,7 +95,7 @@ struct XPathRuleStrategy: Sendable {
             } catch let error as XPathRuleFormatError {
                 throw error
             } catch {
-                diagnostics.append("搜索节点 \(index) 解析失败: \(error.localizedDescription)")
+                diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
         }
 
@@ -123,26 +123,26 @@ struct XPathRuleStrategy: Sendable {
                 for (episodeIndex, episode) in episodeNodes.enumerated() {
                     let source = episode.attr("href")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     if source.isEmpty {
-                        diagnostics.append("线路 \(roadIndex) 的剧集节点 \(episodeIndex) 缺少 URL，已跳过")
+                        diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
                         continue
                     }
                     let name = removeWhitespace(episode.stringValue)
                     urls.append(EpisodeURL.normalize(baseUrl: config.baseUrl, raw: source))
-                    names.append(name.isEmpty ? "第\(episodeIndex + 1)集" : name)
+                    names.append(name.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : name)
                 }
                 if urls.isEmpty {
-                    diagnostics.append("线路 \(roadIndex) 没有有效剧集，已跳过")
+                    diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 没有有效剧集，已跳过"))
                     continue
                 }
                 roads.append(Road(
-                    name: "播放线路\(roads.count + 1)",
+                    name: String(localized: "播放线路\(String(describing: roads.count + 1))"),
                     data: urls,
                     identifier: names
                 ))
             } catch let error as XPathRuleFormatError {
                 throw error
             } catch {
-                diagnostics.append("线路节点 \(roadIndex) 解析失败: \(error.localizedDescription)")
+                diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
         }
 
@@ -214,14 +214,14 @@ struct XPathRuleStrategy: Sendable {
         do {
             let document = try HTMLDocument(data: Data(raw.utf8))
             guard let root = document.root else {
-                throw XPathRuleFormatError(message: "HTML 响应没有根节点", kind: .invalidDocument)
+                throw XPathRuleFormatError(message: String(localized: "HTML 响应没有根节点"), kind: .invalidDocument)
             }
             return ParsedHTML(document: document, root: root)
         } catch let error as XPathRuleFormatError {
             throw error
         } catch {
             throw XPathRuleFormatError(
-                message: "HTML 响应解析失败",
+                message: String(localized: "HTML 响应解析失败"),
                 kind: .invalidDocument,
                 cause: String(describing: error)
             )
@@ -232,7 +232,7 @@ struct XPathRuleStrategy: Sendable {
     private func runSelector<T>(_ field: XPathRuleField, expression: String, query: () throws -> T) throws -> T {
         if expression.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw XPathRuleFormatError(
-                message: "\(field.label) XPath 不能为空",
+                message: String(localized: "\(String(describing: field.label)) XPath 不能为空"),
                 kind: .invalidSelector,
                 field: field,
                 expression: expression
@@ -242,7 +242,7 @@ struct XPathRuleStrategy: Sendable {
             return try query()
         } catch {
             throw XPathRuleFormatError(
-                message: "\(field.label) XPath 无效: \(expression)",
+                message: String(localized: "\(String(describing: field.label)) XPath 无效: \(String(describing: expression))"),
                 kind: .invalidSelector,
                 field: field,
                 expression: expression,

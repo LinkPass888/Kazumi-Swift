@@ -290,10 +290,10 @@ extension SearchFilterState {
     /// 排序名，对应 search_widgets.dart 的 _searchSortLabels。
     static func sortLabel(_ sort: String) -> String {
         switch sort {
-        case "rank": return "排名"
+        case "rank": return String(localized: "排名")
         case "score": return "评分"
-        case "match": return "匹配"
-        default: return "热度"
+        case "match": return String(localized: "匹配")
+        default: return String(localized: "热度")
         }
     }
 
@@ -304,18 +304,18 @@ extension SearchFilterState {
         if !season.isEmpty {
             parts.append(season)
         } else if let dateRange {
-            parts.append("\(dateRange.start) 至 \(dateRange.end)")
+            parts.append(String(localized: "\(String(describing: dateRange.start)) 至 \(String(describing: dateRange.end))"))
         }
         if let scoreRange, scoreRange.isValid {
             // LP 3040：先照 main——摘要就用 toToken，屏上是「评分 7..10」。
-            parts.append("评分 \(scoreRange.toToken())")
+            parts.append(String(localized: "评分 \(String(describing: scoreRange.toToken()))"))
         }
         if let rankRange, rankRange.isValid {
-            parts.append("排名 \(rankRange.toToken())")
+            parts.append(String(localized: "排名 \(String(describing: rankRange.toToken()))"))
         }
         if !weekdays.isEmpty {
-            let titles = ["一", "二", "三", "四", "五", "六", "日"]
-            parts.append("周" + weekdays.map { titles[$0 - 1] }.joined(separator: "、"))
+            let titles = [String(localized: "一"), String(localized: "二"), String(localized: "三"), String(localized: "四"), String(localized: "五"), String(localized: "六"), String(localized: "日")]
+            parts.append(String(localized: "周") + weekdays.map { titles[$0 - 1] }.joined(separator: "、"))
         }
         return parts.joined(separator: " · ")
     }
@@ -324,10 +324,10 @@ extension SearchFilterState {
     var readableQuery: String {
         var parts: [String] = []
         if !keyword.isEmpty { parts.append(keyword) }
-        if !id.isEmpty { parts.append("条目 \(id)") }
+        if !id.isEmpty { parts.append(String(localized: "条目 \(String(describing: id))")) }
         let summary = self.summary
         if !summary.isEmpty { parts.append(summary) }
-        if sort != "heat" { parts.append("\(Self.sortLabel(sort))排序") }
+        if sort != "heat" { parts.append(String(localized: "\(String(describing: Self.sortLabel(sort)))排序")) }
         return parts.joined(separator: " · ")
     }
 }

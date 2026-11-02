@@ -130,9 +130,9 @@ enum DownloadError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .timedOut: "没等到视频地址，网页加载太慢或者要人点一下"
+        case .timedOut: String(localized: "没等到视频地址，网页加载太慢或者要人点一下")
         case .cancelled: "已取消"
-        case .pluginMissing(let name): "规则「\(name)」不在了，没法解析这一集"
+        case .pluginMissing(let name): String(localized: "规则「\(String(describing: name))」不在了，没法解析这一集")
         }
     }
 }

@@ -89,7 +89,7 @@ struct CommentRowView: View {
         .frame(width: starSize * 5 + 4, alignment: .leading)
         // 五颗合成一句，不让 VoiceOver 逐颗念。
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(score) 分，满分 10 分")
+        .accessibilityLabel(String(localized: "\(String(describing: score)) 分，满分 10 分"))
     }
 
     @ViewBuilder
@@ -126,7 +126,7 @@ struct CommentRowView: View {
                     expanded = true
                     onExpand?()
                 } label: {
-                    Text("展开显示 \(comment.replies.count) 个回复")
+                    Text(String(localized: "展开显示 \(String(describing: comment.replies.count)) 个回复"))
                         .font(.caption)
                         .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                 }

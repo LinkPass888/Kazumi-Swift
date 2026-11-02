@@ -50,7 +50,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
     /// 默认项：原版 `Colors.green`，label 为「默认」。
     static let standard = KazumiThemeColor(
         id: "default",
-        title: "默认",
+        title: String(localized: "默认"),
         seed: 0xFF4CAF50,
         lightPrimary: 0xFF3B6939,
         darkPrimary: 0xFFA1D39A,
@@ -65,7 +65,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         .standard,
         KazumiThemeColor(
             id: "teal",
-            title: "青色",
+            title: String(localized: "青色"),
             seed: 0xFF009688,
             lightPrimary: 0xFF006A60,
             darkPrimary: 0xFF82D5C8,
@@ -76,7 +76,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         ),
         KazumiThemeColor(
             id: "blue",
-            title: "蓝色",
+            title: String(localized: "蓝色"),
             seed: 0xFF2196F3,
             lightPrimary: 0xFF36618E,
             darkPrimary: 0xFFA0CAFD,
@@ -87,7 +87,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         ),
         KazumiThemeColor(
             id: "indigo",
-            title: "靛蓝色",
+            title: String(localized: "靛蓝色"),
             seed: 0xFF3F51B5,
             lightPrimary: 0xFF515B92,
             darkPrimary: 0xFFBAC3FF,
@@ -98,7 +98,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         ),
         KazumiThemeColor(
             id: "violet",
-            title: "紫罗兰色",
+            title: String(localized: "紫罗兰色"),
             seed: 0xFF6750A4,
             lightPrimary: 0xFF65558F,
             darkPrimary: 0xFFCFBDFE,
@@ -109,7 +109,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         ),
         KazumiThemeColor(
             id: "pink",
-            title: "粉红色",
+            title: String(localized: "粉红色"),
             seed: 0xFFE91E63,
             lightPrimary: 0xFF8E4957,
             darkPrimary: 0xFFFFB2BE,
@@ -120,7 +120,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         ),
         KazumiThemeColor(
             id: "yellow",
-            title: "黄色",
+            title: String(localized: "黄色"),
             seed: 0xFFFFEB3B,
             lightPrimary: 0xFF685F12,
             darkPrimary: 0xFFD4C871,
@@ -131,7 +131,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         ),
         KazumiThemeColor(
             id: "orange",
-            title: "橙色",
+            title: String(localized: "橙色"),
             seed: 0xFFFF9800,
             lightPrimary: 0xFF855318,
             darkPrimary: 0xFFFDB975,
@@ -142,7 +142,7 @@ struct KazumiThemeColor: Identifiable, Hashable, Sendable {
         ),
         KazumiThemeColor(
             id: "deepOrange",
-            title: "深橙色",
+            title: String(localized: "深橙色"),
             seed: 0xFFFF5722,
             lightPrimary: 0xFF8F4C38,
             darkPrimary: 0xFFFFB5A0,

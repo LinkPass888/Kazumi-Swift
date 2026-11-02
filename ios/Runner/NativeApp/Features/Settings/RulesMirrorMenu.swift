@@ -166,9 +166,9 @@ struct RulesMirrorMenu: View {
     /// 读屏补一句延迟，念出来的是「32 毫秒」而不是「32 ms」。
     private func spokenLatency(_ measurement: Measurement?) -> String {
         switch measurement {
-        case .testing: return "，正在测试"
-        case let .value(ms): return "，\(ms) 毫秒"
-        case .failed: return "，连接不上"
+        case .testing: return String(localized: "，正在测试")
+        case let .value(ms): return String(localized: "，\(String(describing: ms)) 毫秒")
+        case .failed: return String(localized: "，连接不上")
         case nil: return ""
         }
     }

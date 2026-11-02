@@ -52,11 +52,11 @@ final class PopularController {
     private var specs: [RowSpec] {
         [
             // LP 3044：这一行改名「热门番组」，原来挂在封面大标题上的标签菜单也挪到它头上。
-            RowSpec(name: "trending", title: "热门番组", ttl: PopularRowCache.TTL.fast, list: .trending),
-            RowSpec(name: "season", title: "本季新番", ttl: PopularRowCache.TTL.slow, list: .season),
-            RowSpec(name: "ranked", title: "综合排名", ttl: PopularRowCache.TTL.slow, list: .ranked),
+            RowSpec(name: "trending", title: String(localized: "热门番组"), ttl: PopularRowCache.TTL.fast, list: .trending),
+            RowSpec(name: "season", title: String(localized: "本季新番"), ttl: PopularRowCache.TTL.slow, list: .season),
+            RowSpec(name: "ranked", title: String(localized: "综合排名"), ttl: PopularRowCache.TTL.slow, list: .ranked),
             // 收藏数变得慢，跟综合排名同档走慢缓存（Ato 2820）。
-            RowSpec(name: "collected", title: "收藏榜", ttl: PopularRowCache.TTL.slow, list: .collected),
+            RowSpec(name: "collected", title: String(localized: "收藏榜"), ttl: PopularRowCache.TTL.slow, list: .collected),
         ]
     }
 

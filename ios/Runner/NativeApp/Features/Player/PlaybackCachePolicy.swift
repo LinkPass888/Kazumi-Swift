@@ -27,17 +27,17 @@ enum LowMemoryMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .auto: "跟随网络"
-        case .always: "始终开启"
-        case .never: "始终关闭"
+        case .auto: String(localized: "跟随网络")
+        case .always: String(localized: "始终开启")
+        case .never: String(localized: "始终关闭")
         }
     }
 
     var detail: String {
         switch self {
-        case .auto: "移动数据自动开启，Wi-Fi 自动关闭"
-        case .always: "所有网络均减少缓存，降低内存占用"
-        case .never: "使用完整缓存，移动数据下也不自动开启"
+        case .auto: String(localized: "移动数据自动开启，Wi-Fi 自动关闭")
+        case .always: String(localized: "所有网络均减少缓存，降低内存占用")
+        case .never: String(localized: "使用完整缓存，移动数据下也不自动开启")
         }
     }
 
@@ -45,11 +45,11 @@ enum LowMemoryMode: String, CaseIterable, Identifiable {
     func status(isMetered: Bool) -> String {
         switch self {
         case .auto:
-            isMetered ? "已自动开启 · 移动数据下减少缓存" : "已自动关闭 · 非移动网络使用完整缓存"
+            isMetered ? String(localized: "已自动开启 · 移动数据下减少缓存") : String(localized: "已自动关闭 · 非移动网络使用完整缓存")
         case .always:
-            "已手动开启 · 所有网络均减少缓存"
+            String(localized: "已手动开启 · 所有网络均减少缓存")
         case .never:
-            isMetered ? "已手动关闭 · 移动数据使用完整缓存" : "已手动关闭 · 使用完整缓存"
+            isMetered ? String(localized: "已手动关闭 · 移动数据使用完整缓存") : String(localized: "已手动关闭 · 使用完整缓存")
         }
     }
 

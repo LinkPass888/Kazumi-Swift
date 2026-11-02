@@ -36,7 +36,7 @@ struct MPVDiagnostics {
         if !receivedFirstEvent {
             receivedFirstEvent = true
             // 不把首条正文当证明：它可能恰好是被拒收的 HTTP 日志。
-            event.receipt = "内核日志已收到：[\(safePrefix)] 级别=\(safeLevel)"
+            event.receipt = String(localized: "内核日志已收到：[\(String(describing: safePrefix))] 级别=\(String(describing: safeLevel))")
         }
 
         let isError = level == "error" || level == "fatal"
@@ -65,7 +65,7 @@ struct MPVDiagnostics {
         guard nonErrorCount < nonErrorLimit, sourceCounts[family, default: 0] < perSourceLimit else {
             if !reportedLimit {
                 reportedLimit = true
-                event.line = "内核诊断已限流（保留错误）"
+                event.line = String(localized: "内核诊断已限流（保留错误）")
             }
             return event
         }
@@ -81,10 +81,10 @@ struct MPVDiagnostics {
         // 整段隐藏，防止折行头、JSON 请求体或转义换行里的凭据漏到下一行。
         let normalized = normalized(text)
         if matches(httpDump, normalized) || matches(secrets, normalized) {
-            return "[敏感诊断已隐藏]"
+            return String(localized: "[敏感诊断已隐藏]")
         }
         var result = urls.stringByReplacingMatches(
-            in: normalized, range: NSRange(normalized.startIndex..., in: normalized), withTemplate: "[URL已隐藏]"
+            in: normalized, range: NSRange(normalized.startIndex..., in: normalized), withTemplate: String(localized: "[URL已隐藏]")
         )
         result = result.components(separatedBy: .controlCharacters.union(.newlines))
             .joined(separator: " ")

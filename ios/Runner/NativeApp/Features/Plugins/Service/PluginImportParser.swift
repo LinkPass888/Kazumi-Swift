@@ -38,7 +38,7 @@ enum PluginImportParser {
     static func parse(_ input: String) -> PluginImportParseResult {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else {
-            return PluginImportParseResult(plugins: [], failures: ["导入内容为空"], duplicateCount: 0)
+            return PluginImportParseResult(plugins: [], failures: [String(localized: "导入内容为空")], duplicateCount: 0)
         }
 
         var parsed: [Plugin] = []
@@ -68,7 +68,7 @@ enum PluginImportParser {
                         let entry = try decodeRuleEntry(scheme: segment.scheme, rawPayload: segment.rawPayload)
                         parseEntry(entry, index: index + 1, plugins: &parsed, failures: &failures)
                     } catch {
-                        failures.append("第 \(index + 1) 条：\(describe(error))")
+                        failures.append(String(localized: "第 \(String(describing: index + 1)) 条：\(String(describing: describe(error)))"))
                     }
                 }
             }
@@ -150,7 +150,7 @@ enum PluginImportParser {
             }
             plugins.append(plugin)
         } catch {
-            failures.append("第 \(index) 条：\(describe(error))")
+            failures.append(String(localized: "第 \(String(describing: index)) 条：\(String(describing: describe(error)))"))
         }
     }
 
@@ -173,10 +173,10 @@ enum PluginImportError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .missingPayload: "Missing payload in Kazumi rule link"
-        case .notObject: "规则链接内容必须是 JSON object"
+        case .notObject: String(localized: "规则链接内容必须是 JSON object")
         case .notObjectOrLink: "规则必须是 JSON object 或 kazumi:// 链接"
-        case .emptyName: "规则名称不能为空"
-        case .requiresNewerClient: "规则需要更高版本客户端"
+        case .emptyName: String(localized: "规则名称不能为空")
+        case .requiresNewerClient: String(localized: "规则需要更高版本客户端")
         case .invalidLink: "Invalid Kazumi rule link"
         }
     }

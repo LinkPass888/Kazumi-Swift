@@ -61,7 +61,7 @@ struct ChangelogScreen: View {
             let text = try await ChangelogLoader.fetch()
             let sections = ChangelogParser.parse(text)
             guard !sections.isEmpty else {
-                state = .failed("仓库里的更新日志是空的。")
+                state = .failed(String(localized: "仓库里的更新日志是空的。"))
                 return
             }
             state = .loaded(sections)
@@ -186,9 +186,9 @@ enum ChangelogLoader {
         var errorDescription: String? {
             switch self {
             case .badStatus(let code):
-                "服务器返回 \(code)。"
+                String(localized: "服务器返回 \(String(describing: code))。")
             case .notUTF8:
-                "文件不是 UTF-8 文本。"
+                String(localized: "文件不是 UTF-8 文本。")
             }
         }
     }

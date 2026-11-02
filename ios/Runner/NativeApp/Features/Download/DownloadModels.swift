@@ -58,7 +58,7 @@ struct DownloadEpisode: Codable, Identifiable, Sendable, Hashable {
         // 有些规则根本不发集名，`episodes` 里就是那集的网页地址：
         // 直接贴出来是一串又长又没用的 URL，退回「第 N 集」（LP 5112）。
         if title.isEmpty || title.hasPrefix("http://") || title.hasPrefix("https://") {
-            return "第 \(number) 集"
+            return String(localized: "第 \(String(describing: number)) 集")
         }
         return title
     }

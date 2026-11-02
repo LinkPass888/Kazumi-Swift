@@ -97,7 +97,7 @@ enum HiveBox {
             let length = Int(try reader.u32())
             // 帧长含这 4 字节；小于 4 或越过文件末尾就是坏文件，停在这里。
             guard length >= 4, reader.offset + length - 4 <= reader.bytes.count else {
-                throw DecodeError(description: "帧长越界（偏移 \(frameStart)，帧长 \(length)）")
+                throw DecodeError(description: String(localized: "帧长越界（偏移 \(String(describing: frameStart))，帧长 \(String(describing: length))）"))
             }
             let frameEnd = reader.offset + length - 4
             _ = try reader.u8() // 帧类型，实测恒为 0
@@ -117,7 +117,7 @@ enum HiveBox {
         var remaining: Int { bytes.count - offset }
 
         mutating func u8() throws -> UInt8 {
-            guard offset < bytes.count else { throw DecodeError(description: "读越界") }
+            guard offset < bytes.count else { throw DecodeError(description: String(localized: "读越界")) }
             defer { offset += 1 }
             return bytes[offset]
         }
@@ -144,7 +144,7 @@ enum HiveBox {
 
         mutating func text() throws -> String {
             let length = Int(try u32())
-            guard offset + length <= bytes.count else { throw DecodeError(description: "字符串越界") }
+            guard offset + length <= bytes.count else { throw DecodeError(description: String(localized: "字符串越界")) }
             let slice = bytes[offset..<(offset + length)]
             offset += length
             return String(decoding: slice, as: UTF8.self)
@@ -205,7 +205,7 @@ enum HiveBox {
                 }
                 return .object(type: custom - 32, fields: fields)
             default:
-                throw DecodeError(description: "没见过的类型编号 \(type)（偏移 \(typeOffset)）")
+                throw DecodeError(description: String(localized: "没见过的类型编号 \(String(describing: type))（偏移 \(String(describing: typeOffset))）"))
             }
         }
     }

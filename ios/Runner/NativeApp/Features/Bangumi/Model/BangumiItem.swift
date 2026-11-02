@@ -225,7 +225,7 @@ struct BangumiItem: Identifiable, Hashable, Sendable {
     /// 兼容 values（api.bgm.tv）与 value（next.bgm.tv）两种写法。
     private static func parseAliases(_ json: JSONValue) -> [String] {
         guard let infobox = json["infobox"].arrayValue else { return [] }
-        for item in infobox where item["key"].stringValue == "别名" {
+        for item in infobox where item["key"].stringValue == String(localized: "别名") {
             let raw = item["values"].exists ? item["values"] : item["value"]
             guard raw.exists else { return [] }
             if let list = raw.arrayValue {

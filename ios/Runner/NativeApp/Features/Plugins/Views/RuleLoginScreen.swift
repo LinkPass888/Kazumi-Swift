@@ -53,7 +53,7 @@ struct RuleLoginScreen: View {
                     )
                 }
             }
-            .navigationTitle("登录 \(plugin.name)")
+            .navigationTitle(String(localized: "登录 \(String(describing: plugin.name))"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -80,9 +80,9 @@ struct RuleLoginScreen: View {
 
     private var footer: String {
         if savedCount > 0 {
-            return "已保存 \(savedCount) 个登录凭证，这条规则之后的请求会带上它。"
+            return String(localized: "已保存 \(String(describing: savedCount)) 个登录凭证，这条规则之后的请求会带上它。")
         }
-        return "在这里登录站点，登录状态会留给这条规则用；关掉这页不影响播放。"
+        return String(localized: "在这里登录站点，登录状态会留给这条规则用；关掉这页不影响播放。")
     }
 }
 

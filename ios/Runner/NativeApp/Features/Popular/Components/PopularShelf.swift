@@ -58,7 +58,7 @@ struct PopularShelf: View {
                 }
                 .buttonStyle(.plain)
                 .hitTarget44()
-                .accessibilityLabel("更多\(row.title)")
+                .accessibilityLabel(String(localized: "更多\(String(describing: row.title))"))
             }
         }
         .padding(.horizontal, 16)

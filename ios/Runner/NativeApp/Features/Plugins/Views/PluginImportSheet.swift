@@ -96,10 +96,10 @@ struct PluginImportSheet: View {
     @ViewBuilder
     private func preview(_ summary: PluginImportSummary) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("可导入 \(summary.plugins.count) 条", systemImage: "checkmark.circle")
+            Label(String(localized: "可导入 \(String(describing: summary.plugins.count)) 条"), systemImage: "checkmark.circle")
                 .foregroundStyle(.green)
             if summary.duplicateCount > 0 {
-                Label("合并重复 \(summary.duplicateCount) 条", systemImage: "arrow.triangle.merge")
+                Label(String(localized: "合并重复 \(String(describing: summary.duplicateCount)) 条"), systemImage: "arrow.triangle.merge")
             }
             if !summary.replacedNames.isEmpty {
                 Label("将覆盖同名规则：\(summary.replacedNames.prefix(3).joined(separator: "、"))\(summary.replacedNames.count > 3 ? " 等" : "")", systemImage: "exclamationmark.triangle")
@@ -110,7 +110,7 @@ struct PluginImportSheet: View {
                     .foregroundStyle(.red)
             }
             if summary.plugins.count > 3 {
-                Text(summary.plugins.prefix(3).map(\.name).joined(separator: "、") + " 等")
+                Text(summary.plugins.prefix(3).map(\.name).joined(separator: "、") + String(localized: " 等"))
                     .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
             }
         }

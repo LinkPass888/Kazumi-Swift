@@ -85,7 +85,7 @@ final class RuleHTTPClient: RuleRequestExecutor, @unchecked Sendable {
         }
 
         guard var components = URLComponents(string: request.url) else {
-            throw NetworkError.transport("请求 URL 无效: \(request.url)")
+            throw NetworkError.transport(String(localized: "请求 URL 无效: \(String(describing: request.url))"))
         }
         if !request.query.isEmpty {
             var items = components.queryItems ?? []
@@ -98,7 +98,7 @@ final class RuleHTTPClient: RuleRequestExecutor, @unchecked Sendable {
             components.queryItems = items
         }
         guard let url = components.url else {
-            throw NetworkError.transport("请求 URL 无效: \(request.url)")
+            throw NetworkError.transport(String(localized: "请求 URL 无效: \(String(describing: request.url))"))
         }
 
         var urlRequest = URLRequest(url: url)

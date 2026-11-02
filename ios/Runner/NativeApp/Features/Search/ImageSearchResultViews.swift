@@ -75,7 +75,7 @@ struct TraceFrame: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .accessibilityLabel("\(result.displayTitle)的匹配画面")
+            .accessibilityLabel(String(localized: "\(String(describing: result.displayTitle))的匹配画面"))
     }
 
     private var placeholder: some View {
@@ -102,7 +102,7 @@ struct BestMatchCard: View {
                     Text("相似度最高")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    Text("\(result.similarityText) 相似")
+                    Text(String(localized: "\(String(describing: result.similarityText)) 相似"))
                         .font(.subheadline.weight(.bold))
                     Spacer(minLength: 0)
                 }
@@ -230,7 +230,7 @@ struct OtherMatchRow: View {
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(3)
-                    Text("\(result.episodeText) · \(result.similarityText) 相似")
+                    Text(String(localized: "\(String(describing: result.episodeText)) · \(String(describing: result.similarityText)) 相似"))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -256,7 +256,7 @@ struct OtherMatchRow: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("搜索 \(result.displayTitle)")
+        .accessibilityLabel(String(localized: "搜索 \(String(describing: result.displayTitle))"))
     }
 }
 

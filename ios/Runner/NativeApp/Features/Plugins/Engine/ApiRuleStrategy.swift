@@ -23,22 +23,22 @@ struct ApiRuleStrategy: Sendable {
         do {
             return try JSONValue.decode(raw)
         } catch {
-            throw ApiRuleFormatError(message: "API 响应不是有效 JSON: \(error.localizedDescription)")
+            throw ApiRuleFormatError(message: String(localized: "API 响应不是有效 JSON: \(String(describing: error.localizedDescription))"))
         }
     }
 
     func prepareRequest(_ config: ApiRequestConfig, variables: [String: JSONValue]) throws -> PreparedRuleRequest {
         let method = config.method.uppercased()
         guard method == "GET" || method == "POST" else {
-            throw ApiRuleFormatError(message: "仅支持 GET/POST，当前为 \(method)")
+            throw ApiRuleFormatError(message: String(localized: "仅支持 GET/POST，当前为 \(String(describing: method))"))
         }
         let trimmedURL = config.url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedURL.isEmpty else {
-            throw ApiRuleFormatError(message: "API 请求 URL 不能为空")
+            throw ApiRuleFormatError(message: String(localized: "API 请求 URL 不能为空"))
         }
         let url = try renderTemplate(trimmedURL, variables: variables, encode: true)
         guard isValidAbsoluteURL(url) else {
-            throw ApiRuleFormatError(message: "API 请求 URL 无效: \(url)")
+            throw ApiRuleFormatError(message: String(localized: "API 请求 URL 无效: \(String(describing: url))"))
         }
         let hasBody = method == "POST" && config.bodyType != .none
         return PreparedRuleRequest(
@@ -59,7 +59,7 @@ struct ApiRuleStrategy: Sendable {
         try RestrictedJSONPath.validate(config.sourcePath)
         let template = config.sourceTemplate
         if !template.isEmpty && !template.contains("@source") {
-            throw ApiRuleFormatError(message: "详情页地址模板必须引用 @source")
+            throw ApiRuleFormatError(message: String(localized: "详情页地址模板必须引用 @source"))
         }
     }
 
@@ -77,7 +77,7 @@ struct ApiRuleStrategy: Sendable {
                 let name = stringValue(try RestrictedJSONPath.readFirst(node, expression: config.namePath))
                 let source = stringValue(try RestrictedJSONPath.readFirst(node, expression: config.sourcePath))
                 if name.isEmpty || source.isEmpty {
-                    diagnostics.append("搜索节点 \(index) 缺少名称或来源，已跳过")
+                    diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 缺少名称或来源，已跳过"))
                     continue
                 }
                 // 纯字符串替换，`@source` 可以紧跟字母（例如 `/GV@source`）。
@@ -89,7 +89,7 @@ struct ApiRuleStrategy: Sendable {
             } catch let error as ApiRuleFormatError {
                 throw error
             } catch {
-                diagnostics.append("搜索节点 \(index) 解析失败: \(error.localizedDescription)")
+                diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
         }
 
@@ -107,7 +107,7 @@ struct ApiRuleStrategy: Sendable {
         var rootVariables: [String: JSONValue] = ["source": .string(source)]
         for (key, path) in config.variables {
             guard let value = try RestrictedJSONPath.readFirst(document, expression: path), !value.isNull else {
-                throw ApiRuleFormatError(message: "选集响应变量 \(key) 未匹配到值: \(path)")
+                throw ApiRuleFormatError(message: String(localized: "选集响应变量 \(String(describing: key)) 未匹配到值: \(String(describing: path))"))
             }
             rootVariables[key] = value
         }
@@ -169,30 +169,30 @@ struct ApiRuleStrategy: Sendable {
                             baseUrl: baseUrl
                         )
                         if pageURL.isEmpty {
-                            diagnostics.append("线路 \(roadIndex) 的剧集节点 \(episodeIndex) 缺少 URL，已跳过")
+                            diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
                             continue
                         }
                         urls.append(pageURL)
-                        names.append(episodeName.isEmpty ? "第\(episodeIndex + 1)集" : episodeName)
+                        names.append(episodeName.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : episodeName)
                     } catch let error as ApiRuleFormatError {
                         throw error
                     } catch {
-                        diagnostics.append("线路 \(roadIndex) 的剧集节点 \(episodeIndex) 解析失败: \(error.localizedDescription)")
+                        diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
                     }
                 }
                 if urls.isEmpty {
-                    diagnostics.append("线路节点 \(roadIndex) 没有有效剧集，已跳过")
+                    diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 没有有效剧集，已跳过"))
                     continue
                 }
                 roads.append(Road(
-                    name: roadName.isEmpty ? "播放线路\(roads.count + 1)" : roadName,
+                    name: roadName.isEmpty ? String(localized: "播放线路\(String(describing: roads.count + 1))") : roadName,
                     data: urls,
                     identifier: names
                 ))
             } catch let error as ApiRuleFormatError {
                 throw error
             } catch {
-                diagnostics.append("线路节点 \(roadIndex) 解析失败: \(error.localizedDescription)")
+                diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
         }
         return roads
@@ -220,7 +220,7 @@ struct ApiRuleStrategy: Sendable {
                 let entry = rawEntry.trimmingCharacters(in: .whitespacesAndNewlines)
                 if entry.isEmpty { continue }
                 guard let range = entry.range(of: config.fieldSeparator) else {
-                    diagnostics.append("线路 \(roadIndex) 的剧集条目 \(episodeIndex) 缺少字段分隔符，已跳过")
+                    diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集条目 \(String(describing: episodeIndex)) 缺少字段分隔符，已跳过"))
                     continue
                 }
                 let name = String(entry[entry.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -235,26 +235,26 @@ struct ApiRuleStrategy: Sendable {
                         baseUrl: baseUrl
                     )
                     if pageURL.isEmpty {
-                        diagnostics.append("线路 \(roadIndex) 的剧集条目 \(episodeIndex) 缺少 URL，已跳过")
+                        diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集条目 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
                         continue
                     }
                     urls.append(pageURL)
-                    names.append(name.isEmpty ? "第\(episodeIndex + 1)集" : name)
+                    names.append(name.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : name)
                 } catch let error as ApiRuleFormatError {
                     throw error
                 } catch {
-                    diagnostics.append("线路 \(roadIndex) 的剧集条目 \(episodeIndex) 解析失败: \(error.localizedDescription)")
+                    diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集条目 \(String(describing: episodeIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
                 }
             }
             if urls.isEmpty {
-                diagnostics.append("线路 \(roadIndex) 没有有效剧集，已跳过")
+                diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 没有有效剧集，已跳过"))
                 continue
             }
             let configuredName = roadIndex < roadNames.count
                 ? roadNames[roadIndex].trimmingCharacters(in: .whitespacesAndNewlines)
                 : ""
             roads.append(Road(
-                name: configuredName.isEmpty ? "播放线路\(roads.count + 1)" : configuredName,
+                name: configuredName.isEmpty ? String(localized: "播放线路\(String(describing: roads.count + 1))") : configuredName,
                 data: urls,
                 identifier: names
             ))
@@ -275,7 +275,7 @@ struct ApiRuleStrategy: Sendable {
         }
         let templateURL = page.url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !templateURL.isEmpty else {
-            throw ApiRuleFormatError(message: "播放页地址模板不能为空")
+            throw ApiRuleFormatError(message: String(localized: "播放页地址模板不能为空"))
         }
         // 模板语言没有算术能力，故同时提供 0 基与 1 基下标；
         // episodeUrl 承载 episodeUrlPath 抽出的原值且没有替代品。
@@ -288,7 +288,7 @@ struct ApiRuleStrategy: Sendable {
 
         let path = try renderTemplate(templateURL, variables: variables, encode: true)
         guard var components = URLComponents(string: path) else {
-            throw ApiRuleFormatError(message: "剧集页面 URL 无效: \(path)")
+            throw ApiRuleFormatError(message: String(localized: "剧集页面 URL 无效: \(String(describing: path))"))
         }
         let renderedQuery = try renderMap(page.query, variables: variables)
         var mergedQuery: [String: String] = [:]
@@ -313,7 +313,7 @@ struct ApiRuleStrategy: Sendable {
             try RestrictedJSONPath.validate(config.roadNamesPath)
             try RestrictedJSONPath.validate(config.roadEpisodesPath)
             if config.roadSeparator.isEmpty || config.episodeSeparator.isEmpty || config.fieldSeparator.isEmpty {
-                throw ApiRuleFormatError(message: "选集分隔符不能为空")
+                throw ApiRuleFormatError(message: String(localized: "选集分隔符不能为空"))
             }
             return
         }
@@ -328,7 +328,7 @@ struct ApiRuleStrategy: Sendable {
         if !config.episodeUrlPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try RestrictedJSONPath.validate(config.episodeUrlPath)
         } else if config.episodePage == nil {
-            throw ApiRuleFormatError(message: "必须配置播放入口地址路径或播放页地址模板")
+            throw ApiRuleFormatError(message: String(localized: "必须配置播放入口地址路径或播放页地址模板"))
         }
         if let page = config.episodePage,
            page.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -350,7 +350,7 @@ struct ApiRuleStrategy: Sendable {
         case .string(let text):
             if let name = Self.exactVariableName(in: text) {
                 guard let variable = variables[name] else {
-                    throw ApiRuleFormatError(message: "缺少模板变量 @\(name)")
+                    throw ApiRuleFormatError(message: String(localized: "缺少模板变量 @\(String(describing: name))"))
                 }
                 return variable
             }
@@ -392,7 +392,7 @@ struct ApiRuleStrategy: Sendable {
                         cursor += 1
                     }
                     guard let value = variables[name] else {
-                        throw ApiRuleFormatError(message: "缺少模板变量 @\(name)")
+                        throw ApiRuleFormatError(message: String(localized: "缺少模板变量 @\(String(describing: name))"))
                     }
                     let text = value.toStringValue
                     output.append(encode ? encodeComponent(text) : text)

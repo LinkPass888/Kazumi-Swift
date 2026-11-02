@@ -117,7 +117,7 @@ struct PlayerSettingsScreen: View {
                         // LP 2026-10-25：一次加 1 秒，上限 90 秒（默认 80）。
                         // 跳过时长跟符号无关（那颗长按还能自己填秒数），保持一次加 1 秒。
                         Stepper(value: buttonSkipTimeBinding, in: 5...90, step: 1) {
-                            LabeledContent("跳过时长", value: "\(settings.buttonSkipTime) 秒")
+                            LabeledContent("跳过时长", value: String(localized: "\(String(describing: settings.buttonSkipTime)) 秒"))
                         }
                     }
                     row {
@@ -126,7 +126,7 @@ struct PlayerSettingsScreen: View {
                         // 就是两侧按钮的时长，改名会让老用户的设置丢掉。
                         Picker("快进快退时长", selection: doubleTapSkipTimeBinding) {
                             ForEach(Self.doubleTapSkipOptions, id: \.self) { seconds in
-                                Text("\(seconds) 秒").tag(seconds)
+                                Text(String(localized: "\(String(describing: seconds)) 秒")).tag(seconds)
                             }
                         }
                     }
@@ -330,8 +330,8 @@ struct PlayerSettingsScreen: View {
     private var controlBarHideLabel: String {
         let seconds = Double(settings.playerControllerLayerDisappearTime) / 1000
         return seconds == seconds.rounded()
-            ? "\(Int(seconds)) 秒"
-            : String(format: "%.1f 秒", seconds)
+            ? String(localized: "\(String(describing: Int(seconds))) 秒")
+            : String(format: String(localized: "%.1f 秒"), seconds)
     }
 
     private var superResolutionBinding: Binding<SuperResolutionMode> {
@@ -404,7 +404,7 @@ struct DanmakuSettingsScreen: View {
                     )
                     sliderRow(
                         title: "弹幕持续时间",
-                        value: "\(Int(settings.danmakuDuration.rounded())) 秒",
+                        value: String(localized: "\(String(describing: Int(settings.danmakuDuration.rounded()))) 秒"),
                         binding: durationBinding,
                         range: 2...16,
                         step: 1
@@ -628,12 +628,12 @@ struct DownloadSettingsScreen: View {
                 Group {
                     row {
                         Stepper(value: parallelEpisodesBinding, in: 1...5, step: 1) {
-                            LabeledContent("同时下载", value: "\(settings.downloadParallelEpisodes) 集")
+                            LabeledContent("同时下载", value: String(localized: "\(String(describing: settings.downloadParallelEpisodes)) 集"))
                         }
                     }
                     row {
                         Stepper(value: parallelSegmentsBinding, in: 1...10, step: 1) {
-                            LabeledContent("每集同时下载", value: "\(settings.downloadParallelSegments) 个分片")
+                            LabeledContent("每集同时下载", value: String(localized: "\(String(describing: settings.downloadParallelSegments)) 个分片"))
                         }
                     }
                 }
@@ -873,7 +873,7 @@ private struct UpdateScheduleSheet: View {
         NavigationStack {
             List {
                 if items.isEmpty {
-                    Text("当前没有已排定的提醒。\n标记「在看」的番剧有更新时间数据时，会自动排定。")
+                    Text(String(localized: "当前没有已排定的提醒。\n标记「在看」的番剧有更新时间数据时，会自动排定。"))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -1287,7 +1287,7 @@ struct NetworkSettingsScreen: View {
     /// 不带 `http://`——这个代理只支持 http，scheme 是常数（Colo 5368）。
     private var proxyConfigSummary: String {
         settings.proxyUrl.isEmpty
-            ? "未填写"
+            ? String(localized: "未填写")
             : (ProxyURL.hostPort(settings.proxyUrl) ?? settings.proxyUrl)
     }
 

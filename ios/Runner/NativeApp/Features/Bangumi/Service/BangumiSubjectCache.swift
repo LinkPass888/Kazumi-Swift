@@ -196,7 +196,7 @@ struct AnyCodableJSON: Codable {
         } else {
             throw DecodingError.dataCorruptedError(
                 in: container,
-                debugDescription: "无法识别的 JSON 值"
+                debugDescription: String(localized: "无法识别的 JSON 值")
             )
         }
     }

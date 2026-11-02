@@ -122,7 +122,7 @@ struct RuleSourceStep: View {
         .safeAreaInset(edge: .bottom) {
             OnboardingBottomBar {
                 HStack(spacing: 16) {
-                    Text("已安装 \(installedCount) 条")
+                    Text(String(localized: "已安装 \(String(describing: installedCount)) 条"))
                         .font(.footnote)
                         .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                     Spacer(minLength: 0)
