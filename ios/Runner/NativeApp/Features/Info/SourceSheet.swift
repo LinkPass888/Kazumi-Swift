@@ -75,6 +75,8 @@ struct SourceSheet: View {
     @State private var searchStarted = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var detent: PresentationDetent = .medium
 
     var body: some View {
         let _ = recordBody()
@@ -113,11 +115,6 @@ struct SourceSheet: View {
         .interactiveDismissDisabled(captchaFlow != nil)
         .overlay {
             if let box = captchaFlow {
-                let maxHeight: CGFloat = switch box.flow.phase {
-                case .completed: 220
-                case .failed, .cancelled: 240
-                default: 560
-                }
                 ZStack {
                     Color.black.opacity(0.4)
                         .ignoresSafeArea()
@@ -131,8 +128,10 @@ struct SourceSheet: View {
                                 captchaFlow = nil
                             }
                         }
+                    // 不写死高度（Ato 6521）：卡片按可用空间自己撑，内容装不下由
+                    // 面板内部的 ScrollView 滚，大字号下也不会撑出卡片。
                     CaptchaSheet(flow: box.flow) { captchaFlow = nil }
-                        .frame(maxWidth: 420, maxHeight: maxHeight)
+                        .frame(maxWidth: 420)
                         .background(KazumiPalette.heroBackground(for: colorScheme))
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .shadow(radius: 24)
@@ -165,7 +164,11 @@ struct SourceSheet: View {
         }
         // 半屏起步，上滑到全屏（LP 2026-10-28「开始观看没必要弹全屏窗口，半屏差不多，
         // 可以上滑顶部全屏」/ Colo 3969）。挂在面板自己身上，两个入口一起生效。
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
+        .onAppear {
+            // 大字号下内容在半屏里放不下，直接开整屏（Ato 6521 / Colo 6522）。
+            if dynamicTypeSize.isAccessibilitySize { detent = .large }
+        }
         .presentationDragIndicator(.visible)
     }
 
@@ -496,16 +499,17 @@ struct SourceSheet: View {
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(.secondary)
             Text("还没有可用的播放规则")
-                .font(.system(size: 15))
+                .font(.footnote)
                 .foregroundStyle(.secondary)
             Button {
                 goToRuleShop()
             } label: {
                 Text("去规则仓库添加")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 20)
-                    .frame(height: 40)
+                    .padding(.vertical, 10)
+                    .frame(minHeight: 40)
                     .background(
                         Capsule().fill(KazumiPalette.accent(for: colorScheme))
                     )

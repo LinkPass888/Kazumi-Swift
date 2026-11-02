@@ -322,7 +322,7 @@ struct BangumiInfoScreen: View {
     }
 
     /// 顶栏圆形玻璃按钮，尺寸与间距取自 KazumiGlassMetrics。
-    private func barButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {
+    private func barButton(symbol: String, label: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 20, weight: .semibold))
