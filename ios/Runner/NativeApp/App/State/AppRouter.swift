@@ -75,12 +75,15 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable, Sendable {
     var id: String { rawValue }
 
     /// 与 menu.dart 的 LiquidGlassBarItem label 一致。
+    ///
+    /// 包一层 `String(localized:)`：这是 String 上下文，`Tab(...)` 拿到的是
+    /// String 不会查目录，只能在这里自己查（Ato 6442 第一步）。
     var title: String {
         switch self {
-        case .popular: "推荐"
-        case .timeline: "时间表"
-        case .collect: "追番"
-        case .my: "我的"
+        case .popular: String(localized: "推荐")
+        case .timeline: String(localized: "时间表")
+        case .collect: String(localized: "追番")
+        case .my: String(localized: "我的")
         }
     }
 

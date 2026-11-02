@@ -108,7 +108,7 @@ struct WelcomeStep: View {
         .accessibilityHint("打开使用约定")
     }
 
-    private func featureRow(symbol: String, title: String, detail: String) -> some View {
+    private func featureRow(symbol: String, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .regular))

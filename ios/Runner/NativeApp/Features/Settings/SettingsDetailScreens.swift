@@ -19,7 +19,9 @@ import UserNotifications
 
 /// 二级设置页的统一外壳（对应原版 SettingsDetailScaffold + SettingsList）。
 private struct KazumiSettingsDetailStyle: ViewModifier {
-    let title: String
+    /// 收 LocalizedStringKey：`navigationTitle` 只有拿到 key 才会查目录
+    /// （Ato 6442 第一步）。
+    let title: LocalizedStringKey
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -38,7 +40,7 @@ private struct KazumiSettingsDetailStyle: ViewModifier {
 }
 
 extension View {
-    func kazumiSettingsDetail(_ title: String) -> some View {
+    func kazumiSettingsDetail(_ title: LocalizedStringKey) -> some View {
         modifier(KazumiSettingsDetailStyle(title: title))
     }
 }

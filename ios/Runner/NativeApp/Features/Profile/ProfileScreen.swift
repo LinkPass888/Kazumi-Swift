@@ -274,7 +274,7 @@ struct ProfileScreen: View {
 
     private func rowButton(
         symbol: String,
-        title: String,
+        title: LocalizedStringKey,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -304,11 +304,11 @@ struct ProfileScreen: View {
     private struct Row: Identifiable {
         let id = UUID()
         var symbol: String
-        var title: String
+        var title: LocalizedStringKey
         var route: AppRoute
     }
 
-    private func section(_ title: String, rows: [Row]) -> some View {
+    private func section(_ title: LocalizedStringKey, rows: [Row]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.footnote.weight(.semibold))

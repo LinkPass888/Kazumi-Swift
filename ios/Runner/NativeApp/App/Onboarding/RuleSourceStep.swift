@@ -262,9 +262,9 @@ struct RuleSourceStep: View {
 
     private func stateView(
         symbol: String,
-        title: String,
-        detail: String,
-        actionTitle: String?,
+        title: LocalizedStringKey,
+        detail: LocalizedStringKey,
+        actionTitle: LocalizedStringKey?,
         action: (() -> Void)?
     ) -> some View {
         VStack(spacing: 8) {

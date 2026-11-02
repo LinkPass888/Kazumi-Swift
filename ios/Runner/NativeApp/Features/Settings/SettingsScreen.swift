@@ -38,6 +38,9 @@ struct SettingsCategory: Identifiable, Hashable {
     }
 
     let id: String
+    /// 展示用的名字。这里保持 String：SettingsCategory 要 Hashable/Sendable，
+    /// LocalizedStringKey 不是，所以字面量自己包一层 String(localized:)
+    /// 去查目录（Ato 6442 第一步）。
     let label: String
     let description: String
     let symbol: String
@@ -56,18 +59,18 @@ extension SettingsGroup {
     static let all: [SettingsGroup] = [
         SettingsGroup(
             id: "playback",
-            title: "播放",
+            title: String(localized: "播放"),
             categories: [
                 SettingsCategory(
                     id: "player",
-                    label: "播放设置",
+                    label: String(localized: "播放设置"),
                     description: "解码、渲染与播放行为",
                     symbol: "play.rectangle.on.rectangle",
                     destination: .player
                 ),
                 SettingsCategory(
                     id: "danmaku",
-                    label: "弹幕设置",
+                    label: String(localized: "弹幕设置"),
                     description: "弹幕来源与显示效果",
                     symbol: "captions.bubble",
                     destination: .danmaku
@@ -76,18 +79,18 @@ extension SettingsGroup {
         ),
         SettingsGroup(
             id: "resource",
-            title: "资源",
+            title: String(localized: "资源"),
             categories: [
                 SettingsCategory(
                     id: "plugin",
-                    label: "规则管理",
+                    label: String(localized: "规则管理"),
                     description: "番剧资源规则",
                     symbol: "puzzlepiece.extension",
                     destination: .pluginList
                 ),
                 SettingsCategory(
                     id: "download",
-                    label: "下载设置",
+                    label: String(localized: "下载设置"),
                     // LP 清单第四项。并发那几行这一版没有（没有下载器），
                     // 说明就不许再写「并发数」。
                     description: "离线下载",
@@ -98,11 +101,11 @@ extension SettingsGroup {
         ),
         SettingsGroup(
             id: "application",
-            title: "应用",
+            title: String(localized: "应用"),
             categories: [
                 SettingsCategory(
                     id: "notification",
-                    label: "通知设置",
+                    label: String(localized: "通知设置"),
                     description: "追番更新提醒",
                     symbol: "bell",
                     destination: .notification
@@ -111,7 +114,7 @@ extension SettingsGroup {
                 // 「外观与界面」），首页两个入口并成一个。
                 SettingsCategory(
                     id: "theme",
-                    label: "外观与界面",
+                    label: String(localized: "外观与界面"),
                     description: "主题、显示效果与启动页",
                     symbol: "paintpalette",
                     destination: .theme
@@ -120,14 +123,14 @@ extension SettingsGroup {
                     id: "syncBackup",
                     // LP 清单第八项叫「同步设置」；Ato 2026-10-24 定：只改名字，
                     // 备份那部分先留在里面不动（备份不在清单里）。
-                    label: "同步设置",
+                    label: String(localized: "同步设置"),
                     description: "追番同步与多设备同步",
                     symbol: "icloud",
                     destination: .syncBackup
                 ),
                 SettingsCategory(
                     id: "network",
-                    label: "网络设置",
+                    label: String(localized: "网络设置"),
                     description: "访问加速",
                     symbol: "globe",
                     destination: .network
@@ -136,25 +139,25 @@ extension SettingsGroup {
         ),
         SettingsGroup(
             id: "other",
-            title: "其他",
+            title: String(localized: "其他"),
             categories: [
                 SettingsCategory(
                     id: "update",
-                    label: "更新设置",
+                    label: String(localized: "更新设置"),
                     description: "应用与规则更新",
                     symbol: "arrow.down.app",
                     destination: .update
                 ),
                 SettingsCategory(
                     id: "storage",
-                    label: "存储与日志",
+                    label: String(localized: "存储与日志"),
                     description: "图片缓存与错误日志",
                     symbol: "externaldrive",
                     destination: .storage
                 ),
                 SettingsCategory(
                     id: "about",
-                    label: "关于",
+                    label: String(localized: "关于"),
                     description: "版本与开源信息",
                     symbol: "info.circle",
                     destination: .about

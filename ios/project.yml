@@ -16,6 +16,13 @@ options:
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
+  # 只做简体 + 繁体：源语言简体，系统是繁中（zh-Hant 任意地区）就用繁体，
+  # 其余一切语言（含英文、日文）落回简体。地区不参与判断（LP 6131/6132）。
+  developmentLanguage: zh-Hans
+  knownRegions:
+    - zh-Hans
+    - zh-Hant
+    - Base
   generateEmptyDirectories: false
   groupSortPosition: top
   xcodeVersion: "26.0"
@@ -43,6 +50,9 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    # 编译期把 SwiftUI 视图里的字面量提取进字符串目录（Xcode 自动做，代码不用改）。
+    SWIFT_EMIT_LOC_STRINGS: YES
+    DEVELOPMENT_LANGUAGE: zh-Hans
     SWIFT_STRICT_CONCURRENCY: complete
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     TARGETED_DEVICE_FAMILY: "1,2"
@@ -68,6 +78,9 @@ targets:
     sources:
       # 纯 SwiftUI 业务代码。
       - path: Runner/NativeApp
+      # 字符串目录：源语言简体，繁体在 zh-Hant 里。
+      - path: Runner/Localizable.xcstrings
+        buildPhase: resources
       # 图标 / 启动图资源目录，原样编译进 Assets.car（AppIcon.appiconset 不做任何改动）。
       - path: Runner/Assets.xcassets
         buildPhase: resources

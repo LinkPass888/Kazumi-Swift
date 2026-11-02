@@ -44,7 +44,7 @@ struct OnboardingFlow: View {
 
 /// 引导页底部那颗主按钮。
 struct OnboardingPrimaryButton: View {
-    let title: String
+    let title: LocalizedStringKey
     var isEnabled: Bool = true
     let action: () -> Void
 
