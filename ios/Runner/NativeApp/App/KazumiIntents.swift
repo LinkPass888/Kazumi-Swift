@@ -116,24 +116,24 @@ private enum LocalIntentData {
 
     static func progress(_ anime: LocalAnimeEntity) -> String {
         guard let record = library().record(for: anime.id) else {
-            return "本机没有《\(anime.name)》的观看进度；未查询云端。"
+            return String(localized: "本机没有《\(anime.name)》的观看进度；未查询云端。")
         }
-        let episode = record.episodeTitle.isEmpty ? "第\(record.episodeNumber)集" : record.episodeTitle
+        let episode = record.episodeTitle.isEmpty ? String(localized: "第\(record.episodeNumber)集") : record.episodeTitle
         let seconds = record.progressSeconds
         let position = seconds.isFinite && seconds >= 0 && seconds < Double(Int.max)
             ? WatchRecord.clock(seconds) : "未知位置"
-        let source = record.sourceRuleName.isEmpty ? "未记录来源" : "来源：\(record.sourceRuleName)"
-        return "《\(anime.name)》最近看到\(episode)，位置 \(position)。\(source)。记录时间：\(dateText(record.updatedAt))。仅本机历史，不合并不同来源的集数，不代表整部看完。"
+        let source = record.sourceRuleName.isEmpty ? String(localized: "未记录来源") : "来源：\(record.sourceRuleName)"
+        return String(localized: "《\(anime.name)》最近看到\(episode)，位置 \(position)。\(source)。记录时间：\(dateText(record.updatedAt))。仅本机历史，不合并不同来源的集数，不代表整部看完。")
     }
 
     static func libraryText(_ filter: IntentLibraryFilter) -> String {
         let entries = library().entries.filter {
             $0.collectType != .none && (filter.collectType == nil || $0.collectType == filter.collectType)
         }.sorted { $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt }
-        guard !entries.isEmpty else { return "本机没有“\(filter.title)”收藏记录；未查询云端。" }
+        guard !entries.isEmpty else { return String(localized: "本机没有“\(filter.title)”收藏记录；未查询云端。") }
         let names = entries.prefix(30).map { "《\($0.displayName)》（\($0.collectType.title)）" }.joined(separator: "、")
         let suffix = entries.count > 30 ? String(localized: "，这里只列出最近更新的30部") : ""
-        return "本机“\(filter.title)”收藏共\(entries.count)部\(suffix)：\(names)。仅本机已保存记录，未查询云端。"
+        return String(localized: "本机“\(filter.title)”收藏共\(entries.count)部\(suffix)：\(names)。仅本机已保存记录，未查询云端。")
     }
 
     static func today(now: Date = Date()) -> String {
@@ -181,9 +181,9 @@ private enum LocalIntentData {
         } else {
             let names = ordered.prefix(30).map { "《\($0.value)》" }.joined(separator: "、")
             let more = ordered.count > 30 ? "（仅列出前30部）" : ""
-            text = "缓存中今天计划\(ordered.count)部\(more)：\(names)。"
+            text = String(localized: "缓存中今天计划\(ordered.count)部\(more)：\(names)。")
         }
-        let saved = snapshot.savedAt.map { "缓存保存时间：\(dateText($0))。" } ?? "缓存保存时间未知。"
+        let saved = snapshot.savedAt.map { String(localized: "缓存保存时间：\(dateText($0))。") } ?? "缓存保存时间未知。"
         return String(localized: "\(text)\(saved)按设备当地星期及本机手动星期设置读取；仅当季缓存计划，不使用页面筛选，不校正播出时刻，不代表片源已更新。本次未联网。")
     }
 }
@@ -399,7 +399,7 @@ struct KazumiIntentDebugView: View {
         do {
             anime = try await LocalAnimeQuery().suggestedEntities()
             if selectedID == nil || !anime.contains(where: { $0.id == selectedID }) { selectedID = anime.first?.id }
-            output = "已读取\(anime.count)个本机候选（最多12个），未联网。"
+            output = String(localized: "已读取\(anime.count)个本机候选（最多12个），未联网。")
         } catch { output = error.localizedDescription }
     }
 
