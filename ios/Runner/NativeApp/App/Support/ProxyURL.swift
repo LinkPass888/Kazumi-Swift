@@ -57,10 +57,14 @@ enum ProxyURL {
     /// HTTP 层有响应就算代理通了。测试地址默认是 `https://www.google.com`，
     /// 有些网络下它返回 403/451，那是「代理通了、目标不让进」，不是代理不通——
     /// 按 main 的口径会误报成「代理连接失败」并把开关关掉。
-    static func test(proxy: String, target: String, timeout: TimeInterval = 15) async -> Bool {
+    /// 整个测试 10 秒封顶（Ato 6395）：黑洞地址（连得上、一直不回）不能让它拖到
+    /// 系统自己的连接超时。
+    static func test(proxy: String, target: String, timeout: TimeInterval = 10) async -> Bool {
         guard let parsed = parse(proxy), let url = URL(string: target) else { return false }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
+        // 只设 request 那层不够：黑洞地址会一直等下去，上限在那个「整个资源」的超时上。
+        configuration.timeoutIntervalForResource = timeout
         // HTTP 和 HTTPS 两组键都要给，见 `KazumiNetworkPolicy.proxyDictionary`。
         configuration.connectionProxyDictionary = KazumiNetworkPolicy.proxyDictionary(
             host: parsed.host,

@@ -1052,8 +1052,9 @@ struct ThemeSettingsScreen: View {
 struct NetworkSettingsScreen: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(\.colorScheme) private var colorScheme
-    /// 开关被拦下来时顶上那句提示；两秒后自己收起来。
-    @State private var message: String?
+    /// 开关被拦下来时顶上那句提示（`.automatic` 3.5 秒收），
+    /// 测试失败走同一条 banner 的 `.manual`（Ato 6406 §十二）。
+    @State private var banner: KazumiBannerState?
     /// 代理配置那一块展开没有。LP 5354：跟 Bangumi 同步里 Access Token 一样
     /// 折在原地，默认折着。
     @State private var isProxyConfigExpanded = false
@@ -1061,7 +1062,10 @@ struct NetworkSettingsScreen: View {
     /// （main 也是点按钮才存）。
     @State private var proxyAddressText = ""
     @State private var proxyTestText = ""
+    /// 地址那框的错话（格式不对、没填），落在框下面挂着，不自己收（Ato 6398 四）。
     @State private var proxyAddressError: String?
+    /// 上次测试的结果，走顶部提示条（Ato 6432 §十一），不落按钮那一行。
+    @FocusState private var proxyAddressFocused: Bool
     @State private var isProxyTesting = false
 
     var body: some View {
@@ -1100,25 +1104,30 @@ struct NetworkSettingsScreen: View {
                     proxyConfigRow
 
                     if isProxyConfigExpanded {
-                        // LP 5372 / 5384：左边标题，值靠左；提示跟在同一行里，
-                        // 跟在 http 右边，不再单独占一行（单独一行会把下面的行顶下去）。
-                        HStack(spacing: 8) {
+                        // LP 5372 / 5384：左边标题，值靠左。
+                        HStack(alignment: .top, spacing: 8) {
                             Text("代理地址")
                                 .frame(width: 72, alignment: .leading)
 
-                            // `http://` 就摆在框里（LP 5355），靠左；提示跟在它右边、
-                            // 同一行里，不单独占一行（LP 5384 / 5391）。
-                            TextField("请填入代理地址", text: $proxyAddressText)
-                                .multilineTextAlignment(.leading)
-                                .keyboardType(.URL)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
+                            // `http://` 就摆在框里（LP 5355），靠左。
+                            // 错话落在框下面（Ato 6390）：框占满宽度、不被挤；错话挂着
+                            // 不自己收（Colo 6389），改了地址或再按按钮才清。
+                            VStack(alignment: .leading, spacing: 4) {
+                                TextField("请填入代理地址", text: $proxyAddressText)
+                                    .multilineTextAlignment(.leading)
+                                    .keyboardType(.URL)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .focused($proxyAddressFocused)
+                                    .onChange(of: proxyAddressText) {
+                                        proxyAddressError = nil
+                                    }
 
-                            if let proxyAddressError {
-                                Text(proxyAddressError)
-                                    .font(.footnote)
-                                    .foregroundStyle(.red)
-                                    .layoutPriority(1)
+                                if let proxyAddressError {
+                                    Text(proxyAddressError)
+                                        .foregroundStyle(.red)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                         }
 
@@ -1133,27 +1142,23 @@ struct NetworkSettingsScreen: View {
                                 .autocorrectionDisabled()
                         }
 
-                        // LP 5370：测试钮也在折区里，跟两个框一起收，折着时只留那一行摘要。
+                        // 按钮回原版：满宽居中，行里什么都不放（Ato 6432 §十一）。
+                        // 进行中在按钮里转圈＋「正在测试…」＋禁用（Ato 6398 二）。
                         Button {
                             saveAndTestProxy()
                         } label: {
-                            Text("保存并测试")
-                                .font(.system(size: 15))
-                                .frame(maxWidth: .infinity)
+                            HStack(spacing: 6) {
+                                // 圈一直占着位，只换透明——三种状态下按钮宽度一格不动。
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .opacity(isProxyTesting ? 1 : 0)
+                                Text(isProxyTesting ? "正在测试…" : "保存并测试")
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(isProxyTesting)
-
-                        if isProxyTesting {
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text("测试中…")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                Spacer(minLength: 0)
-                            }
-                        }
                     }
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
@@ -1161,8 +1166,10 @@ struct NetworkSettingsScreen: View {
                 Text("代理")
             } footer: {
                 // LP 5083：把「到底用上没有」直接写出来，不然用户只能猜。
-                Text(proxyState)
-                    .foregroundStyle(.secondary)
+                if let proxyState {
+                    Text(proxyState)
+                        .foregroundStyle(.secondary)
+                }
             }
             // 折起来、摊开只换高度，别给高度加隐式动画——那一行位置没动，
             // 抖是动画抖的（WebDAV 那段同款）。
@@ -1170,16 +1177,25 @@ struct NetworkSettingsScreen: View {
         }
         .kazumiSettingsDetail("网络设置")
         .onAppear { prefillProxyFields() }
+        // 失焦时校验（Colo 6391 §十）：HIG 说的就是这个时机，不在打字途中报红。
+        .onChange(of: proxyAddressFocused) { _, focused in
+            if !focused { proxyAddressError = proxyAddressProblem }
+        }
+        // 错话是插进来的文字，焦点不会跟过去，得主动报一次（Colo 6391 §十）。
+        .onChange(of: proxyAddressError) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
         .overlay(alignment: .top) {
-            if let message {
-                Text(message)
-                    .font(.footnote)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.thinMaterial, in: Capsule())
-                    .padding(.top, 8)
+            if let banner {
+                KazumiBanner(
+                    title: banner.title,
+                    detail: banner.detail,
+                    mode: banner.mode,
+                    onDismiss: { withAnimation(.snappy) { self.banner = nil } }
+                )
             }
         }
+        .animation(.snappy, value: banner != nil)
     }
 
     private var bangumiAccelerationBinding: Binding<Bool> {
@@ -1210,19 +1226,18 @@ struct NetworkSettingsScreen: View {
         )
     }
 
-    /// 顶上那句提示，两秒后自己收起来。
+    /// 开关被拦下来那种瞬时确认：走同一条 banner 的 `.automatic`，3.5 秒自收。
+    /// 收法、播报、叉都由 KazumiBanner 自己管（Ato 6406 §十二）。
     private func flash(_ text: String) {
-        withAnimation { message = text }
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            withAnimation { message = nil }
+        withAnimation(.snappy) {
+            banner = KazumiBannerState(title: text, variant: .info, mode: .automatic)
         }
     }
 
-    /// 开关旁边那一句：现在到底走不走。
-    private var proxyState: String {
+    /// 开关旁边那一句：现在到底走不走。开关关着时不显示（LP 6367）。
+    private var proxyState: String? {
         guard settings.proxyEnabled else {
-            return "关闭时播放内核和 App 内请求都直连"
+            return nil
         }
         guard settings.proxyConfigured else {
             return "还没测试通过，先展开「代理配置」填地址并测试"
@@ -1290,11 +1305,9 @@ struct NetworkSettingsScreen: View {
         }
     }
 
-    /// 照 main 的 `saveAndTest`：校验 → 存地址与测试地址 → 清「已配置」→
-    /// 开开关 → 真发一次请求；通了才把「已配置」置回去，不通就把开关关回去。
-    private func saveAndTestProxy() {
+    /// 地址那框的错话：没填、或格式不对。失焦和按按钮都算这一份（Colo 6391 §十）。
+    private var proxyAddressProblem: String? {
         let typed = proxyAddressText.trimmingCharacters(in: .whitespacesAndNewlines)
-        proxyAddressError = nil
         // 框里默认摆着 `http://`（LP 5355），只留着这个壳时不该报「格式错误」
         // ——那会让人以为自己填错了，实际是还没填。
         var bare = typed
@@ -1302,34 +1315,49 @@ struct NetworkSettingsScreen: View {
             bare.removeFirst(prefix.count)
         }
         if bare.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            proxyAddressError = "请填入代理地址"
-            return
+            return "请填入代理地址"
         }
-        guard let url = ProxyURL.formatted(typed) else {
-            proxyAddressError = "格式错误，请使用 http://host:port 格式"
-            return
-        }
+        return ProxyURL.formatted(typed) == nil ? "格式错误，请使用 http://host:port 格式" : nil
+    }
+
+    /// 照 main 的 `saveAndTest`：校验 → 存地址与测试地址 → 清「已配置」→
+    /// 开开关 → 真发一次请求；通了才把「已配置」置回去，不通就把开关关回去。
+    private func saveAndTestProxy() {
+        let typed = proxyAddressText.trimmingCharacters(in: .whitespacesAndNewlines)
+        proxyAddressError = proxyAddressProblem
+        guard let url = ProxyURL.formatted(typed), proxyAddressError == nil else { return }
 
         let target = proxyTestText.trimmingCharacters(in: .whitespacesAndNewlines)
         let testURL = target.isEmpty ? "https://www.google.com" : target
 
-        settings.proxyUrl = url
-        settings.proxyTestUrl = testURL
-        settings.proxyConfigured = false
-        settings.proxyEnabled = true
-
+        // 进行中那一行只有按钮（Ato 6398 二）：结果走顶部提示条，测出来才弹。
         isProxyTesting = true
         Task { @MainActor in
             let ok = await ProxyURL.test(proxy: url, target: testURL)
             isProxyTesting = false
+            // Ato 6376：进行中只出现在按钮上，设置值等测出结果再落，
+            // 测试期间下面那行小字保持不变。
+            settings.proxyUrl = url
+            settings.proxyTestUrl = testURL
+            settings.proxyEnabled = true
             if ok {
                 settings.proxyConfigured = true
-                flash("测试成功")
+                withAnimation(.snappy) {
+                    banner = KazumiBannerState(
+                        title: "连接正常",
+                        variant: .success
+                    )
+                }
                 KazumiLogBuffer.network("代理测试通过 \(ProxyURL.formatted(url) ?? url)")
             } else {
                 settings.proxyConfigured = false
                 settings.proxyEnabled = false
-                flash("代理连接失败")
+                withAnimation(.snappy) {
+                    banner = KazumiBannerState(
+                        title: "连接失败",
+                        detail: "检查地址和端口，或确认代理软件已启动"
+                    )
+                }
                 KazumiLogBuffer.network("代理测试失败 \(ProxyURL.formatted(url) ?? url) -> \(testURL)")
             }
         }

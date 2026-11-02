@@ -110,6 +110,16 @@ enum KazumiPalette {
         return Color(red: 0.235, green: 0.235, blue: 0.263).opacity(0.22)
     }
 
+    /// 结果里「通了」那句用的绿（Colo 6401 §十一）。
+    ///
+    /// 系统绿 #34C759 在白底上对比度只有 2.2:1，正文要 4.5:1——「连接正常」会糊
+    /// 在白底上。浅色压深一档到 #1B7A3D（约 5.5:1），深色仍用系统绿 #30D158。
+    static func successText(for scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color(red: 0.188, green: 0.820, blue: 0.345)
+            : Color(red: 0.106, green: 0.478, blue: 0.239)
+    }
+
     /// 一张卡片的底：白底＋0.5 点淡描边（Colo 3483）。
     ///
     /// 页面底改白以后，卡片自己也是白的，靠这一个函数统一分边，免得到处写两份形状。

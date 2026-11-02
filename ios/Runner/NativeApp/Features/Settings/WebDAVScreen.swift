@@ -22,14 +22,16 @@ struct WebDAVScreen: View {
     @Environment(LibraryStore.self) private var library
     @Environment(\.colorScheme) private var colorScheme
 
-    /// 测试结果那句话：只有按过测试才显示，平时不占地方（LP 2026-10-28）。
-    @State private var statusMessage: String?
-    @State private var statusIsError = false
     @State private var isBusy = false
+    /// 「保存并测试」进行中。单独一个，不拿 isBusy——同步也占着它，
+    /// 共用会让同步时那颗按钮写着「正在测试…」（Ato 6376）。
+    @State private var isTesting = false
     @State private var isSyncing = false
     @State private var progress: SyncProgress?
     /// 同步失败留在弹窗里说。
     @State private var syncDialogFailure: String?
+    /// 顶部 banner（失败不自动收、开关被拦自动收）。
+    @State private var banner: KazumiBannerState?
     @State private var isCredentialsExpanded = false
 
     @AppStorage("webDavLastSyncAt") private var lastSyncAt: Double = 0
@@ -60,6 +62,17 @@ struct WebDAVScreen: View {
                 )
             }
         }
+        .overlay(alignment: .top) {
+            if let banner {
+                KazumiBanner(
+                    title: banner.title,
+                    detail: banner.detail,
+                    mode: banner.mode,
+                    onDismiss: { withAnimation(.snappy) { self.banner = nil } }
+                )
+            }
+        }
+        .animation(.snappy, value: banner != nil)
         .navigationTitle("多设备同步")
         .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)
@@ -70,7 +83,6 @@ struct WebDAVScreen: View {
             if settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 isCredentialsExpanded = true
             }
-            statusMessage = nil
         }
     }
 
@@ -134,32 +146,23 @@ struct WebDAVScreen: View {
                     .accessibilityLabel(isPasswordVisible ? "隐藏密码" : "显示密码")
                 }
 
-                // 按钮样式跟 Bangumi 那颗一模一样（LP 2026-10-28）：高 36、胶囊、15 号。
+                // 按钮回原版：满宽居中，行里什么都不放（Ato 6432 §十一）。
+                // 进行中在按钮里转圈＋「正在测试…」＋禁用（Ato 6398 二）。
                 Button {
                     Task { await saveAndTest() }
                 } label: {
-                    Text("保存并测试")
-                        .font(.system(size: 15))
-                        .frame(maxWidth: .infinity)
+                    HStack(spacing: 6) {
+                        // 圈一直占着位，只换透明——三种状态下按钮宽度一格不动。
+                        ProgressView()
+                            .controlSize(.small)
+                            .opacity(isTesting ? 1 : 0)
+                        Text(isTesting ? "正在测试…" : "保存并测试")
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isBusy || !hasCredentials)
-
-                // 只有按过测试才出现这一行，平时不占地方（LP 2026-10-28）。
-                if let statusMessage {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        if isBusy {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                        Text(statusMessage)
-                            .font(.footnote)
-                            .foregroundStyle(statusIsError ? Color.orange : Color.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
             }
         } header: {
             Text("连接你的云盘")
@@ -276,19 +279,23 @@ struct WebDAVScreen: View {
     private var resultSection: some View {
         Section {
             Group {
-                Text(lastSyncLine)
-                    .frame(minHeight: 24, alignment: .leading)
+                // Colo 6401 §十一：那两行条件性的成功摘要／失败原因并进一直在的
+                // 「上次同步」里——一个 VStack 就是一行，分组里不多顶一行出来。
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(lastSyncLine)
+                        .frame(minHeight: 24, alignment: .leading)
 
-                if !lastSyncError.isEmpty {
-                    Text(lastSyncError)
-                        .font(.footnote)
-                        .foregroundStyle(Color.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if !lastSyncSummary.isEmpty {
-                    Text(lastSyncSummary)
-                        .font(.footnote)
-                        .foregroundStyle(Color.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if !lastSyncError.isEmpty {
+                        Text(lastSyncError)
+                            .font(.footnote)
+                            .foregroundStyle(Color.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if !lastSyncSummary.isEmpty {
+                        Text(lastSyncSummary)
+                            .font(.footnote)
+                            .foregroundStyle(Color.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
@@ -379,7 +386,6 @@ struct WebDAVScreen: View {
         isSyncing = true
         progress = nil
         syncDialogFailure = nil
-        statusIsError = false
         defer {
             isBusy = false
             isSyncing = false
@@ -405,9 +411,6 @@ struct WebDAVScreen: View {
             // 进度条拉满，停 0.5 秒再收（Colo 2026-10-28）。
             progress = SyncProgress(text: outcome.summary, value: 1)
             try? await Task.sleep(nanoseconds: 500_000_000)
-            // 同步成了一次，那行「尚未连接」就该换成实话：连得上是刚验过的。
-            statusMessage = "连接正常"
-            statusIsError = false
         } else {
             lastSyncError = outcome.message
             lastSyncSummary = ""
@@ -433,16 +436,28 @@ struct WebDAVScreen: View {
     private func saveAndTest() async {
         settings.webDAVURL = settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines)
         isBusy = true
-        statusMessage = "正在测试…"
-        statusIsError = false
-        defer { isBusy = false }
+        isTesting = true
+        defer {
+            isBusy = false
+            isTesting = false
+        }
         do {
             try await WebDAVClient(settings: settings).ping()
-            statusMessage = "连接正常"
+            withAnimation(.snappy) {
+                banner = KazumiBannerState(title: "连接正常", variant: .success, mode: .automatic)
+            }
             KazumiLogBuffer.network("WebDAV 保存并测试：连接通过")
         } catch {
-            statusMessage = "连接失败：\(WebDAVSync.technicalText(error))"
-            statusIsError = true
+            // 失败走顶部 banner：一行说结论，一行说怎么办（Ato 6432 §十一/十二）。
+            let reason = WebDAVSync.friendlyText(error)
+            withAnimation(.snappy) {
+                banner = KazumiBannerState(
+                    title: "无法连接 WebDAV",
+                    detail: reason,
+                    variant: .failure,
+                    mode: .automatic
+                )
+            }
             KazumiLogBuffer.network("WebDAV 保存并测试失败：\(WebDAVSync.technicalText(error))")
         }
     }

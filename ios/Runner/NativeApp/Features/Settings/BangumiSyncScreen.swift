@@ -33,12 +33,14 @@ struct BangumiSyncScreen: View {
     @State private var isTokenExpanded = false
     @State private var action: Action?
     @State private var tokenError: String?
-    @State private var tokenStatus: String?
+    @FocusState private var tokenFocused: Bool
     @State private var message: String?
     @State private var failed = false
     @State private var progress: Double?
     /// 同步失败要留在弹窗里说，不能跟着页面滚走。
     @State private var syncDialogFailure: String?
+    /// 顶部 banner（验证不过不自动收）。
+    @State private var banner: KazumiBannerState?
 
     @AppStorage("bangumiLastSyncAt") private var lastSyncAt: Double = 0
     @AppStorage("bangumiLastSyncSummary") private var lastSyncSummary = ""
@@ -72,24 +74,37 @@ struct BangumiSyncScreen: View {
                 )
             }
         }
+        .overlay(alignment: .top) {
+            if let banner {
+                KazumiBanner(
+                    title: banner.title,
+                    detail: banner.detail,
+                    mode: banner.mode,
+                    onDismiss: { withAnimation(.snappy) { self.banner = nil } }
+                )
+            }
+        }
+        .animation(.snappy, value: banner != nil)
         .navigationTitle("追番同步")
         .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
-        .toolbar {
-            // 同步进行中不给返回：中途退出去，用户不知道那半截到底写没写进 Bangumi。
-            if busy {
-                ToolbarItem(placement: .topBarTrailing) {
-                    ProgressView()
-                }
-            }
-        }
         .interactiveDismissDisabled(busy)
         .onAppear {
             if tokenText.isEmpty { tokenText = savedToken }
             // 没存过令牌时才摊开：存过的折起来，眼睛不用再翻一遍那串字符。
             isTokenExpanded = savedToken.isEmpty
+        }
+        // 失焦时校验（Colo 6391 §十）：HIG 说的就是这个时机，不在打字途中报红。
+        .onChange(of: tokenFocused) { _, focused in
+            if !focused, tokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                tokenError = "请填写 Access Token"
+            }
+        }
+        // 错话是插进来的文字，焦点不会跟过去，得主动报一次（Colo 6391 §十）。
+        .onChange(of: tokenError) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
         }
     }
 
@@ -126,24 +141,34 @@ struct BangumiSyncScreen: View {
 
                 if isTokenExpanded {
                     // 框自己一行：这一行不加标签，上面那行已经是「Access Token」。
-                    HStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         // 框里那句照 main 的 labelText: 'Access Token' 带回来（LP「原来有就加回去」）：
                         // 空着的时候框里看得见字，不是只剩右边一只眼睛。
-                        Group {
-                            if isTokenVisible {
-                                TextField("Access Token", text: $tokenText)
-                            } else {
-                                SecureField("Access Token", text: $tokenText)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Group {
+                                if isTokenVisible {
+                                    TextField("Access Token", text: $tokenText)
+                                } else {
+                                    SecureField("Access Token", text: $tokenText)
+                                }
                             }
-                        }
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .disabled(busy)
-                        // 空的时候框会被挤成 0 宽，眼睛就掉到下一行去了。
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .onChange(of: tokenText) {
-                            tokenError = nil
-                            tokenStatus = nil
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .disabled(busy)
+                            // 空的时候框会被挤成 0 宽，眼睛就掉到下一行去了。
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .focused($tokenFocused)
+                            .onChange(of: tokenText) {
+                                tokenError = nil
+                            }
+
+                            // 字段级的错话只留「没填」；验证过没过是结果，走按钮那一行
+                            // （Ato 6398 四 / 三）。
+                            if let tokenError {
+                                Text(tokenError)
+                                    .foregroundStyle(.red)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
 
                         Button {
@@ -157,13 +182,15 @@ struct BangumiSyncScreen: View {
                         .accessibilityLabel(isTokenVisible ? "隐藏访问令牌" : "显示访问令牌")
                     }
 
-                    // 两颗按钮同一行、一样大：左「获取授权码」，右「保存并测试」。
+                    // 按钮回原版：两颗同一行、一样大、满宽居中，行里什么都不放（Ato 6432）。
+                    // 进行中在按钮里转圈＋「正在测试…」（Ato 6398 二）。
                     HStack(spacing: 12) {
                         Button {
                             openTokenPage()
                         } label: {
                             HStack(spacing: 4) {
                                 Text("获取授权码")
+                                    .lineLimit(1)
                                 Image(systemName: "arrow.up.right")
                                     .font(.system(size: 13, weight: .semibold))
                             }
@@ -176,8 +203,15 @@ struct BangumiSyncScreen: View {
                         Button {
                             saveToken()
                         } label: {
-                            Text(action == .verify ? "正在测试…" : "保存并测试")
-                                .frame(maxWidth: .infinity)
+                            HStack(spacing: 6) {
+                                // 圈一直占着位，只换透明——两种状态下按钮宽度一格不动。
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .opacity(action == .verify ? 1 : 0)
+                                Text(action == .verify ? "正在测试…" : "保存并测试")
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -189,9 +223,10 @@ struct BangumiSyncScreen: View {
         } header: {
             Text("Bangumi 账号")
         } footer: {
-            // 三种状态挤在一行：未连接 / 已连接 / 出错。红字留给破坏性操作，这里用橙。
-            Text(tokenError ?? tokenStatus ?? accountHint)
-                .foregroundStyle(tokenError == nil ? Color.secondary : Color.orange)
+            // 字段错误在框下面、结果在按钮那一行（Ato 6398），
+            // 这行只留「还没连的时候怎么弄」。
+            Text(accountHint)
+                .foregroundStyle(Color.secondary)
         }
     }
 
@@ -333,17 +368,31 @@ struct BangumiSyncScreen: View {
         }
         action = .verify
         tokenError = nil
-        tokenStatus = nil
         syncDialogFailure = nil
         Task {
             defer { action = nil }
             do {
                 try await engine.saveToken(trimmed)
                 tokenText = trimmed
-                isTokenExpanded = false
-                tokenStatus = "已连接 · \(engine.username)"
+                // 成功也走顶部 banner，几秒自收（Ato 6432）。
+                withAnimation(.snappy) {
+                    banner = KazumiBannerState(
+                        title: "已连接 · \(engine.username)",
+                        variant: .success,
+                        mode: .automatic
+                    )
+                }
             } catch {
-                tokenError = "\(BangumiSyncEngine.describeError(error))。修改未保存"
+                // 失败走顶部 banner：一行说结论，一行说怎么办。
+                let reason = BangumiSyncEngine.describeError(error)
+                withAnimation(.snappy) {
+                    banner = KazumiBannerState(
+                        title: "验证失败",
+                        detail: reason,
+                        variant: .failure,
+                        mode: .automatic
+                    )
+                }
             }
         }
     }
@@ -351,7 +400,16 @@ struct BangumiSyncScreen: View {
     private func openTokenPage() {
         guard let url = URL(string: "https://next.bgm.tv/demo/access-token") else { return }
         openURL(url) { accepted in
-            if !accepted { tokenError = "无法打开浏览器，请稍后重试" }
+            if !accepted {
+                withAnimation(.snappy) {
+                    banner = KazumiBannerState(
+                        title: "无法打开浏览器",
+                        detail: "请稍后重试",
+                        variant: .failure,
+                        mode: .automatic
+                    )
+                }
+            }
         }
     }
 
