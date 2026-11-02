@@ -180,7 +180,7 @@ struct SourceSheet: View {
         }
     }
 
-    private var sheetTitle: String { "选择播放源" }
+    private var sheetTitle: String { String(localized: "选择播放源") }
 
     // MARK: - 动作
 

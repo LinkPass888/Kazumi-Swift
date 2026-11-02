@@ -579,8 +579,8 @@ struct PopularHero: View {
     /// 三个名字全 App 统一（Camo 2950）：没记录「开始观看」、看了一半「继续观看」、
     /// 看完了「重新观看」——最后一档原来也叫「开始观看」，跟历史页的「重新观看」撞了。
     private var playTitle: String {
-        guard let id = current?.id, let record = library.record(for: id) else { return "开始观看" }
-        return record.isFinished ? "重新观看" : "继续观看"
+        guard let id = current?.id, let record = library.record(for: id) else { return String(localized: "开始观看") }
+        return record.isFinished ? String(localized: "重新观看") : String(localized: "继续观看")
     }
 
     /// 收藏圆钮：玻璃底 ＋ 一层轻投影（Colo 2864 / 2866），压在封面上也要托得出来。
@@ -669,7 +669,7 @@ struct PopularHero: View {
     /// 不压 tint、不加投影（LP 2897 / Colo 2898）：上一版为了让它透出封面压了一层
     /// 黑 tint，结果看着是两颗黑圆；发亮的根子在垫底那层材质上，已经在 `LiquidGlass`
     /// 里按系统版本分开了，这里不用再补任何颜色。
-    private func circleButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {
+    private func circleButton(symbol: String, label: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 // 跟时间表那颗统一到 40 正圆、图标 20（Colo 3061 的「统一 40」）。

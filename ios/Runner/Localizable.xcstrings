@@ -2913,6 +2913,17 @@
         }
       }
     },
+    "发现新版本 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "發現新版本 %@"
+          }
+        }
+      }
+    },
     "发送": {
       "localizations": {
         "zh-Hant": {
@@ -12720,6 +12731,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "選擇追番狀態"
+          }
+        }
+      }
+    },
+    "选播放源": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選播放源"
           }
         }
       }

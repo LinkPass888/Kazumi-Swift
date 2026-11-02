@@ -63,7 +63,7 @@ struct CaptchaSheet: View {
         switch flow.phase {
         case .completed: String(localized: "验证通过")
         case .cancelled: String(localized: "已取消验证")
-        default: "需要验证"
+        default: String(localized: "需要验证")
         }
     }
 
