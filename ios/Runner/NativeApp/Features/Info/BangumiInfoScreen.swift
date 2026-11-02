@@ -27,6 +27,8 @@ struct BangumiInfoScreen: View {
     @State private var isShowingSources = false
     @State private var selectedTab: InfoTab = .overview
     @State private var scrollOffset: CGFloat = 0
+    /// 浮起那颗「开始观看」的高度，量出来给正文底部留白用。
+    @State private var startPlayingButtonHeight: CGFloat = 0
     @State private var toastMessage: String?
     /// 添加到时间表但番剧还没标成在看时，先弹确认。
     @State private var pendingTimelineItem: BangumiItem?
@@ -47,6 +49,7 @@ struct BangumiInfoScreen: View {
     @Environment(AppRouter.self) private var router
     @Environment(SettingsStore.self) private var settings
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -97,9 +100,9 @@ struct BangumiInfoScreen: View {
                 .font(.system(size: 34, weight: .regular))
                 .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
             Text("详情没能加载")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.body.weight(.semibold))
             Text("网络好像不太顺，点一下重新加载。")
-                .font(.system(size: 14))
+                .font(.subheadline)
                 .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                 .multilineTextAlignment(.center)
             Button {
@@ -107,7 +110,7 @@ struct BangumiInfoScreen: View {
                 Task { await load() }
             } label: {
                 Text("重新加载")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                     .background(Capsule(style: .continuous).fill(KazumiPalette.accent(for: colorScheme)))
@@ -134,7 +137,7 @@ struct BangumiInfoScreen: View {
                             // 只在最后一小段行程里收掉，顶栏那份同一时间接上（见 titleRevealProgress），
                             // 避开两份标题同时半透明重叠的那几帧。
                             Text(controller.item.displayName)
-                                .font(.system(size: 28, weight: .bold))
+                                .font(.title.weight(.bold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,7 +156,7 @@ struct BangumiInfoScreen: View {
                         })
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 96)
+                    .padding(.bottom, contentBottomPadding)
                 }
                 .scrollIndicators(.hidden)
                 // 顶部渐进模糊：只作用顶部那一条，不叠材质、不加底色。
@@ -269,6 +272,20 @@ struct BangumiInfoScreen: View {
         return min(1, max(0, (scrollOffset - handoffStart) / travel))
     }
 
+    /// 正文底部留白：要够浮起那颗「开始观看」的高度加 12 点，
+    /// 标签云最后一行才能滚到按钮上方（Colo 6553）。
+    /// 默认字号按钮 44 高，算出来 78，仍取原来的 96，默认版面不变。
+    private var contentBottomPadding: CGFloat {
+        max(96, startPlayingButtonHeight + 34)
+    }
+
+    /// 顶栏底色的出现跟标题交接分开算：内容一往上走就起底。
+    /// 原来底色跟着交接进度走，而交接要等滚过 30 点；最大字号下标题比默认高很多，
+    /// 滚到 30 点前已经滑进顶栏里了，那一段就是字叠字（Fuck 6552 那条线索）。
+    private var topBarBackgroundOpacity: CGFloat {
+        min(1, max(0, scrollOffset / 6))
+    }
+
     private func topBar(_ controller: InfoController) -> some View {
         let progress = titleRevealProgress
         return HStack(spacing: 10) {
@@ -279,7 +296,7 @@ struct BangumiInfoScreen: View {
             // 中间那段弹性空间：标题在弹性宽度里居中，且始终占位，
             // 折叠与否都不影响两侧按钮的位置。
             Text(controller.item.displayName)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .multilineTextAlignment(.center)
@@ -319,6 +336,14 @@ struct BangumiInfoScreen: View {
         .padding(.trailing, KazumiGlassMetrics.barEdgeInset)
         .padding(.top, 4)
         .padding(.bottom, 8)
+        // Ato 6546：往下滚时正文从标题底下穿过去，字叠字。
+        // 内容一往上走就给顶栏铺一层页面底色；顶部不动时仍然没有背景条，
+        // Colo 原来那条设计不变。
+        .background {
+            KazumiPalette.background(for: colorScheme)
+                .opacity(topBarBackgroundOpacity)
+                .ignoresSafeArea(edges: .top)
+        }
     }
 
     /// 顶栏圆形玻璃按钮，尺寸与间距取自 KazumiGlassMetrics。
@@ -346,17 +371,48 @@ extension BangumiInfoScreen {
     /// 高 = 宽 / 0.65，hero 高 = 封面高 + 上下各 12 的 padding。长标题 / 短标题
     /// 都不会把 hero 撑高，背景模糊层也随之同尺寸。
     private func hero(_ controller: InfoController) -> some View {
+        let stacked = dynamicTypeSize.isAccessibilitySize
         let height = heroCoverHeight
-        return HStack(alignment: .top, spacing: 16) {
-            cover(controller.item)
-            infoColumn(controller, coverHeight: height)
+        return Group {
+            if stacked {
+                // Colo 6527：辅助功能字号下横向并排会把标签挤成一个字一行，
+                // 改成海报在上（整宽，高封顶屏高的 30%，超出裁成圆角）、信息列在下整宽。
+                VStack(alignment: .leading, spacing: 16) {
+                    let width = heroStackedCoverWidth
+                    BangumiRemoteImage(url: controller.item.largeImage)
+                        .frame(
+                            width: width,
+                            height: min(width / BangumiPosterCard.coverAspectRatio, heroStackedMaxCoverHeight)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    infoColumn(controller, coverHeight: 0)
+                }
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    cover(controller.item)
+                    infoColumn(controller, coverHeight: height)
+                }
+            }
         }
         .padding(12)
         // 同上：封面高是下限，不是上限；信息列长高了整块跟着长。
-        .frame(minHeight: height + 24, alignment: .top)
+        .frame(minHeight: stacked ? 0 : height + 24, alignment: .top)
         .background { backdrop(controller) }
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .contain)
+    }
+
+    /// 纵向排列时封面的宽度：卡片内整宽（行宽减去左右各 12 的内边距）。
+    private var heroStackedCoverWidth: CGFloat {
+        heroCoverWidth * 2 + 16
+    }
+
+    /// 纵向排列时封面的高度上限：屏高的 30%。
+    private var heroStackedMaxCoverHeight: CGFloat {
+        let screenHeight = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.screen.bounds.height ?? 844
+        return screenHeight * 0.3
     }
 
     /// 背景：同一张封面放大打模糊，再叠一层页面底色把它压成「磨砂」，
@@ -417,7 +473,7 @@ extension BangumiInfoScreen {
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                             Text(String(format: "%.1f", item.ratingScore))
-                                .font(.system(size: 18, weight: .bold))
+                                .font(.title3.weight(.bold))
                                 .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                             if item.votes > 0 {
                                 Text(String(localized: "(\(item.votes) 人)"))
@@ -462,7 +518,7 @@ extension BangumiInfoScreen {
                 // 具体时刻来自 bangumi-mal 的季度表，取不到就不显示。
                 if let time = controller.airTime {
                     Text(time)
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.title3.weight(.bold))
                         .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                 }
 
@@ -501,7 +557,7 @@ extension BangumiInfoScreen {
         } label: {
             HStack(spacing: 2) {
                 Text(weekdayTitle(current))
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.title3.weight(.bold))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 11, weight: .bold))
             }
@@ -532,7 +588,7 @@ extension BangumiInfoScreen {
                 Image(systemName: current.statusSymbol)
                     .font(.system(size: 12, weight: .semibold))
                 Text(current.buttonTitle)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
             }
@@ -555,7 +611,7 @@ extension BangumiInfoScreen {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 18, weight: .bold))
+                .font(.title3.weight(.bold))
                 .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -681,7 +737,7 @@ extension BangumiInfoScreen {
                 Image(systemName: "play.fill")
                     .font(.system(size: 15, weight: .semibold))
                 Text("开始观看")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
             }
             .foregroundStyle(KazumiPalette.onAccent(for: colorScheme))
             .padding(.horizontal, 18)
@@ -690,6 +746,11 @@ extension BangumiInfoScreen {
         }
         .buttonStyle(KazumiPressButtonStyle())
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            startPlayingButtonHeight = height
+        }
         .padding(.trailing, 18)
         .padding(.bottom, 22)
         .accessibilityLabel("开始观看")

@@ -19,6 +19,10 @@ struct RulesMirrorMenu: View {
     /// 延迟槽固定 56（Colo 6243：44 装不下「807 ms」，四位数要 52），跟字号一起放大。
     @ScaledMetric(relativeTo: .footnote) private var latencySlot: CGFloat = 56
 
+    /// 短名和箭头之间的间距。写死 6 点时最大字号下「gh-proxy」跟箭头粘成一个词
+    /// （Ato 6592，跟标签名和数字那条同源）；跟着字号放大就有空隙。
+    @ScaledMetric(relativeTo: .body) private var valueGap: CGFloat = 6
+
     @State private var isExpanded = false
     /// 四行整块淡入用：插入不动高度，只有这四行自己淡进来（Ato 6275）。
     @State private var rowsVisible = false
@@ -76,22 +80,28 @@ struct RulesMirrorMenu: View {
             toggle()
         } label: {
             HStack(spacing: 6) {
-                Text("规则仓库加速")
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 8)
-                Text(selected.shortTitle)
-                    .font(.body)
-                    .foregroundStyle(KazumiPalette.accent(for: colorScheme, theme: settings.themeColor))
-                // 收起那行只显短名和箭头，不显延迟（LP）。箭头固定 16 pt 槽，换符号不动布局。
-                // 这一行右侧整体一个色：短名和箭头都是主题色（Ato 6276）。
-                // 一颗原生单箭头：收起朝下、展开朝上，不缩不放（Ato 6306、LP 6310）。
-                // 槽固定 16 pt、箭头在槽里居中，位置不动。
-                // 不用 .symbolEffect(.replace)：它自带一下缩放，小图标看着像抖（Colo 6279）。
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.body)
-                    .foregroundStyle(KazumiPalette.accent(for: colorScheme, theme: settings.themeColor))
-                    .frame(width: 16)
+                // 大字号下标题和短名并排装不下，短名会从中间断开（「gh-」/「proxy」）。
+                // 装不下就上下排（Colo 6540），短名保持一整行。
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: valueGap) {
+                        Text("规则仓库加速")
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: 8)
+                        mirrorTitle
+                        chevron
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("规则仓库加速")
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                        HStack(spacing: valueGap) {
+                            mirrorTitle
+                            chevron
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding(.horizontal, hPad)
             .frame(minHeight: asListRows ? 0 : 44)
@@ -101,6 +111,26 @@ struct RulesMirrorMenu: View {
         .accessibilityLabel("规则仓库加速")
         .accessibilityValue(selected.shortTitle)
         .accessibilityHint("展开选择")
+    }
+
+    private var mirrorTitle: some View {
+        Text(selected.shortTitle)
+            .font(.body)
+            .foregroundStyle(KazumiPalette.accent(for: colorScheme, theme: settings.themeColor))
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    /// 收起那行只显短名和箭头，不显延迟（LP）。箭头固定 16 pt 槽，换符号不动布局。
+    /// 这一行右侧整体一个色：短名和箭头都是主题色（Ato 6276）。
+    /// 一颗原生单箭头：收起朝下、展开朝上，不缩不放（Ato 6306、LP 6310）。
+    /// 不用 .symbolEffect(.replace)：它自带一下缩放，小图标看着像抖（Colo 6279）。
+    private var chevron: some View {
+        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+            .font(.body)
+            .foregroundStyle(KazumiPalette.accent(for: colorScheme, theme: settings.themeColor))
+            // 箭头槽只保底 16 pt：大字号下箭头自己会变大，写死 16 会把字挤进左边
+            // 的间距里，短名和箭头又粘上（Ato 6592）。
+            .frame(minWidth: 16)
     }
 
     private func optionRow(_ mirror: RulesMirror) -> some View {
@@ -115,7 +145,7 @@ struct RulesMirrorMenu: View {
                     .font(.body)
                     .foregroundStyle(.primary)
                 Text(mirror.note)
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                 Spacer(minLength: 8)
                 HStack(spacing: 8) {
@@ -158,7 +188,7 @@ struct RulesMirrorMenu: View {
                 Text("")
             }
         }
-        .font(.system(size: 13, weight: .semibold))
+        .font(.footnote.weight(.semibold))
         .lineLimit(1)
         .frame(width: latencySlot, alignment: .trailing)
     }

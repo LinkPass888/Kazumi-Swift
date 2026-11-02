@@ -154,9 +154,15 @@ private struct PluginCatalogRow: View {
     let action: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 12) {
+        // 辅助功能字号下，尾部那颗按钮跟标题抢宽度，把「已安装」挤成一字一行。
+        // 改成上下：文字在上，按钮整行在下。默认字号不变。
+        let rowLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return rowLayout {
             Image(systemName: "globe.asia.australia")
                 .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(KazumiPalette.accent(for: colorScheme))
@@ -170,7 +176,7 @@ private struct PluginCatalogRow: View {
                 HStack(spacing: 8) {
                     Text(item.name)
                         .font(.headline)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     if item.antiCrawlerEnabled {
                         Label("验证", systemImage: "checkmark.shield")
                             .labelStyle(.iconOnly)
@@ -178,7 +184,10 @@ private struct PluginCatalogRow: View {
                             .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                     }
                 }
-                HStack(spacing: 10) {
+                let metaLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: 10))
+                metaLayout {
                     Text(item.author)
                     Label(item.version, systemImage: "tag")
                     if let updated = item.updatedDateText {
@@ -188,7 +197,9 @@ private struct PluginCatalogRow: View {
                 .font(.caption)
                 .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
             }
-            Spacer(minLength: 0)
+            if !dynamicTypeSize.isAccessibilitySize {
+                Spacer(minLength: 0)
+            }
             if isBusy {
                 ProgressView()
             } else {

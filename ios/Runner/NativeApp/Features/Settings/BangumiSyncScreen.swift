@@ -90,6 +90,7 @@ struct BangumiSyncScreen: View {
         .scrollContentBackground(.hidden)
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
+        .kazumiSettingsNavBacking()
         .interactiveDismissDisabled(busy)
         .onAppear {
             if tokenText.isEmpty { tokenText = savedToken }

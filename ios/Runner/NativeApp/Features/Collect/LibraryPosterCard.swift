@@ -125,7 +125,7 @@ struct LibraryPosterCard: View {
         // 每张都从海报左缘起，竖着扫下来是一条直线；居中反而长短不齐更乱。
         // 推荐页那条货架还是居中，两页不一样是有意的。
         Text(entry.displayName)
-            .font(.system(size: 12))
+            .font(.caption)
             .foregroundStyle(.primary)
             .lineLimit(2)
             .lineSpacing(1.3 * 12 - 12)

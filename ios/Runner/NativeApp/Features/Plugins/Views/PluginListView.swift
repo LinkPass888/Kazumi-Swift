@@ -13,6 +13,7 @@ struct PluginListView: View {
     @Environment(PluginsController.self) private var plugins
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var isShowingImportSheet = false
     @State private var isShowingShop = false
@@ -120,7 +121,7 @@ struct PluginListView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
-                    .frame(height: 48)
+                    .frame(minHeight: 48)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
 
                     Menu {
@@ -131,7 +132,7 @@ struct PluginListView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                     }
-                    .frame(height: 48)
+                    .frame(minHeight: 48)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
                 // Colo 3532：hero 底上的 List 行统一用 groupedRow 实面，不靠系统动态色。
@@ -140,12 +141,22 @@ struct PluginListView: View {
 
             // 添加规则下面一排三个胶囊：前两个筛列表，第三个是动作。
             Section {
-                HStack(spacing: 8) {
-                    ForEach(RuleFilter.allCases) { filter in
-                        filterCapsule(filter)
+                // Colo 6547：三颗一起放不进辅助功能字号（110+151+192+间距=469 > 370），
+                // 把「更新全部」这颗动作挪到筛选下面单独占一整行，整宽描边；
+                // 筛选两颗留在原行、不折行。默认字号三颗照旧并排。
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        ForEach(RuleFilter.allCases) { filter in
+                            filterCapsule(filter)
+                        }
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            Spacer(minLength: 8)
+                            updateAllCapsule(fullWidth: false)
+                        }
                     }
-                    Spacer(minLength: 8)
-                    updateAllCapsule
+                    if dynamicTypeSize.isAccessibilitySize {
+                        updateAllCapsule(fullWidth: true)
+                    }
                 }
                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 4, trailing: 16))
                 // Colo 3532：原来清成透明让 hero 底透出来，现改为 groupedRow 白面（深色 #1C1C1E）。
@@ -182,12 +193,10 @@ struct PluginListView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
         // 胶囊行上下不空：默认的 section 间距（约 35）压到 12，三行读成一组。
         .listSectionSpacing(.custom(12))
         // 行高 48：List 自己有个最小行高，把内容改成多少都压不下来，只能改那个下限。
         .environment(\.defaultMinListRowHeight, 48)
-        .scrollEdgeEffectStyle(.soft, for: .top)
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.heroBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("规则管理")
@@ -240,6 +249,16 @@ struct PluginListView: View {
         .onAppear {
             if plugins.pluginList.isEmpty { plugins.load() }
         }
+        // Ato 6591：滚起来时「規則倉庫」「新增規則」从标题底下透上来。
+        // 跟設定首頁、下載設定用同一个背板（系统材质），不再单独画一条。
+        // 必须挂在 `.toolbar` 之后：挂在前面时导航栏背板不生效，栏还是透明的。
+        // Ato 6610：背板后面过的是白卡上的粗黑字，半透明材质挡不住——
+        // 换多厚（.ultraThickMaterial）都还认得出「新增規則」。改用页顶那一档实色。
+        // 实色只在滚起来时才画，大标题态系统自己不给背板，所以不用跟着滚动状态切。
+        .toolbarBackground(
+            AnyShapeStyle(KazumiPalette.heroBackgroundTop(for: colorScheme)),
+            for: .navigationBar
+        )
     }
     // MARK: - 行
 
@@ -461,28 +480,37 @@ struct PluginListView: View {
     }
 
     /// 「更新全部」没有可更新的规则时是灰的、点不动（LP 2026-10-24）。
+    /// fullWidth：辅助功能字号下单独占一整行、整宽描边（Colo 6547）。
     private var hasUpdatableRules: Bool { plugins.updatablePluginCount > 0 }
 
-    private var updateAllCapsule: some View {
+    private func updateAllCapsule(fullWidth: Bool) -> some View {
         let isDisabled = isUpdating || !hasUpdatableRules
+        let tint = isDisabled
+            ? KazumiPalette.secondaryText(for: colorScheme)
+            : KazumiPalette.accent(for: colorScheme)
         return Button {
             Task { await checkForUpdates() }
         } label: {
             Text(isUpdating ? "正在更新…" : "更新全部")
                 .font(.subheadline.weight(.medium))
+                .frame(maxWidth: fullWidth ? .infinity : nil)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
-                .foregroundStyle(
-                    isDisabled
-                        ? KazumiPalette.secondaryText(for: colorScheme).opacity(0.55)
-                        : KazumiPalette.accent(for: colorScheme)
-                )
-                .background(
-                    (isDisabled
-                        ? KazumiPalette.secondaryText(for: colorScheme).opacity(0.06)
-                        : KazumiPalette.accent(for: colorScheme).opacity(0.12)),
-                    in: Capsule()
-                )
+                .foregroundStyle(isDisabled ? tint.opacity(0.55) : tint)
+                .background {
+                    // 描边画在同一个胶囊上：外面再套一圈会变成两圈。
+                    // 只有整宽那颗（辅助功能字号）描边，默认字号三颗并排时维持原样。
+                    Capsule()
+                        .fill(tint.opacity(isDisabled ? 0.06 : 0.12))
+                        .overlay {
+                            if fullWidth {
+                                Capsule().stroke(
+                                    tint.opacity(isDisabled ? 0.25 : 0.5),
+                                    lineWidth: 1
+                                )
+                            }
+                        }
+                }
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
@@ -611,6 +639,7 @@ private struct PluginRowView: View {
     let isSelected: Bool
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         HStack(spacing: 12) {
@@ -623,10 +652,16 @@ private struct PluginRowView: View {
                 HStack(spacing: 8) {
                     Text(plugin.name.isEmpty ? "未命名规则" : plugin.name)
                         .font(.headline)
-                        .lineLimit(1)
+                        // Ato 6546：名字不许省略号。默认仍是一行，大字号下换行。
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     badge
                 }
-                HStack(spacing: 10) {
+                // 版本号、搜索方式、验证三颗在最大字号下一排装不下，
+                // 版本号被挤成「.6」。辅助功能字号下改成竖排，每颗一行。
+                let metaLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: 10))
+                metaLayout {
                     Label(plugin.version.isEmpty ? "-" : plugin.version, systemImage: "tag")
                     Label(plugin.searchMode == .api ? "API" : "XPath", systemImage: plugin.searchMode == .api ? "curlybraces" : "chevron.left.forwardslash.chevron.right")
                     if plugin.antiCrawlerConfig.enabled {
@@ -638,7 +673,7 @@ private struct PluginRowView: View {
                 Text(plugin.baseUrl)
                     .font(.caption2)
                     .foregroundStyle(KazumiPalette.tertiaryText(for: colorScheme))
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
             }
             Spacer(minLength: 0)
         }

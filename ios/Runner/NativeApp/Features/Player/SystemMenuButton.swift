@@ -173,7 +173,7 @@ struct SystemMenuButton: View {
         if let title {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 15))
+                    .font(.subheadline)
                     .lineLimit(1)
                 if showsChevron {
                     Image(systemName: "chevron.down")

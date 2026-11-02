@@ -105,8 +105,11 @@ struct SearchFilterSheet: View {
                     .padding(.bottom, 16)
                 }
                 .scrollIndicators(.hidden)
-
-                bottomBar
+                // Colo 6527：操作栅用 safeAreaInset 占位，不跟滚动区并排也不叠上去。
+                // 这样滚动区自己知道底部被占了多少，最大字号下最后一行能滚上来、也滚得动。
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    bottomBar
+                }
             }
             .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
             .navigationTitle("筛选番剧")

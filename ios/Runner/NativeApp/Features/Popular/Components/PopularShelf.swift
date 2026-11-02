@@ -53,7 +53,7 @@ struct PopularShelf: View {
                     onMore(list)
                 } label: {
                     Text("更多")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                 }
                 .buttonStyle(.plain)
@@ -77,7 +77,7 @@ struct PopularShelf: View {
             } label: {
                 HStack(spacing: 4) {
                     Text(row.title)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(.primary)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 12, weight: .semibold))
@@ -90,7 +90,7 @@ struct PopularShelf: View {
             .accessibilityHint("选标签")
         } else {
             Text(row.title)
-                .font(.system(size: 20, weight: .semibold))
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(.primary)
                 .accessibilityAddTraits(.isHeader)
         }

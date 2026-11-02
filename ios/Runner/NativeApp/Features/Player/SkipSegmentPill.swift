@@ -258,7 +258,7 @@ struct SkipSegmentPillView: View {
                         .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(Self.foreground)
                     Text(String(localized: "即将跳过\(String(describing: kind.label))"))
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.footnote.weight(.bold))
                         .foregroundStyle(Self.foreground)
                     countdownRing
                 }
@@ -278,7 +278,7 @@ struct SkipSegmentPillView: View {
                         .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(Self.foreground)
                     Text("即将到结尾")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.footnote.weight(.bold))
                         .foregroundStyle(Self.foreground)
                     countdownRing
                 }
@@ -298,7 +298,7 @@ struct SkipSegmentPillView: View {
                         .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(Self.foreground)
                     Text(String(localized: "已跳过\(String(describing: kind.label))"))
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.footnote.weight(.bold))
                         .foregroundStyle(Self.foreground)
                 }
                 pillAction(String(localized: "撤销"), prominent: true) { model.undo() }
@@ -319,7 +319,7 @@ struct SkipSegmentPillView: View {
     ) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .bold))
+                .font(.footnote.weight(.bold))
                 .foregroundStyle(Self.foreground)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)

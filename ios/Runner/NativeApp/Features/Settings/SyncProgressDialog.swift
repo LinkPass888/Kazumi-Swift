@@ -42,18 +42,18 @@ struct SyncProgressDialog: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(title)
-                    .font(.system(size: 17, weight: .regular))
+                    .font(.body.weight(.regular))
                     .foregroundStyle(Color.primary)
 
                 Text(stage)
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(Color.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let failure {
                     Text(failure)
-                        .font(.system(size: 13))
+                        .font(.footnote)
                         .foregroundStyle(Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if value != nil {

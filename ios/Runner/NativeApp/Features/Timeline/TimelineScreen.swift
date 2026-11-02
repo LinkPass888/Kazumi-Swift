@@ -27,6 +27,7 @@ struct TimelineScreen: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// 当前打开着详情的番剧 id（从导航栈里读）。
     @State private var detailItemID: Int?
@@ -190,10 +191,12 @@ struct TimelineScreen: View {
             // 字号字重回大标题那档（34 半粗），菜单不变，点它还是弹放送季度。
             // 季度小字放在标题右边、同一行（LP 3081）：放到标题下面会把标题顶上去，
             // 而右上那颗按钮不会跟着动，两下就错位了。
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // Ato 6550：但最大字号下「新番」自己就占掉大半行，季度被挤成「2026 …」，
+            // 那比顶上去难看得多——辅助功能字号下改成上下排，季度独占一行。
+            let label = Group {
                 HStack(spacing: 4) {
                     Text("新番")
-                        .font(.system(size: 34, weight: .semibold))
+                        .font(.largeTitle.weight(.semibold))
                         .tracking(-0.4)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -204,9 +207,16 @@ struct TimelineScreen: View {
                 }
                 Text(controller.seasonLabel)
                     // 13 号、次要色（Colo 3061）。
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            }
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 2) { label }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) { label }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -392,12 +402,12 @@ struct TimelineScreen: View {
         let isSelected = day == selectedWeekday
         return VStack(spacing: 1) {
             Text(dayTitle(day))
-                .font(.system(size: 13, weight: .semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             Text(countText(day))
-                .font(.system(size: 11, weight: .medium))
+                .font(.caption2.weight(.medium))
                 .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                 .lineLimit(1)
         }

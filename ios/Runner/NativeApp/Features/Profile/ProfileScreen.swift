@@ -17,6 +17,7 @@ struct ProfileScreen: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         ScrollView {
@@ -75,11 +76,16 @@ struct ProfileScreen: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, 4)
 
-            HStack(spacing: 20) {
+            let stacked = dynamicTypeSize.isAccessibilitySize
+            let layout = stacked
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                : AnyLayout(HStackLayout(spacing: 20))
+            layout {
                 stat(value: "\(library.entries.count)", title: "看过番剧")
                 stat(value: "\(library.history.count)", title: "观看集数")
             }
-            .frame(height: 52)
+            // 写死的 52 高在辅助功能字号下会把名字截成「看…」，改成最小高、装不下自己长。
+            .frame(minHeight: 52)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(KazumiPalette.groupedRow(for: colorScheme))
@@ -91,11 +97,11 @@ struct ProfileScreen: View {
     private func stat(value: String, title: LocalizedStringKey) -> some View {
         HStack(spacing: 6) {
             Text(value)
-                .font(.system(size: 24, weight: .semibold))
+                .font(.system(.title2, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(KazumiPalette.accent(for: colorScheme))
             Text(title)
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -152,7 +158,7 @@ struct ProfileScreen: View {
     private var emptyHistoryNote: some View {
         HStack {
             Text("暂无观看历史")
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
@@ -214,19 +220,19 @@ struct ProfileScreen: View {
                 VStack(alignment: .leading, spacing: 0) {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(record.bangumiName)
-                            .font(.system(size: 15))
+                            .font(.subheadline)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
                         Text(episodeLine(for: record))
-                            .font(.system(size: 12))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .padding(.top, 2)
 
                         Text(statusText(for: record))
-                            .font(.system(size: 12))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .padding(.top, 2)

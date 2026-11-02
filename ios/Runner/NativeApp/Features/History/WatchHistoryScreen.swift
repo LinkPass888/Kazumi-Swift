@@ -94,7 +94,7 @@ struct WatchHistoryScreen: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(record.bangumiName)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.callout.weight(.bold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)

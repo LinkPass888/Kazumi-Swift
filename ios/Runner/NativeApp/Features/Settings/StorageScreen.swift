@@ -16,6 +16,7 @@ struct StorageScreen: View {
     @Environment(AppRouter.self) private var router
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var cacheBytes: Int?
     /// 离线下载占用与集数（设置页那颗红色清除按钮用）。
@@ -37,13 +38,7 @@ struct StorageScreen: View {
                     Button {
                         isConfirmingClear = true
                     } label: {
-                        HStack(spacing: 12) {
-                            Label("清除图片缓存", systemImage: "photo.on.rectangle.angled")
-                            Spacer()
-                            Text(cacheDescription)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                        labelValueRow("清除图片缓存", symbol: "photo.on.rectangle.angled", value: cacheDescription)
                     }
                     .disabled(isClearing)
                 }
@@ -60,14 +55,7 @@ struct StorageScreen: View {
                     Button(role: .destructive) {
                         isConfirmingClearOffline = true
                     } label: {
-                        HStack(spacing: 12) {
-                            Label("清除所有离线下载", systemImage: "trash")
-                                .foregroundStyle(.red)
-                            Spacer()
-                            Text(offlineDescription)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                        labelValueRow("清除所有离线下载", symbol: "trash", value: offlineDescription, tint: .red)
                     }
                     .disabled(offlineEpisodes == 0)
                 }
@@ -87,14 +75,7 @@ struct StorageScreen: View {
                         Button(role: .destructive) {
                             Task { await clearLegacy() }
                         } label: {
-                            HStack(spacing: 12) {
-                                Label("清除旧版本离线下载", systemImage: "trash")
-                                    .foregroundStyle(.red)
-                                Spacer()
-                                Text(formattedSize(legacyBytes))
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
+                            labelValueRow("清除旧版本离线下载", symbol: "trash", value: formattedSize(legacyBytes), tint: .red)
                         }
                         .disabled(isClearing)
                     }
@@ -108,13 +89,7 @@ struct StorageScreen: View {
 
             Section {
                 Group {
-                    HStack {
-                        Label("更新时间缓存", systemImage: "clock.arrow.circlepath")
-                        Spacer()
-                        Text(airTimeCacheDescription)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+                    labelValueRow("更新时间缓存", symbol: "clock.arrow.circlepath", value: airTimeCacheDescription)
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
             } header: {
@@ -158,6 +133,7 @@ struct StorageScreen: View {
         .scrollContentBackground(.hidden)
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
+        .kazumiSettingsNavBacking()
         .task { await refreshSize() }
         .confirmationDialog("清除图片缓存？", isPresented: $isConfirmingClear, titleVisibility: .visible) {
             Button("清除图片缓存", role: .destructive) {
@@ -178,6 +154,39 @@ struct StorageScreen: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("已经下好的视频文件和下载记录会一起删掉，不能恢复。")
+        }
+    }
+
+    /// 一行「图标＋标题」加右侧数值。大字号下两者并排装不下时上下排，
+    /// 标题占满一行、数值落到下一行——否则标题在半行宽里会被碎折成
+    /// 「清 / 除圖片 / 快取」，一个字占一行（Ato 6592）。
+    @ViewBuilder
+    private func labelValueRow(
+        _ title: LocalizedStringKey,
+        symbol: String,
+        value: String,
+        tint: Color? = nil
+    ) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                Label(title, systemImage: symbol)
+                    .foregroundStyle(tint ?? Color.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(value)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(spacing: 12) {
+                Label(title, systemImage: symbol)
+                    .foregroundStyle(tint ?? Color.primary)
+                Spacer()
+                Text(value)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

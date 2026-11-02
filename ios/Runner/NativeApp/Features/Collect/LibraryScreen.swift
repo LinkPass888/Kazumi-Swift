@@ -166,7 +166,7 @@ struct LibraryScreen: View {
     private var header: some View {
         HStack(alignment: .center) {
             Text("追番")
-                .font(.system(size: 34, weight: .semibold))
+                .font(.largeTitle.weight(.semibold))
 
             Spacer(minLength: 0)
         }
@@ -818,7 +818,7 @@ private struct LibraryEntryCard: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text(entry.displayName)
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.callout.weight(.bold))
                             .foregroundStyle(.primary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
@@ -828,13 +828,13 @@ private struct LibraryEntryCard: View {
                                 Image(systemName: "star.fill")
                                     .font(.system(size: 11, weight: .semibold))
                                 Text(String(format: "%.1f", entry.rating))
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(.caption.weight(.bold))
                             }
                             .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                         }
 
                         Text(entry.collectType.title)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)

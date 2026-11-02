@@ -126,9 +126,9 @@ struct AboutScreen: View {
             .padding(.bottom, 32)
         }
         // 顶部滚动边缘：渐进模糊（.soft）。
-        .scrollEdgeEffectStyle(.soft, for: .top)
         // Colo 3532：二级页统一用分组页底（显式按 colorScheme 取色）。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
+        .kazumiSettingsNavBacking()
         .navigationTitle("关于")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -142,25 +142,29 @@ struct AboutScreen: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: symbol)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(KazumiPalette.accent(for: colorScheme))
-                    .frame(width: 28)
-                Text(title)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 4)
-                if isBusy {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+            // 大字号下标题和右侧状态并排装不下，状态被截成「檢查…」「看每…」。
+            // 装不下就上下排（Colo 6540），状态保持完整。
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    symbolIcon(symbol)
+                    Text(title)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 4)
+                    detailView(detail, isBusy: isBusy, singleLine: true)
+                }
+                HStack(alignment: .top, spacing: 12) {
+                    symbolIcon(symbol)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                        detailView(detail, isBusy: isBusy, singleLine: false)
+                    }
+                    Spacer(minLength: 0)
+                    if !isBusy {
+                        chevronIcon
+                    }
                 }
             }
             .padding(.horizontal, 14)
@@ -173,6 +177,38 @@ struct AboutScreen: View {
         }
         .buttonStyle(.plain)
         .disabled(isBusy)
+    }
+
+    private func symbolIcon(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+            .frame(width: 28)
+            .fixedSize()
+    }
+
+    @ViewBuilder
+    private func detailView(_ detail: LocalizedStringKey, isBusy: Bool, singleLine: Bool) -> some View {
+        if isBusy {
+            ProgressView().controlSize(.small)
+        } else {
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(singleLine ? 1 : nil)
+                .multilineTextAlignment(singleLine ? .trailing : .leading)
+                .fixedSize(horizontal: !singleLine, vertical: true)
+            if singleLine {
+                chevronIcon
+            }
+        }
+    }
+
+    private var chevronIcon: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .fixedSize()
     }
 
     private var updateDetail: LocalizedStringKey {

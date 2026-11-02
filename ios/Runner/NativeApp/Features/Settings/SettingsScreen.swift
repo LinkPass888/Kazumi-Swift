@@ -191,18 +191,31 @@ struct SettingsScreen: View {
                 NavigationLink {
                     KazumiIntentDebugView()
                 } label: {
-                    Label("快捷指令验证", systemImage: "command")
+                    // Ato 6591：这行原来用 Label，字换行时行高只按一行算，
+                    // 第二行落到卡片外、被圆角切开。改成跟本屏其他行一样的
+                    // 「定宽图标＋可伸缩文字」，量出来的高度就跟着换行走。
+                    HStack(spacing: 12) {
+                        Image(systemName: "command")
+                            // 图标字号跟本屏其他行一样钉在 18：不钉的话它跟着字号长，
+                            // 撑出 30 点的图标槽，看着跟标题粘在一起。
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+                            .frame(width: 30)
+                        Text("快捷指令验证")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
                 }
                 .accessibilityIdentifier("debug-intents")
             }
             #endif
         }
         // 顶部滚动边缘：列表顶部用渐进模糊（.soft）。
-        .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
+        .kazumiSettingsNavBacking()
     }
 
     // MARK: - 分类行

@@ -62,7 +62,7 @@ struct RuleLoginScreen: View {
             }
             .safeAreaInset(edge: .bottom) {
                 Text(footer)
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(Color.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20)

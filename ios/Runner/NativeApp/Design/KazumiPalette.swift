@@ -157,11 +157,17 @@ enum KazumiPalette {
         return .white
     }
 
+    /// hero 底顶部那一档颜色。导航栏要一块不透明的底、又不能跟页顶撞色时用它
+    /// （Ato 6610：材质的半透明挡不住白卡上的粗黑字）。
+    static func heroBackgroundTop(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(white: 0.12) : Color(red: 0.96, green: 0.96, blue: 0.97)
+    }
+
     static func heroBackground(for scheme: ColorScheme) -> LinearGradient {
         // 浅色的收口色跟着页面底走（LP 3482 起是纯白），否则渐变的尽头
         // 跟页面底差一点点，会在页面下部留一道看得见的接缝。
         let base = scheme == .dark ? Color(white: 0.05) : .white
-        let elevated = scheme == .dark ? Color(white: 0.12) : Color(red: 0.96, green: 0.96, blue: 0.97)
+        let elevated = heroBackgroundTop(for: scheme)
         return LinearGradient(
             colors: [elevated, base],
             startPoint: .top,

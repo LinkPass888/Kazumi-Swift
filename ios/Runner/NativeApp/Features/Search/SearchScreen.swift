@@ -25,8 +25,12 @@ struct SearchScreen: View {
     @State private var notShowAbandoned = UserDefaults.standard.bool(forKey: "kazumi.settings.searchNotShowAbandoned")
     @FocusState private var isInputFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(AppRouter.self) private var router
     @Environment(LibraryStore.self) private var library
+    /// 最近搜索每颗胶囊的最小宽度跟着字号长：写死 96 点时最大字号下
+    /// 「轻小说改」被挤成一列，只能截成「轻…」（Ato 6571）。
+    @ScaledMetric(relativeTo: .footnote) private var recentChipMinWidth: CGFloat = 96
 
     private var hasSearched: Bool { submittedQuery != nil }
 
@@ -147,6 +151,8 @@ struct SearchScreen: View {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 28)
+                        // 大字号下标题要满宽，图标会被挤成一条竖缝——钉住不让压缩。
+                        .fixedSize()
                     VStack(alignment: .leading, spacing: 2) {
                         Text("按条件查找")
                             .font(.body)
@@ -159,6 +165,7 @@ struct SearchScreen: View {
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
+                        .fixedSize()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -190,7 +197,7 @@ struct SearchScreen: View {
                 .padding(.horizontal, 20)
 
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 96), spacing: 8)],
+                    columns: [GridItem(.adaptive(minimum: recentChipMinWidth), spacing: 8)],
                     alignment: .leading,
                     spacing: 8
                 ) {
@@ -203,7 +210,8 @@ struct SearchScreen: View {
                         } label: {
                             Text(readable(keyword))
                                 .font(.footnote)
-                                .lineLimit(1)
+                                // 搜过的词不截：装不下就折行，胶囊自己长高（Ato 6571）。
+                                .multilineTextAlignment(.center)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
                                 .frame(maxWidth: .infinity)
@@ -243,43 +251,70 @@ struct SearchScreen: View {
         // LP 3068：「搜索结果」右边只放搜到多少部，条件串本身不在这儿重复一遍
         // （它就在上面搜索框里，能直接改）。
         return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Text("搜索结果")
-                    .font(.headline)
-                Text(countText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.leading, 4)
-                Spacer(minLength: 8)
-                if !state.isIdSearch {
-                    sortMenu(current: state.sort)
-                        .padding(.trailing, 4)
+            // 辅助功能字号下「搜索结果」加结果数就把一行占满，排序和筛选按钮被挤，
+            // 结果数被截成「11…」、排序名竖成一字一行（Ato 6561）。
+            // 大字号下拆两行：第一行标题加结果数，第二行排序和筛选。
+            if dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: 4) {
+                    Text("搜索结果")
+                        .font(.headline)
+                    Text(countText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 4)
                 }
-                Button {
-                    isShowingFilters = true
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .frame(width: 44, height: 44)
-                        .overlay(alignment: .topTrailing) {
-                            if state.hasAdvancedFilters {
-                                Circle()
-                                    .fill(KazumiPalette.accent(for: colorScheme))
-                                    .frame(width: 7, height: 7)
-                                    .padding(.top, 8)
-                                    .padding(.trailing, 8)
-                            }
-                        }
+                HStack(spacing: 4) {
+                    Spacer(minLength: 8)
+                    sortControl(state)
+                    filterButton(state)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("筛选番剧")
+            } else {
+                HStack(spacing: 4) {
+                    Text("搜索结果")
+                        .font(.headline)
+                    Text(countText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.leading, 4)
+                    Spacer(minLength: 8)
+                    sortControl(state)
+                    filterButton(state)
+                }
             }
-
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    private func sortControl(_ state: SearchFilterState) -> some View {
+        if !state.isIdSearch {
+            sortMenu(current: state.sort)
+                .padding(.trailing, 4)
+        }
+    }
+
+    private func filterButton(_ state: SearchFilterState) -> some View {
+        Button {
+            isShowingFilters = true
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .overlay(alignment: .topTrailing) {
+                    if state.hasAdvancedFilters {
+                        Circle()
+                            .fill(KazumiPalette.accent(for: colorScheme))
+                            .frame(width: 7, height: 7)
+                            .padding(.top, 8)
+                            .padding(.trailing, 8)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("筛选番剧")
     }
 
     /// 结果数那行：搜索中 / 共几部 / 被隐藏了几部（与 main 同一句）。
@@ -314,7 +349,7 @@ struct SearchScreen: View {
             // 跟别的菜单长一个样，让人看得出这是能点的。
             HStack(spacing: 4) {
                 Text(SearchFilterState.sortLabel(current))
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.subheadline.weight(.medium))
                 // 尖角 17 半粗，跟时间表标题那颗一档（Colo 3085）。
                 Image(systemName: "chevron.down")
                     .font(.system(size: 17, weight: .semibold))
@@ -373,6 +408,8 @@ struct SearchScreen: View {
 
     /// 列数按可用宽算（Colo 3053）：max(2, floor(可用宽 / 180))，402 屏是 2 列。
     /// 列间距 12、行间距 20；卡宽 =(可用宽 −(列数−1)×12)/列数，402 屏是 179。
+    /// Ato 6561：辅助功能字号下两列装不下评分和年份（「3.1 202 5」就是这么断的），
+    /// 改成一列。
     private var availableWidth: CGFloat {
         let width = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
@@ -381,7 +418,8 @@ struct SearchScreen: View {
     }
 
     private var columnCount: Int {
-        max(2, Int(floor(availableWidth / 180)))
+        if dynamicTypeSize.isAccessibilitySize { return 1 }
+        return max(2, Int(floor(availableWidth / 180)))
     }
 
     private var cardWidth: CGFloat {

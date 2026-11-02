@@ -391,7 +391,7 @@ struct PopularHero: View {
         .overlay(alignment: .top) {
             if let toastMessage {
                 Text(toastMessage)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.footnote.weight(.medium))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -511,7 +511,7 @@ struct PopularHero: View {
             // 文字压在上面也不会把按钮的点击吃掉。
             VStack(spacing: 0) {
                 Text(current?.displayName ?? "")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.title2.weight(.bold))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
@@ -519,7 +519,7 @@ struct PopularHero: View {
 
                 if let meta = current?.metaLine {
                     Text(meta)
-                        .font(.system(size: 13))
+                        .font(.footnote)
                         .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                         .padding(.top, 6)
                 }
@@ -556,7 +556,7 @@ struct PopularHero: View {
                     .padding(.trailing, 16)
             }
         }
-        .frame(height: 40)
+        .frame(minHeight: 40)
     }
 
     private var playButton: some View {
@@ -565,10 +565,14 @@ struct PopularHero: View {
             openSources(poster)
         } label: {
             Label(playTitle, systemImage: "play.fill")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 22)
-                .frame(height: 40)
+                .padding(.vertical, 10)
+                .frame(minHeight: 40)
                 .background(Capsule().fill(KazumiPalette.accent(for: colorScheme)))
         }
         .buttonStyle(.plain)
@@ -636,7 +640,7 @@ struct PopularHero: View {
             // LP 3044：首页几页大标题都收成两个字，这页就是「推荐」。
             // 原来挂在标题上的「热门番组」标签菜单挪到了下面第一行货架（见 PopularScreen）。
             Text("推荐")
-                .font(.system(size: 34, weight: .semibold))
+                .font(.largeTitle.weight(.semibold))
                 // 34 半粗、字距 −0.4（Colo 3032）。
                 .tracking(-0.4)
                 // 压在封面上的字得有一层才读得清（Colo 2864）：就这一层，别更重。

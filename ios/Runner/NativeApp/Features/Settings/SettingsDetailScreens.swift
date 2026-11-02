@@ -36,6 +36,35 @@ private struct KazumiSettingsDetailStyle: ViewModifier {
             // 条目色原本不另外给——Form 的分组行本来就是白／#1C1C1E，跟规格同值。
             // Colo 3532：改为各 Section 显式给 groupedRow，不再依赖系统动态行色。
             .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
+            // 上面 scrollContentBackground(.hidden) 把 Form 的底也拿掉了，导航栏的背板
+            // 跟着没了：滚动时正文会从标题底下透出来（Ato 6558 / 6579）。
+            .kazumiSettingsNavBacking()
+    }
+}
+
+/// 导航栏背板（Ato 6579）。顶部大标题态用系统默认材质，标题不被糊；
+/// 滚起来换 `.bar`——系统导航栏自己那层底，不是自绘实底。
+/// 原来用的 regularMaterial 太透：正文从底下透上来还是读得出成句（Ato 6591 的規則管理）。
+struct KazumiSettingsNavBacking: ViewModifier {
+    @State private var scrolled = false
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y > 4
+            } action: { _, newValue in
+                scrolled = newValue
+            }
+            .toolbarBackground(
+                scrolled ? AnyShapeStyle(.bar) : AnyShapeStyle(Color.clear),
+                for: .navigationBar
+            )
+    }
+}
+
+extension View {
+    func kazumiSettingsNavBacking() -> some View {
+        modifier(KazumiSettingsNavBacking())
     }
 }
 
@@ -588,15 +617,28 @@ struct DownloadSettingsScreen: View {
                     Button {
                         chooseDirectory()
                     } label: {
-                        HStack {
-                            Text("下载位置")
-                                .foregroundStyle(.primary)
-                            Spacer(minLength: 8)
-                            Text(downloadDirectory.displayName)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.trailing)
-                                // 路径折两行、右对齐；不用中间省略号——路径截了中间等于没写（Camo 5304）。
-                                .lineLimit(2)
+                        // 大字号下「下载位置」和路径并排装不下，路径被截成
+                        // 「我的 iPhone >…」——路径截了等于没写（Camo 5304）。
+                        // 装不下就上下排（Colo 6540）。
+                        ViewThatFits(in: .horizontal) {
+                            HStack {
+                                Text("下载位置")
+                                    .foregroundStyle(.primary)
+                                Spacer(minLength: 8)
+                                Text(downloadDirectory.displayName)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.trailing)
+                                    // 路径折两行、右对齐；不用中间省略号——路径截了中间等于没写（Camo 5304）。
+                                    .lineLimit(2)
+                            }
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("下载位置")
+                                    .foregroundStyle(.primary)
+                                Text(downloadDirectory.displayName)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     if downloadDirectory.hasCustomSelection {

@@ -75,13 +75,13 @@ struct KazumiBanner: View {
                 // 标题和说明按目录查一次：固定的那几句能翻成繁体，
                 // 网络错误原文这类动态文本查不到就原样显示。
                 Text(LocalizedStringKey(title))
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 if let detail, !detail.isEmpty {
                     Text(LocalizedStringKey(detail))
-                        .font(.system(size: 13))
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)

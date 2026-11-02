@@ -188,7 +188,7 @@ extension InfoOverviewPanel {
         Button {
             router.push(.search(keyword: tag.name))
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 0) {
                 Text(tag.name)
                     .foregroundStyle(.primary)
                     // 文字一个都不许少：正常仍是单行（布局按理想宽度给它），
@@ -196,7 +196,11 @@ extension InfoOverviewPanel {
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                 if tag.count > 0 {
-                    Text("\(tag.count)")
+                    // Ato 6591：名字和数字之间原来靠 HStack 固定的 4pt 间距，
+                    // 不随字号长——拉丁字母结尾没有汉字那种字身留白，最大字号下
+                    // 看着粘成一个词（「Production.I.G1,228」）。改用真正的空格，
+                    // 宽度跟字体一起放大，中文名的观感不变。
+                    Text(verbatim: " \(tag.count)")
                         .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                 }
             }
@@ -268,7 +272,9 @@ private struct TagFlowLayout: Layout {
                 x += spacing
             }
             x += width
-            rowHeight = max(rowHeight, ideal.height)
+            // 按给的宽度量高度：单颗长到两行时行高要跟着长，否则整块报的高度偏矮，
+            // 下一行会压上来（Ato 6569）。跟共用的 KazumiFlowLayout 同一算法。
+            rowHeight = max(rowHeight, sub.sizeThatFits(ProposedViewSize(width: width, height: nil)).height)
         }
         widest = max(widest, x)
         return CGSize(width: proposal.width ?? widest, height: y + rowHeight)

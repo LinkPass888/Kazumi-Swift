@@ -1131,7 +1131,7 @@ struct PlayerScreen: View {
             if let superResolutionHUD {
                 hudAtQuarter {
                     Text(superResolutionHUD)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
@@ -2498,7 +2498,7 @@ struct PlayerScreen: View {
     private func infoRow(_ row: (title: String, value: String)) -> some View {
         HStack(spacing: 16) {
             Text(row.title)
-                .font(.system(size: 13))
+                .font(.footnote)
                 .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
             Spacer(minLength: 12)
             Text(row.value)
@@ -2527,7 +2527,7 @@ struct PlayerScreen: View {
         } label: {
             HStack(spacing: 16) {
                 Text("媒体地址")
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                 Spacer(minLength: 12)
                 Text(mediaURLCopied ? "已复制" : (urlString ?? "—"))
@@ -3208,7 +3208,7 @@ struct PlayerScreen: View {
                 sendDanmaku()
             } label: {
                 Text("发送")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(canSendDanmaku ? .white : .white.opacity(0.45))
                     .padding(.horizontal, 6)
                     .frame(height: 33)
@@ -3292,7 +3292,7 @@ struct PlayerScreen: View {
     /// 拖动时浮在轨道上方的那条目标时间：跟其他时间同一个格式，松手就收。
     private var scrubTimeBubble: some View {
         Text(timeText(scrubValue))
-            .font(.system(size: 12, weight: .semibold))
+            .font(.caption.weight(.semibold))
             .monospacedDigit()
             .foregroundStyle(.black)
             .padding(.horizontal, 8)
@@ -3710,7 +3710,7 @@ struct PlayerScreen: View {
     /// 长按加速的浮层：顶部正中一颗胶囊，写当前倍数。
     private var temporarySpeedCapsule: some View {
         Text(PlaybackSpeed.label(Double(surface.desiredRate)))
-            .font(.system(size: 13, weight: .semibold))
+            .font(.footnote.weight(.semibold))
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .frame(height: 28)
@@ -4206,7 +4206,7 @@ struct PlayerScreen: View {
                 startSelectedDownloads(controller)
             } label: {
                 Text(downloadSelection.isEmpty ? "下载" : String(localized: "下载 \(String(describing: downloadSelection.count)) 集"))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .frame(height: 32)
@@ -4286,7 +4286,7 @@ struct PlayerScreen: View {
                 Spacer(minLength: 8)
                 // 中：只读条数文案
                 Text(commentTotal == 0 ? "还没有人评论" : String(localized: "共 \(String(describing: commentTotal)) 条评论"))
-                    .font(.system(size: 13))
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .contentTransition(.numericText())

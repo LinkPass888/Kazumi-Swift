@@ -17,6 +17,21 @@ struct PopularPosterTile: View {
 
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// 辅助功能字号下：卡片宽取屏宽四成，海报跟着按比例长（不缩，Colo 6540 第二条），
+    /// 标题区不再写死 34 高。默认字号仍然是 96×144 两行，规格不动。
+    private var isAccessibilitySize: Bool { dynamicTypeSize.isAccessibilitySize }
+    private var tileWidth: CGFloat {
+        guard isAccessibilitySize else { return Self.width }
+        let screenWidth = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.screen.bounds.width ?? 390
+        return screenWidth * 0.4
+    }
+    private var posterHeight: CGFloat {
+        tileWidth / (Self.width / Self.height)
+    }
 
     /// 规格 §3 的固定尺寸：宽屏也不放大，货架靠「露出更多张」传达还有内容。
     static let width: CGFloat = 96
@@ -36,20 +51,24 @@ struct PopularPosterTile: View {
         } label: {
             VStack(spacing: 6) {
                 BangumiRemoteImage(url: poster.imageURL)
-                    .frame(width: Self.width, height: Self.height)
+                    .frame(width: tileWidth, height: posterHeight)
                     .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
 
                 Text(poster.displayName)
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .lineSpacing(1.3 * 12 - 12)
                     // Colo 3501 §三：海报下面那行是**名字**，不是说明——用户靠它认片。
                     // 原来用次要色，等于把名字降成了附注；改主色（深色下自动变白）。
                     .foregroundStyle(.primary)
-                    .lineLimit(2)
+                    // Ato 6539：最大字号下只剩一个字、或者出省略号，都是缺陷。
+                    // 辅助功能字号下不限行数，名字有多长就多高。
+                    .lineLimit(isAccessibilitySize ? nil : 2)
                     .multilineTextAlignment(.center)
-                    .frame(width: Self.width, height: Self.titleHeight, alignment: .top)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: tileWidth, alignment: .top)
+                    .frame(minHeight: Self.titleHeight, alignment: .top)
             }
-            .frame(width: Self.width)
+            .frame(width: tileWidth)
         }
         .buttonStyle(.plain)
         .kazumiZoomSource(id: poster.id, namespace: zoomNamespace)
