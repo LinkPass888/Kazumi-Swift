@@ -397,13 +397,13 @@ extension BangumiInfoScreen {
         let item = controller.item
         return VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
-                infoLine(label: "放送开始", value: item.airDate.isEmpty ? "未知" : item.airDateText)
+                infoLine(label: String(localized: "放送开始"), value: item.airDate.isEmpty ? "未知" : item.airDateText)
 
                 broadcastRow(controller)
 
                 // 更新进度：紧跟在「放送时间」之后。
                 if let progress = updateProgress(controller) {
-                    infoLine(label: "更新进度", value: progress)
+                    infoLine(label: String(localized: "更新进度"), value: progress)
                 }
 
                 // 评分行跟着设置里那颗「显示评分」走（LP 2026-10-25）。
@@ -420,7 +420,7 @@ extension BangumiInfoScreen {
                                 .font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                             if item.votes > 0 {
-                                Text("(\(item.votes) 人)")
+                                Text(String(localized: "(\(item.votes) 人)"))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -545,7 +545,7 @@ extension BangumiInfoScreen {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("追番状态：\(current.buttonTitle)")
+        .accessibilityLabel(String(localized: "追番状态：\(current.buttonTitle)"))
     }
 
     /// 「标签: 值」一行。值用强调色加粗，与原版一致。
@@ -818,11 +818,11 @@ extension BangumiInfoScreen {
                 type: type
             )
             guard pushed else {
-                toastMessage = "同步到 Bangumi 失败，已取消本次状态修改"
+                toastMessage = String(localized: "同步到 Bangumi 失败，已取消本次状态修改")
                 return
             }
             applyCollect(controller, type)
-            if showToast { toastMessage = "已同步到 Bangumi" }
+            if showToast { toastMessage = String(localized: "已同步到 Bangumi") }
         }
     }
 
@@ -892,7 +892,7 @@ extension BangumiInfoScreen {
                 for: controller.item.id,
                 weekday: currentWeekday(controller)
             )
-            toastMessage = "已从时间表移除"
+            toastMessage = String(localized: "已从时间表移除")
             return
         }
         if currentType(controller) != .watching {
@@ -909,7 +909,7 @@ extension BangumiInfoScreen {
             for: controller.item.id,
             weekday: currentWeekday(controller)
         )
-        toastMessage = "已添加到时间表"
+        toastMessage = String(localized: "已添加到时间表")
     }
 
     /// 确认「标记为在看并添加」后：先写收藏，再添加到时间表。
@@ -938,12 +938,12 @@ extension BangumiInfoScreen {
             weekday: TimelineWeekdayCache.weekday(of: item.id)
                 ?? TimelineColumn.weekday(bangumiWeekday: item.airWeekday, airTimeOf: item.id)
         )
-        toastMessage = "已标记为在看，并添加到时间表"
+        toastMessage = String(localized: "已标记为在看，并添加到时间表")
     }
 
     /// 星期序号（1 = 周一 ... 7 = 周日）的中文标题。
     private func weekdayTitle(_ weekday: Int) -> String {
-        let titles = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        let titles = [String(localized: "周一"), String(localized: "周二"), String(localized: "周三"), String(localized: "周四"), String(localized: "周五"), String(localized: "周六"), String(localized: "周日")]
         return titles[max(1, min(7, weekday)) - 1]
     }
 }
@@ -953,13 +953,13 @@ extension BangumiInfoScreen {
 extension BangumiInfoScreen {
     private func copyTitle(_ controller: InfoController) {
         UIPasteboard.general.string = controller.item.displayName
-        toastMessage = "标题已复制"
+        toastMessage = String(localized: "标题已复制")
     }
 
     private func saveCover(_ controller: InfoController) {
         let urlString = controller.item.largeImage
         guard !urlString.isEmpty, let url = Self.imageURL(from: urlString) else {
-            toastMessage = "暂无封面"
+            toastMessage = String(localized: "暂无封面")
             return
         }
         Task { @MainActor in
@@ -971,10 +971,10 @@ extension BangumiInfoScreen {
                 if let failure = await PlayerScreenshot.save(png: data) {
                     toastMessage = failure
                 } else {
-                    toastMessage = "已保存到相册"
+                    toastMessage = String(localized: "已保存到相册")
                 }
             } catch {
-                toastMessage = "封面保存失败，请重试"
+                toastMessage = String(localized: "封面保存失败，请重试")
             }
         }
     }

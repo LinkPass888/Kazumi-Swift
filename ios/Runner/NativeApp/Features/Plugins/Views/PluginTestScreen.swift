@@ -119,7 +119,7 @@ struct PluginTestScreen: View {
             Text("选集测试会使用第一条搜索结果。")
                 .font(.caption)
                 .foregroundStyle(KazumiPalette.tertiaryText(for: colorScheme))
-            EditorTextField(title: "测试关键词", text: $keyword, prompt: "例如 孤独摇滚")
+            EditorTextField(title: String(localized: "测试关键词"), text: $keyword, prompt: String(localized: "例如 孤独摇滚"))
             HStack {
                 Spacer()
                 Button {
@@ -163,7 +163,7 @@ struct PluginTestScreen: View {
         stepCard(
             id: "search",
             number: 1,
-            title: "搜索请求",
+            title: String(localized: "搜索请求"),
             subtitle: searchRequestSubtitle,
             done: !searchRaw.isEmpty
         ) {
@@ -176,10 +176,10 @@ struct PluginTestScreen: View {
         stepCard(
             id: "parse",
             number: 2,
-            title: "结果解析",
+            title: String(localized: "结果解析"),
             subtitle: hasSearchData
-                ? "解析出 \(searchResponse?.data.count ?? 0) 个条目"
-                : "还没有可展示的解析结果",
+                ? String(localized: "解析出 \(searchResponse?.data.count ?? 0) 个条目")
+                : String(localized: "还没有可展示的解析结果"),
             done: hasSearchData
         ) {
             if hasSearchData, let items = searchResponse?.data {
@@ -212,7 +212,7 @@ struct PluginTestScreen: View {
         stepCard(
             id: "chapter",
             number: 3,
-            title: "播放线路",
+            title: String(localized: "播放线路"),
             subtitle: chapterSubtitle,
             done: !chapters.isEmpty
         ) {
@@ -224,9 +224,9 @@ struct PluginTestScreen: View {
                 rawPanel(chapterRaw, isJSON: plugin?.chapterMode == .api)
                 ForEach(Array(chapters.enumerated()), id: \.offset) { index, road in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("播放线路 \(index + 1)：\(road.name)")
+                        Text(String(localized: "播放线路 \(index + 1)：\(road.name)"))
                             .font(.footnote.weight(.semibold))
-                        Text("剧集数量：\(road.data.count)")
+                        Text(String(localized: "剧集数量：\(road.data.count)"))
                             .font(.caption2)
                             .foregroundStyle(KazumiPalette.tertiaryText(for: colorScheme))
                         ForEach(Array(road.identifier.enumerated()), id: \.offset) { itemIndex, name in
@@ -251,17 +251,17 @@ struct PluginTestScreen: View {
     }
 
     private var searchRequestSubtitle: String {
-        if isTesting && searchRaw.isEmpty { return "正在请求…" }
-        if searchRaw.isEmpty { return "还没有发出请求" }
-        return "已收到响应（\(searchRaw.count) 个字符）"
+        if isTesting && searchRaw.isEmpty { return String(localized: "正在请求…") }
+        if searchRaw.isEmpty { return String(localized: "还没有发出请求") }
+        return String(localized: "已收到响应（\(searchRaw.count) 个字符）")
     }
 
     private var chapterSubtitle: String {
         if !needsChapterParse { return "未填写选集规则" }
-        if isTesting && chapters.isEmpty { return "正在获取…" }
-        if chapters.isEmpty { return "还没有取到线路" }
-        let skipped = chapterDiagnostics.isEmpty ? "" : "，跳过 \(chapterDiagnostics.count) 条"
-        return "获取到 \(chapters.count) 个播放线路\(skipped)"
+        if isTesting && chapters.isEmpty { return String(localized: "正在获取…") }
+        if chapters.isEmpty { return String(localized: "还没有取到线路") }
+        let skipped = chapterDiagnostics.isEmpty ? "" : String(localized: "，跳过 \(chapterDiagnostics.count) 条")
+        return String(localized: "获取到 \(chapters.count) 个播放线路\(skipped)")
     }
 
     // MARK: - 卡片骨架
@@ -350,7 +350,7 @@ struct PluginTestScreen: View {
     private func diagnostics(_ items: [String]) -> some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
-                Text("跳过的节点（\(items.count)）")
+                Text(String(localized: "跳过的节点（\(items.count)）"))
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                 ForEach(Array(items.prefix(6).enumerated()), id: \.offset) { _, item in
@@ -384,7 +384,7 @@ struct PluginTestScreen: View {
         guard let plugin else { return }
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            errorMessage = "请输入一个番剧名称作为测试关键词。"
+            errorMessage = String(localized: "请输入一个番剧名称作为测试关键词。")
             return
         }
         reset()

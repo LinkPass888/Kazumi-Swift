@@ -28,26 +28,26 @@ enum BangumiSyncPriority: Int, CaseIterable, Identifiable, Sendable {
     /// 进度里用的短名，对应原版 `priority.label`。
     var label: String {
         switch self {
-        case .localFirst: "本地优先"
-        case .bangumiFirst: "Bangumi优先"
-        case .timeFirst: "最新优先"
+        case .localFirst: String(localized: "本地优先")
+        case .bangumiFirst: String(localized: "Bangumi优先")
+        case .timeFirst: String(localized: "最新优先")
         }
     }
 
     /// 「同步偏好」里单选项的标题，逐字照抄 bangumi_sync_page.dart。
     var optionTitle: String {
         switch self {
-        case .localFirst: "以本机为准"
-        case .bangumiFirst: "以 Bangumi 为准"
-        case .timeFirst: "保留最近更新"
+        case .localFirst: String(localized: "以本机为准")
+        case .bangumiFirst: String(localized: "以 Bangumi 为准")
+        case .timeFirst: String(localized: "保留最近更新")
         }
     }
 
     var optionDetail: String {
         switch self {
-        case .localFirst: "用本机状态更新 Bangumi"
-        case .bangumiFirst: "用 Bangumi 状态更新本机"
-        case .timeFirst: "比较两边的更新时间"
+        case .localFirst: String(localized: "用本机状态更新 Bangumi")
+        case .bangumiFirst: String(localized: "用 Bangumi 状态更新本机")
+        case .timeFirst: String(localized: "比较两边的更新时间")
         }
     }
 
@@ -186,7 +186,7 @@ final class BangumiSyncEngine {
         if !initialized { await ping() }
         if let lastError { throw BangumiSyncError.failed(lastError) }
 
-        onProgress("开始同步 Bangumi 状态", 0, 0)
+        onProgress(String(localized: "开始同步 Bangumi 状态"), 0, 0)
         let remote = try await BangumiAPI.remoteCollections(username: username) { message, current, total in
             // 拉取进度要回主线程再报：页面直接改 @State。
             Task { @MainActor in onProgress(message, current, total) }
@@ -198,13 +198,13 @@ final class BangumiSyncEngine {
         )
         let total = plan.totalOperations
         if total == 0 {
-            onProgress("未发现状态差异，无需同步", 1, 1)
+            onProgress(String(localized: "未发现状态差异，无需同步"), 1, 1)
             return
         }
 
         var done = 0
         if !plan.localOnlyUploads.isEmpty {
-            onProgress("正在上传本地新增状态", done, total)
+            onProgress(String(localized: "正在上传本地新增状态"), done, total)
             for upload in plan.localOnlyUploads {
                 let ok = await BangumiAPI.updateCollection(
                     subjectID: upload.subjectID,
@@ -212,19 +212,19 @@ final class BangumiSyncEngine {
                 )
                 guard ok else { throw BangumiSyncError.uploadFailed(upload.subjectID) }
                 done += 1
-                onProgress("正在上传本地新增状态", done, total)
+                onProgress(String(localized: "正在上传本地新增状态"), done, total)
             }
         }
         if !plan.remoteOnlyPuts.isEmpty {
-            onProgress("正在补全本地缺失状态", done, total)
+            onProgress(String(localized: "正在补全本地缺失状态"), done, total)
             for put in plan.remoteOnlyPuts {
                 apply(put)
                 done += 1
-                onProgress("正在补全本地缺失状态", done, total)
+                onProgress(String(localized: "正在补全本地缺失状态"), done, total)
             }
         }
         if !plan.conflictUploads.isEmpty {
-            onProgress("\(priority.label)：正在上传冲突状态", done, total)
+            onProgress(String(localized: "\(priority.label)：正在上传冲突状态"), done, total)
             for upload in plan.conflictUploads {
                 let ok = await BangumiAPI.updateCollection(
                     subjectID: upload.subjectID,
@@ -232,18 +232,18 @@ final class BangumiSyncEngine {
                 )
                 guard ok else { throw BangumiSyncError.uploadFailed(upload.subjectID) }
                 done += 1
-                onProgress("\(priority.label)：正在上传冲突状态", done, total)
+                onProgress(String(localized: "\(priority.label)：正在上传冲突状态"), done, total)
             }
         }
         if !plan.conflictLocalUpdates.isEmpty {
-            onProgress("\(priority.label)：正在更新本地冲突状态", done, total)
+            onProgress(String(localized: "\(priority.label)：正在更新本地冲突状态"), done, total)
             for put in plan.conflictLocalUpdates {
                 apply(put)
                 done += 1
-                onProgress("\(priority.label)：正在更新本地冲突状态", done, total)
+                onProgress(String(localized: "\(priority.label)：正在更新本地冲突状态"), done, total)
             }
         }
-        onProgress("Bangumi 状态同步完成", 1, 1)
+        onProgress(String(localized: "Bangumi 状态同步完成"), 1, 1)
     }
 
     /// 改了一条追番状态之后把这一条推上去（对应 syncCollectibleWhenIdle）。
@@ -387,37 +387,37 @@ final class BangumiSyncEngine {
     nonisolated static func describeError(_ error: Error) -> String {
         switch error {
         case BangumiSyncError.emptyToken:
-            return "请先在 Bangumi 配置中填写并保存 Access Token"
+            return String(localized: "请先在 Bangumi 配置中填写并保存 Access Token")
         case BangumiSyncError.incompleteUser:
-            return "Bangumi 用户信息不完整"
+            return String(localized: "Bangumi 用户信息不完整")
         case BangumiSyncError.rejected:
-            return "Access Token 无效或已过期，请在 Bangumi 配置中更换 Token"
+            return String(localized: "Access Token 无效或已过期，请在 Bangumi 配置中更换 Token")
         case let BangumiSyncError.unreachable(message):
             return message
         case BangumiSyncError.syncDisabled:
-            return "请先开启 Bangumi 同步"
+            return String(localized: "请先开启 Bangumi 同步")
         case let BangumiSyncError.uploadFailed(id):
-            return "同步失败：条目 \(id) 上传到 Bangumi 失败"
+            return String(localized: "同步失败：条目 \(id) 上传到 Bangumi 失败")
         case let BangumiSyncError.failed(message):
             return message
         case let error as NetworkError:
             if case let .badResponse(status, _, _) = error {
                 switch status {
                 case 401:
-                    return "Access Token 无效或已过期，请在 Bangumi 配置中更换 Token"
+                    return String(localized: "Access Token 无效或已过期，请在 Bangumi 配置中更换 Token")
                 case 403:
-                    return "Bangumi 拒绝访问，请检查 Token 权限或稍后重试"
+                    return String(localized: "Bangumi 拒绝访问，请检查 Token 权限或稍后重试")
                 case 429:
-                    return "Bangumi 请求过于频繁，请稍后重试"
+                    return String(localized: "Bangumi 请求过于频繁，请稍后重试")
                 default:
-                    return "Bangumi 服务请求失败（HTTP \(status)），请稍后重试"
+                    return String(localized: "Bangumi 服务请求失败（HTTP \(status)），请稍后重试")
                 }
             }
             return error.localizedDescription
         case let error as DecodingError:
-            return "Bangumi 返回的数据格式异常：\(error.localizedDescription)"
+            return String(localized: "Bangumi 返回的数据格式异常：\(error.localizedDescription)")
         default:
-            return "Bangumi 操作失败，请稍后重试"
+            return String(localized: "Bangumi 操作失败，请稍后重试")
         }
     }
 }

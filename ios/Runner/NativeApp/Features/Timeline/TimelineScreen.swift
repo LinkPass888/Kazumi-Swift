@@ -37,7 +37,7 @@ struct TimelineScreen: View {
     /// 这些卡片返回时不登记缩放转场源：卡片已经换了位置，硬套放大接不上。
     @State private var zoomSuppressedIDs: Set<Int> = []
 
-    private static let weekdayTitles = ["一", "二", "三", "四", "五", "六", "日"]
+    private static let weekdayTitles = [String(localized: "一"), String(localized: "二"), String(localized: "三"), String(localized: "四"), String(localized: "五"), String(localized: "六"), String(localized: "日")]
 
     /// ISO 星期是 1...7（周一...周日），这里换成 0 基下标。
     private static var todayIndex: Int {
@@ -211,7 +211,7 @@ struct TimelineScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("新番，切换放送季度，当前 \(controller.seasonLabel)")
+        .accessibilityLabel(String(localized: "新番，切换放送季度，当前 \(controller.seasonLabel)"))
     }
 
     /// 右上角：排序与筛选。LP 2631/2632/2637：去掉排序名，只留符号，玻璃底留着。
@@ -239,8 +239,8 @@ struct TimelineScreen: View {
         .accessibilityLabel("排序与筛选")
         .accessibilityValue(
             hasFilters
-                ? "\(controller.sort.title)，已启用 \(filterCount) 项筛选"
-                : "\(controller.sort.title)，未启用筛选"
+                ? String(localized: "\(controller.sort.title)，已启用 \(filterCount) 项筛选")
+                : String(localized: "\(controller.sort.title)，未启用筛选")
         )
     }
 
@@ -405,18 +405,18 @@ struct TimelineScreen: View {
         .frame(height: Self.weekdayTrackHeight)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(spokenDayTitle(day))，\(countText(day)) 部")
+        .accessibilityLabel(String(localized: "\(spokenDayTitle(day))，\(countText(day)) 部"))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { selectWeekday(day) }
     }
 
     private func dayTitle(_ day: Int) -> String {
-        isTodayColumn(day) ? "今天" : "周\(Self.weekdayTitles[day])"
+        isTodayColumn(day) ? String(localized: "今天") : String(localized: "周\(Self.weekdayTitles[day])")
     }
 
     /// 读屏念全称：「星期三」「今天」。
     private func spokenDayTitle(_ day: Int) -> String {
-        isTodayColumn(day) ? "今天" : "星期\(Self.weekdayTitles[day])"
+        isTodayColumn(day) ? String(localized: "今天") : String(localized: "星期\(Self.weekdayTitles[day])")
     }
 
     private func isTodayColumn(_ day: Int) -> Bool {
@@ -622,7 +622,7 @@ struct TimelineScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("正在查看 \(controller.seasonLabel)")
+                    Text(String(localized: "正在查看 \(controller.seasonLabel)"))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 16)
@@ -673,7 +673,7 @@ struct TimelineScreen: View {
         return Button {
             selectSeason(date)
         } label: {
-            Text("\(AnimeSeason.seasonString(month: month))季")
+            Text(String(localized: "\(AnimeSeason.seasonString(month: month))季"))
                 .font(.subheadline.weight(selected ? .bold : .medium))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)

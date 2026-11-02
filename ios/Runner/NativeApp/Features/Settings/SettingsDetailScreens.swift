@@ -507,7 +507,7 @@ struct DanmakuSettingsScreen: View {
 
     /// 「标题 + 当前值 + 滑杆」一行。
     private func sliderRow(
-        title: String,
+        title: LocalizedStringKey,
         value: String,
         binding: Binding<Double>,
         range: ClosedRange<Double>,
@@ -808,7 +808,7 @@ struct NotificationSettingsScreen: View {
         }
     }
 
-    private var permissionLabel: String {
+    private var permissionLabel: LocalizedStringKey {
         switch permission {
         case .authorized, .provisional, .ephemeral: "已允许"
         case .denied: "已关闭"
@@ -817,7 +817,7 @@ struct NotificationSettingsScreen: View {
         }
     }
 
-    private var permissionCaption: String {
+    private var permissionCaption: LocalizedStringKey {
         switch permission {
         case .authorized, .provisional, .ephemeral:
             "更新提醒会以系统通知送达。"
@@ -830,7 +830,7 @@ struct NotificationSettingsScreen: View {
         }
     }
 
-    private var scheduledSummary: String {
+    private var scheduledSummary: LocalizedStringKey {
         if !settings.updateNotificationEnabled { return "提醒已关闭" }
         return "查看已排定的更新提醒"
     }
@@ -1237,7 +1237,7 @@ struct NetworkSettingsScreen: View {
     }
 
     /// 开关旁边那一句：现在到底走不走。开关关着时不显示（LP 6367）。
-    private var proxyState: String? {
+    private var proxyState: LocalizedStringKey? {
         guard settings.proxyEnabled else {
             return nil
         }

@@ -72,13 +72,15 @@ struct KazumiBanner: View {
                 .symbolEffect(.bounce, value: appeared)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                // 标题和说明按目录查一次：固定的那几句能翻成繁体，
+                // 网络错误原文这类动态文本查不到就原样显示。
+                Text(LocalizedStringKey(title))
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 if let detail, !detail.isEmpty {
-                    Text(detail)
+                    Text(LocalizedStringKey(detail))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)

@@ -79,41 +79,41 @@ struct AboutScreen: View {
                 }
 
                 VStack(spacing: 8) {
-                    linkRow("项目主页", url: KazumiAppInfo.projectURL)
-                    linkRow("源码仓库", url: KazumiAppInfo.sourceURL)
-                    linkRow("问题反馈", url: KazumiAppInfo.issuesURL)
-                    linkRow("贡献指南", url: KazumiAppInfo.contributingURL)
+                    linkRow(String(localized: "项目主页"), url: KazumiAppInfo.projectURL)
+                    linkRow(String(localized: "源码仓库"), url: KazumiAppInfo.sourceURL)
+                    linkRow(String(localized: "问题反馈"), url: KazumiAppInfo.issuesURL)
+                    linkRow(String(localized: "贡献指南"), url: KazumiAppInfo.contributingURL)
                     NavigationLink {
                         ThirdPartyLicensesScreen()
                     } label: {
                         licensesRow("第三方许可证")
                     }
-                    linkRow("Telegram 频道", url: KazumiAppInfo.telegramURL)
-                    linkRow("图标作者", url: KazumiAppInfo.iconAuthorURL)
+                    linkRow(String(localized: "Telegram 频道"), url: KazumiAppInfo.telegramURL)
+                    linkRow(String(localized: "图标作者"), url: KazumiAppInfo.iconAuthorURL)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("致谢 · 数据来源")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    linkRow("Bangumi 番组计划", url: KazumiAppInfo.bangumiIndexURL)
+                    linkRow(String(localized: "Bangumi 番组计划"), url: KazumiAppInfo.bangumiIndexURL)
                     linkRow("bangumi-data（CC BY 4.0）", url: KazumiAppInfo.bangumiDataIndexURL)
-                    linkRow("bangumi-mal 映射表", url: KazumiAppInfo.bangumiMALIndexURL)
+                    linkRow(String(localized: "bangumi-mal 映射表"), url: KazumiAppInfo.bangumiMALIndexURL)
                     linkRow("BangumiExtLinker（CC BY 4.0）", url: KazumiAppInfo.bangumiExtLinkerURL)
-                    linkRow("AniSkip 片头片尾数据", url: KazumiAppInfo.aniSkipIndexURL)
-                    linkRow("AniList 放送时刻", url: KazumiAppInfo.aniListIndexURL)
-                    linkRow("弹弹play 弹幕", url: KazumiAppInfo.dandanIndexURL)
-                    linkRow("trace.moe 以图搜番", url: KazumiAppInfo.traceMoeURL)
+                    linkRow(String(localized: "AniSkip 片头片尾数据"), url: KazumiAppInfo.aniSkipIndexURL)
+                    linkRow(String(localized: "AniList 放送时刻"), url: KazumiAppInfo.aniListIndexURL)
+                    linkRow(String(localized: "弹弹play 弹幕"), url: KazumiAppInfo.dandanIndexURL)
+                    linkRow(String(localized: "trace.moe 以图搜番"), url: KazumiAppInfo.traceMoeURL)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("致谢 · 开源项目")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    linkRow("mpv / MPVKit（播放内核）", url: KazumiAppInfo.mpvKitURL)
-                    linkRow("Anime4K（超分辨率着色器）", url: KazumiAppInfo.anime4KURL)
-                    linkRow("Fuzi（XPath 解析）", url: KazumiAppInfo.fuziURL)
-                    linkRow("GPL-3.0 许可证", url: KazumiAppInfo.licenseURL)
+                    linkRow(String(localized: "mpv / MPVKit（播放内核）"), url: KazumiAppInfo.mpvKitURL)
+                    linkRow(String(localized: "Anime4K（超分辨率着色器）"), url: KazumiAppInfo.anime4KURL)
+                    linkRow(String(localized: "Fuzi（XPath 解析）"), url: KazumiAppInfo.fuziURL)
+                    linkRow(String(localized: "GPL-3.0 许可证"), url: KazumiAppInfo.licenseURL)
                 }
 
                 Text("本应用与上述数据提供方无隶属关系，番剧信息与评论版权归原作者所有。")
@@ -200,14 +200,14 @@ struct AboutScreen: View {
             request.timeoutInterval = 15
             let (data, response) = try await KazumiNetworkPolicy.requestSession.session.data(for: request)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                updateState = .failed("网络异常")
+                updateState = .failed(String(localized: "网络异常"))
                 return
             }
             let json = try JSONValue.decode(data)
             let tag = json["tag_name"].stringValue ?? ""
             let remote = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
             if remote.isEmpty {
-                updateState = .failed("无法解析版本")
+                updateState = .failed(String(localized: "无法解析版本"))
                 return
             }
             if VersionCompare.needUpdate(local: KazumiAppInfo.version, remote: remote) {

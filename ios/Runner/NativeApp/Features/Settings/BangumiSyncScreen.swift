@@ -99,7 +99,7 @@ struct BangumiSyncScreen: View {
         // 失焦时校验（Colo 6391 §十）：HIG 说的就是这个时机，不在打字途中报红。
         .onChange(of: tokenFocused) { _, focused in
             if !focused, tokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                tokenError = "请填写 Access Token"
+                tokenError = String(localized: "请填写 Access Token")
             }
         }
         // 错话是插进来的文字，焦点不会跟过去，得主动报一次（Colo 6391 §十）。
@@ -234,16 +234,16 @@ struct BangumiSyncScreen: View {
     private var tokenSummary: String {
         // 用户名存下来就一直显示（LP 5429），只有真没登录过才说「已保存」。
         if engine.initialized || engine.hasSavedAccount { return engine.username }
-        if configured { return "已保存" }
-        return "未填写"
+        if configured { return String(localized: "已保存") }
+        return String(localized: "未填写")
     }
 
     private var accountHint: String {
-        if engine.initialized { return "已连接 · \(engine.username)" }
+        if engine.initialized { return String(localized: "已连接 · \(engine.username)") }
         // 重启后还没验证过，但用户名存着：照账号显示，不说「尚未验证」（LP 5429）。
-        if engine.hasSavedAccount { return "已登录 · \(engine.username)" }
-        if configured { return "令牌已保存，尚未验证" }
-        return "使用 Access Token 授权，令牌只存在本机"
+        if engine.hasSavedAccount { return String(localized: "已登录 · \(engine.username)") }
+        if configured { return String(localized: "令牌已保存，尚未验证") }
+        return String(localized: "使用 Access Token 授权，令牌只存在本机")
     }
 
     // MARK: - 段二 同步
@@ -308,17 +308,17 @@ struct BangumiSyncScreen: View {
     }
 
     private var progressText: String {
-        message ?? "正在连接 Bangumi…"
+        message ?? String(localized: "正在连接 Bangumi…")
     }
 
     private var lastSyncLine: String {
-        guard lastSyncAt > 0 else { return "还没同步过" }
+        guard lastSyncAt > 0 else { return String(localized: "还没同步过") }
         let date = Date(timeIntervalSince1970: lastSyncAt)
         // 语言固定中文（Camo 4914：跟着手机语言走会漏出「6:00 PM」）。
         let time = KazumiTimeText.clock(date)
-        if Calendar.current.isDateInToday(date) { return "上次同步 今天 \(time)" }
-        if Calendar.current.isDateInYesterday(date) { return "上次同步 昨天 \(time)" }
-        return "上次同步 \(SystemDateText.date(date, includeYear: false)) \(time)"
+        if Calendar.current.isDateInToday(date) { return String(localized: "上次同步 今天 \(time)") }
+        if Calendar.current.isDateInYesterday(date) { return String(localized: "上次同步 昨天 \(time)") }
+        return String(localized: "上次同步 \(SystemDateText.date(date, includeYear: false)) \(time)")
     }
 
     // MARK: - 段四 同步偏好
@@ -363,7 +363,7 @@ struct BangumiSyncScreen: View {
         guard !busy else { return }
         let trimmed = tokenText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            tokenError = "请填写 Access Token"
+            tokenError = String(localized: "请填写 Access Token")
             return
         }
         action = .verify
@@ -377,7 +377,7 @@ struct BangumiSyncScreen: View {
                 // 成功也走顶部 banner，几秒自收（Ato 6432）。
                 withAnimation(.snappy) {
                     banner = KazumiBannerState(
-                        title: "已连接 · \(engine.username)",
+                        title: String(localized: "已连接 · \(engine.username)"),
                         variant: .success,
                         mode: .automatic
                     )
@@ -387,7 +387,7 @@ struct BangumiSyncScreen: View {
                 let reason = BangumiSyncEngine.describeError(error)
                 withAnimation(.snappy) {
                     banner = KazumiBannerState(
-                        title: "验证失败",
+                        title: String(localized: "验证失败"),
                         detail: reason,
                         variant: .failure,
                         mode: .automatic
@@ -403,8 +403,8 @@ struct BangumiSyncScreen: View {
             if !accepted {
                 withAnimation(.snappy) {
                     banner = KazumiBannerState(
-                        title: "无法打开浏览器",
-                        detail: "请稍后重试",
+                        title: String(localized: "无法打开浏览器"),
+                        detail: String(localized: "请稍后重试"),
                         variant: .failure,
                         mode: .automatic
                     )
@@ -431,13 +431,13 @@ struct BangumiSyncScreen: View {
         guard !busy else { return }
         // 输入框里改了却没验证的令牌不能拿来同步：那一串还没被服务器认过。
         guard !needsVerify else {
-            lastSyncError = "账号信息已修改，请先保存并测试。"
+            lastSyncError = String(localized: "账号信息已修改，请先保存并测试。")
             return
         }
         action = .sync
         failed = false
         progress = nil
-        message = "正在连接 Bangumi…"
+        message = String(localized: "正在连接 Bangumi…")
         Task {
             defer { action = nil }
             do {
@@ -445,7 +445,7 @@ struct BangumiSyncScreen: View {
                     message = total > 0 ? "\(text) · \(current) / \(total)" : text
                     progress = total > 0 ? min(max(Double(current) / Double(total), 0), 1) : nil
                 }
-                let summary = "追番状态已同步"
+                let summary = String(localized: "追番状态已同步")
                 lastSyncAt = Date().timeIntervalSince1970
                 lastSyncError = ""
                 lastSyncSummary = summary

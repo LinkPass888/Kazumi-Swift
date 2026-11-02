@@ -46,12 +46,12 @@ struct PluginListView: View {
     /// 删除确认弹窗的标题：批量与单条共用，按当前待删状态取值。
     private var deletionDialogTitle: String {
         if pendingBatchDeletion {
-            return "删除选中的 \(selection.count) 条规则？"
+            return String(localized: "删除选中的 \(selection.count) 条规则？")
         }
         if let pendingDeletion {
-            return "删除规则「\(pendingDeletion.name)」？"
+            return String(localized: "删除规则「\(pendingDeletion.name)」？")
         }
-        return "删除规则？"
+        return String(localized: "删除规则？")
     }
 
     private var deletionDialogPresented: Binding<Bool> {
@@ -313,7 +313,7 @@ struct PluginListView: View {
             .disabled(isUpdating)
             Button {
                 UIPasteboard.general.string = PluginImportExport.ruleLink(for: plugin)
-                updateSummary = "已复制「\(plugin.name)」的分享链接"
+                updateSummary = String(localized: "已复制「\(plugin.name)」的分享链接")
             } label: {
                 Label("分享规则", systemImage: "square.and.arrow.up")
             }
@@ -339,12 +339,13 @@ struct PluginListView: View {
                 .frame(width: 34, height: 34)
                 .hitTarget44()
         }
-        .accessibilityLabel("\(plugin.name) 的更多操作")
+        .accessibilityLabel(String(localized: "\(plugin.name) 的更多操作"))
     }
 
     private var footerText: String {
         let updatable = plugins.updatablePluginCount
-        return "共 \(plugins.pluginList.count) 条规则\(updatable > 0 ? "，\(updatable) 条可更新" : "")。"
+        let updateNote = updatable > 0 ? String(localized: ")，\(updatable) 条可更新") : ""
+        return String(localized: "共 \(plugins.pluginList.count) 条规则\(updateNote)。")
     }
 
     /// 单条规则检查更新。
@@ -354,13 +355,13 @@ struct PluginListView: View {
         let result = await plugins.tryUpdatePlugin(named: plugin.name)
         switch result {
         case .updated:
-            updateSummary = "已更新「\(plugin.name)」"
+            updateSummary = String(localized: "已更新「\(plugin.name)」")
         case .notNewer:
-            updateSummary = "「\(plugin.name)」已是最新版本"
+            updateSummary = String(localized: "「\(plugin.name)」已是最新版本")
         case .requiresNewerClient:
-            updateSummary = "「\(plugin.name)」需要更高版本的客户端"
+            updateSummary = String(localized: "「\(plugin.name)」需要更高版本的客户端")
         case .failed:
-            errorMessage = "检查「\(plugin.name)」更新失败，请稍后重试"
+            errorMessage = String(localized: "检查「\(plugin.name)」更新失败，请稍后重试")
         }
     }
 
@@ -405,7 +406,7 @@ struct PluginListView: View {
         ToolbarItemGroup(placement: .topBarTrailing) {
             if isEditingSelection {
                 let count = selection.count
-                Button(count == 0 ? "删除" : "删除 \(count)", role: .destructive) {
+                Button(count == 0 ? "删除" : String(localized: "删除 \(count)"), role: .destructive) {
                     // 只挂上确认框，确认之前不去动列表。
                     pendingBatchDeletion = true
                 }
@@ -521,13 +522,13 @@ struct PluginListView: View {
         do {
             let result = try await plugins.tryUpdateAllPlugins()
             if result.hasNoCandidates {
-                updateSummary = "所有规则都是最新版本。"
+                updateSummary = String(localized: "所有规则都是最新版本。")
             } else {
-                var parts = ["可更新 \(result.candidates) 条"]
-                if result.updated > 0 { parts.append("已更新 \(result.updated) 条") }
-                if result.notNewer > 0 { parts.append("已是最新 \(result.notNewer) 条") }
-                if result.requiresNewerClient > 0 { parts.append("\(result.requiresNewerClient) 条需要更高版本客户端") }
-                if result.failed > 0 { parts.append("失败 \(result.failed) 条") }
+                var parts = [String(localized: "可更新 \(result.candidates) 条")]
+                if result.updated > 0 { parts.append(String(localized: "已更新 \(result.updated) 条")) }
+                if result.notNewer > 0 { parts.append(String(localized: "已是最新 \(result.notNewer) 条")) }
+                if result.requiresNewerClient > 0 { parts.append(String(localized: "\(result.requiresNewerClient) 条需要更高版本客户端")) }
+                if result.failed > 0 { parts.append(String(localized: "失败 \(result.failed) 条")) }
                 updateSummary = parts.joined(separator: "，") + "。"
             }
         } catch {
@@ -543,10 +544,10 @@ struct PluginListView: View {
         do {
             try await plugins.updatePlugins(summary.plugins)
             isShowingImportSheet = false
-            var message = "已导入 \(summary.plugins.count) 条规则"
-            if summary.duplicateCount > 0 { message += "（合并重复 \(summary.duplicateCount) 条）" }
-            if !summary.replacedNames.isEmpty { message += "，覆盖了 \(summary.replacedNames.count) 条同名规则" }
-            if !summary.failures.isEmpty { message += "；\(summary.failures.count) 条失败" }
+            var message = String(localized: "已导入 \(summary.plugins.count) 条规则")
+            if summary.duplicateCount > 0 { message += String(localized: "（合并重复 \(summary.duplicateCount) 条）") }
+            if !summary.replacedNames.isEmpty { message += String(localized: "，覆盖了 \(summary.replacedNames.count) 条同名规则") }
+            if !summary.failures.isEmpty { message += String(localized: "；\(summary.failures.count) 条失败") }
             updateSummary = message
         } catch {
             errorMessage = error.localizedDescription
@@ -587,7 +588,7 @@ struct PluginListView: View {
             defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
             let data = try Foundation.Data(contentsOf: url)
             guard let text = String(data: data, encoding: .utf8) else {
-                errorMessage = "文件不是 UTF-8 文本"
+                errorMessage = String(localized: "文件不是 UTF-8 文本")
                 return
             }
             let summary = PluginImportExport.importResult(for: text, existing: plugins.pluginList)

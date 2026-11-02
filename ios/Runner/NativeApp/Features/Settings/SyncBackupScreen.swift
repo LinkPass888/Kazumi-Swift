@@ -75,7 +75,7 @@ struct SyncBackupScreen: View {
                     } label: {
                         serviceRow(
                             title: "追番同步",
-                            subtitle: "与 Bangumi 保持相同的追番状态",
+                            subtitle: String(localized: "与 Bangumi 保持相同的追番状态"),
                             status: bangumiStatusText
                         )
                     }
@@ -88,7 +88,7 @@ struct SyncBackupScreen: View {
                     } label: {
                         serviceRow(
                             title: "多设备同步",
-                            subtitle: "通过自己的云盘，在其他设备接着看",
+                            subtitle: String(localized: "通过自己的云盘，在其他设备接着看"),
                             status: webDAVStatusText
                         )
                     }
@@ -117,8 +117,8 @@ struct SyncBackupScreen: View {
             // 行名只写动作，段标题已经说了是哪条路；读屏报全名。
             Section {
                 Group {
-                    actionRow("导出到剪贴板", icon: "arrow.up.doc", accessibility: "导出到剪贴板") { exportBackup() }
-                    actionRow("从剪贴板恢复", icon: "square.and.arrow.down", accessibility: "从剪贴板恢复") {
+                    actionRow(String(localized: "导出到剪贴板"), icon: "arrow.up.doc", accessibility: String(localized: "导出到剪贴板")) { exportBackup() }
+                    actionRow(String(localized: "从剪贴板恢复"), icon: "square.and.arrow.down", accessibility: String(localized: "从剪贴板恢复")) {
                         importBackupFromClipboard()
                     }
                 }
@@ -129,8 +129,8 @@ struct SyncBackupScreen: View {
 
             Section {
                 Group {
-                    actionRow("导出到文件", icon: "folder", accessibility: "导出到文件") { exportBackupToFile() }
-                    actionRow("从文件恢复", icon: "doc.badge.plus", accessibility: "从文件恢复") {
+                    actionRow(String(localized: "导出到文件"), icon: "folder", accessibility: String(localized: "导出到文件")) { exportBackupToFile() }
+                    actionRow(String(localized: "从文件恢复"), icon: "doc.badge.plus", accessibility: String(localized: "从文件恢复")) {
                         pickBackupFile()
                     }
                 }
@@ -200,12 +200,12 @@ struct SyncBackupScreen: View {
     /// 有令牌看自动同步开没开，验证失败时是「连接异常」。
     private var bangumiStatusText: String {
         let engine = environment.bangumiSync
-        if engine.isConnecting { return "正在连接" }
-        if engine.lastError != nil { return "连接异常" }
+        if engine.isConnecting { return String(localized: "正在连接") }
+        if engine.lastError != nil { return String(localized: "连接异常") }
         if settings.bangumiAccessToken
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty { return "未连接" }
-        return settings.bangumiSyncEnable ? "已开启" : "已关闭"
+            .isEmpty { return String(localized: "未连接") }
+        return settings.bangumiSyncEnable ? String(localized: "已开启") : "已关闭"
     }
 
     /// 与 Bangumi 账号行同一口径：去掉首尾空白后为空就是未配置。
@@ -214,16 +214,16 @@ struct SyncBackupScreen: View {
     private var webDAVStatusText: String {
         guard !settings.webDAVURL
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty else { return "未配置" }
+            .isEmpty else { return String(localized: "未配置") }
         guard settings.webDavEnable else { return "已关闭" }
-        guard !WebDAVSync.enabledContents(settings).isEmpty else { return "未选择内容" }
-        return "已开启"
+        guard !WebDAVSync.enabledContents(settings).isEmpty else { return String(localized: "未选择内容") }
+        return String(localized: "已开启")
     }
 
     private var omitExplanation: String {
         omitCredentials
-            ? "跳过追番同步、WebDAV 和代理的账号密码，其余设置照常恢复"
-            : "把同步账号、WebDAV 与代理密码一起导出，请只存放在自己可信的地方"
+            ? String(localized: "跳过追番同步、WebDAV 和代理的账号密码，其余设置照常恢复")
+            : String(localized: "把同步账号、WebDAV 与代理密码一起导出，请只存放在自己可信的地方")
     }
 
     // MARK: - 设置备份
@@ -308,12 +308,12 @@ struct SyncBackupScreen: View {
         backupMessageScope = .clipboard
         let snapshot = settings.backupSnapshot(omitCredentials: omitCredentials)
         guard !snapshot.isEmpty else {
-            setBackupResult("没有可导出的设置", isError: true)
+            setBackupResult(String(localized: "没有可导出的设置"), isError: true)
             return
         }
         UIPasteboard.general.string = SettingsBackup.encode(snapshot)
         // 提示是一闪而过的浮条：只说结果，不塞建议。长句子会把条子撑成两行、盖住下面的行。
-        setBackupResult("已复制到剪贴板", isError: false)
+        setBackupResult(String(localized: "已复制到剪贴板"), isError: false)
     }
 
     private func importBackupFromClipboard() {
@@ -362,14 +362,14 @@ struct SyncBackupScreen: View {
         }
     }
 
-    private static let clipboardEmptyMessage = "剪贴板里没有设置备份。先复制一段备份文本，或者改用从文件恢复。"
-    private static let emptyBackupMessage = "备份里没有设置内容"
+    private static let clipboardEmptyMessage = String(localized: "剪贴板里没有设置备份。先复制一段备份文本，或者改用从文件恢复。")
+    private static let emptyBackupMessage = String(localized: "备份里没有设置内容")
 
     private func applyPendingBackup() {
         guard let payload = pendingPayload else { return }
         pendingPayload = nil
         let count = settings.applyBackup(payload.settings)
-        setBackupResult("已恢复 \(count) 项设置", isError: false)
+        setBackupResult(String(localized: "已恢复 \(count) 项设置"), isError: false)
     }
 
     /// 导出到文件：内容与剪贴板那份完全一样，只是走文件系统。
@@ -377,7 +377,7 @@ struct SyncBackupScreen: View {
         backupMessageScope = .file
         let snapshot = settings.backupSnapshot(omitCredentials: omitCredentials)
         guard !snapshot.isEmpty else {
-            setBackupResult("没有可导出的设置", isError: true)
+            setBackupResult(String(localized: "没有可导出的设置"), isError: true)
             return
         }
         guard !isPickingBackupFile else { return }
@@ -388,7 +388,7 @@ struct SyncBackupScreen: View {
         do {
             try Data(SettingsBackup.encode(snapshot).utf8).write(to: tempURL, options: .atomic)
         } catch {
-            setBackupResult("存不到这个位置，可能是空间不够，或者没有写入权限", isError: true)
+            setBackupResult(String(localized: "存不到这个位置，可能是空间不够，或者没有写入权限"), isError: true)
             return
         }
         isPickingBackupFile = true
@@ -397,11 +397,11 @@ struct SyncBackupScreen: View {
             switch result {
             case .success:
                 // 面板刚退场：等它走完这一拍再改页面，否则结果行会被退场动画吃掉。
-                afterPickerDismissed { setBackupResult("已导出到文件", isError: false) }
+                afterPickerDismissed { setBackupResult(String(localized: "已导出到文件"), isError: false) }
             case .failure(let error):
                 guard !Self.isCancelled(error) else { return }
                 afterPickerDismissed {
-                    setBackupResult("存不到这个位置，可能是空间不够，或者没有写入权限", isError: true)
+                    setBackupResult(String(localized: "存不到这个位置，可能是空间不够，或者没有写入权限"), isError: true)
                 }
             }
         }
@@ -424,7 +424,7 @@ struct SyncBackupScreen: View {
             case .failure(let error):
                 guard !Self.isCancelled(error) else { return }
                 afterPickerDismissed {
-                    setBackupResult("读不到这个文件，可能已被移动，或者没有访问权限", isError: true)
+                    setBackupResult(String(localized: "读不到这个文件，可能已被移动，或者没有访问权限"), isError: true)
                 }
             }
         }
@@ -463,7 +463,7 @@ struct SyncBackupScreen: View {
             let data = try Data(contentsOf: url)
             acceptBackup(Self.text(from: data))
         } catch {
-            setBackupResult("读不到这个文件，可能已被移动，或者没有访问权限", isError: true)
+            setBackupResult(String(localized: "读不到这个文件，可能已被移动，或者没有访问权限"), isError: true)
         }
     }
 
@@ -505,18 +505,18 @@ struct SyncBackupScreen: View {
     private var restoreConfirmMessage: String {
         guard let payload = pendingPayload else { return "" }
         var blocks = [
-            "备份时间：\(Self.timestampText(payload.exportedAt))\n"
-                + "共 \(payload.count) 项设置，将覆盖当前设置。",
+            String(localized: "备份时间：\(Self.timestampText(payload.exportedAt))\n")
+                + String(localized: "共 \(payload.count) 项设置，将覆盖当前设置。"),
         ]
         if payload.settings.keys.contains(where: SettingsBackup.credentialKeys.contains) {
-            blocks.append("恢复后请回到「同步设置」，确认追番同步和多设备同步还能连上。")
+            blocks.append(String(localized: "恢复后请回到「同步设置」，确认追番同步和多设备同步还能连上。"))
         }
-        blocks.append("引导步骤、通知权限、设备同步状态不会被改动。")
+        blocks.append(String(localized: "引导步骤、通知权限、设备同步状态不会被改动。"))
         return blocks.joined(separator: "\n\n")
     }
 
     private static func timestampText(_ date: Date?) -> String {
-        guard let date else { return "时间未知" }
+        guard let date else { return String(localized: "时间未知") }
         // 日期跟手机格式走，时刻写死 24 小时（LP 6109 / 6118）。
         return "\(SystemDateText.date(date, includeYear: true)) \(KazumiTimeText.clock(date))"
     }

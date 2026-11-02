@@ -24,19 +24,19 @@ struct PluginEditorView: View {
 
         var title: String {
             switch self {
-            case .basic: "基本信息"
+            case .basic: String(localized: "基本信息")
             case .search: "搜索规则"
-            case .chapter: "选集规则"
-            case .advanced: "高级设置"
+            case .chapter: String(localized: "选集规则")
+            case .advanced: String(localized: "高级设置")
             }
         }
 
         var subtitle: String {
             switch self {
-            case .basic: "规则的名称、版本与站点地址"
-            case .search: "定义如何在站点内检索条目"
-            case .chapter: "定义如何获取播放线路与剧集列表"
-            case .advanced: "行为、网络与反反爬虫"
+            case .basic: String(localized: "规则的名称、版本与站点地址")
+            case .search: String(localized: "定义如何在站点内检索条目")
+            case .chapter: String(localized: "定义如何获取播放线路与剧集列表")
+            case .advanced: String(localized: "行为、网络与反反爬虫")
             }
         }
 
@@ -118,7 +118,7 @@ struct PluginEditorView: View {
                             UIPasteboard.general.string = PluginImportExport.ruleLink(for: plugin)
                             testResult = "已复制 kazumi:// 链接"
                         } else {
-                            errorMessage = "请先完善规则名称与必填字段"
+                            errorMessage = String(localized: "请先完善规则名称与必填字段")
                         }
                     } label: {
                         Label("复制分享链接", systemImage: "link")
@@ -157,11 +157,11 @@ struct PluginEditorView: View {
     @ViewBuilder
     private var basicSection: some View {
         EditorCard {
-            EditorTextField(title: "规则名称", text: $draft.name, prompt: "例如 示例站点")
-            EditorTextField(title: "版本", text: $draft.version, prompt: "例如 1.0.0")
-            EditorTextField(title: "站点地址 (baseURL)", text: $draft.baseUrl, prompt: "https://example.com", keyboard: .URL)
-            EditorTextField(title: "搜索地址", text: $draft.searchURL, prompt: "https://example.com/search?q=@keyword", keyboard: .URL)
-            EditorTextField(title: "类型", text: $draft.type, prompt: "anime")
+            EditorTextField(title: String(localized: "规则名称"), text: $draft.name, prompt: String(localized: "例如 示例站点"))
+            EditorTextField(title: String(localized: "版本"), text: $draft.version, prompt: String(localized: "例如 1.0.0"))
+            EditorTextField(title: String(localized: "站点地址 (baseURL)"), text: $draft.baseUrl, prompt: "https://example.com", keyboard: .URL)
+            EditorTextField(title: String(localized: "搜索地址"), text: $draft.searchURL, prompt: "https://example.com/search?q=@keyword", keyboard: .URL)
+            EditorTextField(title: String(localized: "类型"), text: $draft.type, prompt: "anime")
             Toggle("多源模式", isOn: $draft.muliSources)
             Toggle("使用 WebView", isOn: $draft.useWebview)
             Toggle("使用内建播放器", isOn: $draft.useNativePlayer)
@@ -181,26 +181,26 @@ struct PluginEditorView: View {
 
             if draft.searchMode == .xpath {
                 Toggle("使用 POST 搜索", isOn: $draft.usePost)
-                EditorTextField(title: "搜索结果列表", text: $draft.searchList, prompt: "//div[@class='item']", monospaced: true)
-                EditorTextField(title: "条目名称", text: $draft.searchName, prompt: ".//h3/text()", monospaced: true)
-                EditorTextField(title: "条目链接", text: $draft.searchResult, prompt: ".//a", monospaced: true)
+                EditorTextField(title: String(localized: "搜索结果列表"), text: $draft.searchList, prompt: "//div[@class='item']", monospaced: true)
+                EditorTextField(title: String(localized: "条目名称"), text: $draft.searchName, prompt: ".//h3/text()", monospaced: true)
+                EditorTextField(title: String(localized: "条目链接"), text: $draft.searchResult, prompt: ".//a", monospaced: true)
             } else {
-                EditorTextField(title: "请求方法", text: $draft.searchMethod, prompt: "GET")
-                EditorTextField(title: "请求地址", text: $draft.searchURL, prompt: "https://api.example.com/search?q=@keyword", keyboard: .URL)
-                EditorTextField(title: "请求头 (JSON)", text: $draft.searchHeaders, multiline: true, monospaced: true)
-                EditorTextField(title: "查询参数 (JSON)", text: $draft.searchQuery, multiline: true, monospaced: true)
+                EditorTextField(title: String(localized: "请求方法"), text: $draft.searchMethod, prompt: "GET")
+                EditorTextField(title: String(localized: "请求地址"), text: $draft.searchURL, prompt: "https://api.example.com/search?q=@keyword", keyboard: .URL)
+                EditorTextField(title: String(localized: "请求头 (JSON)"), text: $draft.searchHeaders, multiline: true, monospaced: true)
+                EditorTextField(title: String(localized: "查询参数 (JSON)"), text: $draft.searchQuery, multiline: true, monospaced: true)
                 Picker("请求体类型", selection: $draft.searchBodyType) {
                     Text("无").tag(ApiBodyType.none)
                     Text("JSON").tag(ApiBodyType.json)
                     Text("表单").tag(ApiBodyType.form)
                 }
                 if draft.searchBodyType != .none {
-                    EditorTextField(title: "请求体", text: $draft.searchBody, multiline: true, monospaced: true)
+                    EditorTextField(title: String(localized: "请求体"), text: $draft.searchBody, multiline: true, monospaced: true)
                 }
-                EditorTextField(title: "结果列表路径", text: $draft.searchListPath, prompt: "$.data[*]", monospaced: true)
-                EditorTextField(title: "名称路径", text: $draft.searchNamePath, prompt: "$.name", monospaced: true)
-                EditorTextField(title: "来源路径", text: $draft.searchSourcePath, prompt: "$.url", monospaced: true)
-                EditorTextField(title: "详情页模板", text: $draft.searchSourceTemplate, prompt: "https://example.com/detail/@source", monospaced: true)
+                EditorTextField(title: String(localized: "结果列表路径"), text: $draft.searchListPath, prompt: "$.data[*]", monospaced: true)
+                EditorTextField(title: String(localized: "名称路径"), text: $draft.searchNamePath, prompt: "$.name", monospaced: true)
+                EditorTextField(title: String(localized: "来源路径"), text: $draft.searchSourcePath, prompt: "$.url", monospaced: true)
+                EditorTextField(title: String(localized: "详情页模板"), text: $draft.searchSourceTemplate, prompt: "https://example.com/detail/@source", monospaced: true)
             }
         }
     }
@@ -217,41 +217,41 @@ struct PluginEditorView: View {
             .pickerStyle(.segmented)
 
             if draft.chapterMode == .xpath {
-                EditorTextField(title: "播放线路列表", text: $draft.chapterRoads, prompt: "//div[@class='play-list']", monospaced: true)
-                EditorTextField(title: "剧集列表", text: $draft.chapterResult, prompt: ".//a", monospaced: true)
+                EditorTextField(title: String(localized: "播放线路列表"), text: $draft.chapterRoads, prompt: "//div[@class='play-list']", monospaced: true)
+                EditorTextField(title: String(localized: "剧集列表"), text: $draft.chapterResult, prompt: ".//a", monospaced: true)
             } else {
-                EditorTextField(title: "请求方法", text: $draft.chapterMethod, prompt: "GET")
-                EditorTextField(title: "请求地址", text: $draft.chapterURL, prompt: "https://api.example.com/detail?id=@source", keyboard: .URL)
-                EditorTextField(title: "请求头 (JSON)", text: $draft.chapterHeaders, multiline: true, monospaced: true)
-                EditorTextField(title: "查询参数 (JSON)", text: $draft.chapterQuery, multiline: true, monospaced: true)
+                EditorTextField(title: String(localized: "请求方法"), text: $draft.chapterMethod, prompt: "GET")
+                EditorTextField(title: String(localized: "请求地址"), text: $draft.chapterURL, prompt: "https://api.example.com/detail?id=@source", keyboard: .URL)
+                EditorTextField(title: String(localized: "请求头 (JSON)"), text: $draft.chapterHeaders, multiline: true, monospaced: true)
+                EditorTextField(title: String(localized: "查询参数 (JSON)"), text: $draft.chapterQuery, multiline: true, monospaced: true)
                 Picker("请求体类型", selection: $draft.chapterBodyType) {
                     Text("无").tag(ApiBodyType.none)
                     Text("JSON").tag(ApiBodyType.json)
                     Text("表单").tag(ApiBodyType.form)
                 }
                 if draft.chapterBodyType != .none {
-                    EditorTextField(title: "请求体", text: $draft.chapterBody, multiline: true, monospaced: true)
+                    EditorTextField(title: String(localized: "请求体"), text: $draft.chapterBody, multiline: true, monospaced: true)
                 }
                 Picker("响应格式", selection: $draft.chapterFormat) {
                     Text("嵌套").tag(ApiChapterFormat.nested)
                     Text("分隔符").tag(ApiChapterFormat.delimited)
                 }
                 if draft.chapterFormat == .nested {
-                    EditorTextField(title: "线路列表路径", text: $draft.chapterRoadsPath, prompt: "$.data.roads[*]", monospaced: true)
-                    EditorTextField(title: "线路名称路径", text: $draft.chapterRoadNamePath, prompt: "$.name", monospaced: true)
-                    EditorTextField(title: "剧集列表路径", text: $draft.chapterEpisodesPath, prompt: "$.episodes[*]", monospaced: true)
-                    EditorTextField(title: "剧集名称路径", text: $draft.chapterEpisodeNamePath, prompt: "$.name", monospaced: true)
-                    EditorTextField(title: "剧集地址路径", text: $draft.chapterEpisodeURLPath, prompt: "$.url", monospaced: true)
+                    EditorTextField(title: String(localized: "线路列表路径"), text: $draft.chapterRoadsPath, prompt: "$.data.roads[*]", monospaced: true)
+                    EditorTextField(title: String(localized: "线路名称路径"), text: $draft.chapterRoadNamePath, prompt: "$.name", monospaced: true)
+                    EditorTextField(title: String(localized: "剧集列表路径"), text: $draft.chapterEpisodesPath, prompt: "$.episodes[*]", monospaced: true)
+                    EditorTextField(title: String(localized: "剧集名称路径"), text: $draft.chapterEpisodeNamePath, prompt: "$.name", monospaced: true)
+                    EditorTextField(title: String(localized: "剧集地址路径"), text: $draft.chapterEpisodeURLPath, prompt: "$.url", monospaced: true)
                 } else {
-                    EditorTextField(title: "线路名称路径", text: $draft.chapterRoadNamesPath, monospaced: true)
-                    EditorTextField(title: "剧集字符串路径", text: $draft.chapterRoadEpisodesPath, monospaced: true)
-                    EditorTextField(title: "线路分隔符", text: $draft.chapterRoadSeparator)
-                    EditorTextField(title: "剧集分隔符", text: $draft.chapterEpisodeSeparator)
-                    EditorTextField(title: "字段分隔符", text: $draft.chapterFieldSeparator)
+                    EditorTextField(title: String(localized: "线路名称路径"), text: $draft.chapterRoadNamesPath, monospaced: true)
+                    EditorTextField(title: String(localized: "剧集字符串路径"), text: $draft.chapterRoadEpisodesPath, monospaced: true)
+                    EditorTextField(title: String(localized: "线路分隔符"), text: $draft.chapterRoadSeparator)
+                    EditorTextField(title: String(localized: "剧集分隔符"), text: $draft.chapterEpisodeSeparator)
+                    EditorTextField(title: String(localized: "字段分隔符"), text: $draft.chapterFieldSeparator)
                 }
-                EditorTextField(title: "选集响应变量 (JSON)", text: $draft.chapterVariables, multiline: true, monospaced: true)
-                EditorTextField(title: "播放页地址模板", text: $draft.chapterPageURL, prompt: "https://example.com/play/@episodeUrl")
-                EditorTextField(title: "播放页查询参数 (JSON)", text: $draft.chapterPageQuery, multiline: true, monospaced: true)
+                EditorTextField(title: String(localized: "选集响应变量 (JSON)"), text: $draft.chapterVariables, multiline: true, monospaced: true)
+                EditorTextField(title: String(localized: "播放页地址模板"), text: $draft.chapterPageURL, prompt: "https://example.com/play/@episodeUrl")
+                EditorTextField(title: String(localized: "播放页查询参数 (JSON)"), text: $draft.chapterPageQuery, multiline: true, monospaced: true)
             }
         }
     }
@@ -286,21 +286,21 @@ struct PluginEditorView: View {
                     Text("自定义脚本").tag(CaptchaType.customJavaScript)
                 }
                 if draft.captchaType == .imageCaptcha {
-                    EditorTextField(title: "验证码图片", text: $draft.captchaImage, monospaced: true)
-                    EditorTextField(title: "验证码输入框", text: $draft.captchaInput, monospaced: true)
+                    EditorTextField(title: String(localized: "验证码图片"), text: $draft.captchaImage, monospaced: true)
+                    EditorTextField(title: String(localized: "验证码输入框"), text: $draft.captchaInput, monospaced: true)
                 }
                 if draft.captchaType != .customJavaScript {
-                    EditorTextField(title: "验证按钮", text: $draft.captchaButton, monospaced: true)
+                    EditorTextField(title: String(localized: "验证按钮"), text: $draft.captchaButton, monospaced: true)
                 }
                 if draft.captchaType == .customJavaScript {
-                    EditorTextField(title: "验证脚本", text: $draft.captchaScript, multiline: true, monospaced: true)
+                    EditorTextField(title: String(localized: "验证脚本"), text: $draft.captchaScript, multiline: true, monospaced: true)
                 }
                 Picker("验证页检测方式", selection: $draft.captchaDetectType) {
                     Text("XPath").tag(CaptchaDetectType.xpath)
                     Text("文本").tag(CaptchaDetectType.text)
                     Text("正则").tag(CaptchaDetectType.regex)
                 }
-                EditorTextField(title: "检测值", text: $draft.captchaDetectValue, monospaced: true)
+                EditorTextField(title: String(localized: "检测值"), text: $draft.captchaDetectValue, monospaced: true)
             }
         }
     }
@@ -358,12 +358,12 @@ enum EditorError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: "规则名称不能为空"
-        case .requiresNewerClient: "规则需要更高版本客户端"
-        case .headersNotObject(let label): "\(label) 必须是 JSON 对象"
-        case .bodyNotJSON(let label, let message): "\(label) 不是有效 JSON：\(message)"
-        case .bodyNotObject(let label): "\(label) 在表单模式下必须是 JSON 对象"
-        case .emptyRequestURL(let label): "\(label) 不能为空"
+        case .emptyName: String(localized: "规则名称不能为空")
+        case .requiresNewerClient: String(localized: "规则需要更高版本客户端")
+        case .headersNotObject(let label): String(localized: "\(label) 必须是 JSON 对象")
+        case .bodyNotJSON(let label, let message): String(localized: "\(label) 不是有效 JSON：\(message)")
+        case .bodyNotObject(let label): String(localized: "\(label) 在表单模式下必须是 JSON 对象")
+        case .emptyRequestURL(let label): String(localized: "\(label) 不能为空")
         }
     }
 }

@@ -144,15 +144,15 @@ struct WebDAVClient {
 
         var errorDescription: String? {
             switch self {
-            case .notConfigured: "请先填写 WebDAV 服务器地址"
-            case .invalidURL(let url): "WebDAV 地址无效：\(url)"
-            case .unauthorized: "认证失败，请检查用户名与密码"
-            case .notFound: "服务器上还没有备份，先点「立即备份」上传一份"
-            case .emptyBackup: "云盘上的备份文件是空的（0 字节），里面没有数据可恢复。"
-            case .badStatus(let status): "服务器出错了（\(status)），请稍后再试。"
+            case .notConfigured: String(localized: "请先填写 WebDAV 服务器地址")
+            case .invalidURL(let url): String(localized: "WebDAV 地址无效：\(url)")
+            case .unauthorized: String(localized: "认证失败，请检查用户名与密码")
+            case .notFound: String(localized: "服务器上还没有备份，先点「立即备份」上传一份")
+            case .emptyBackup: String(localized: "云盘上的备份文件是空的（0 字节），里面没有数据可恢复。")
+            case .badStatus(let status): String(localized: "服务器出错了（\(status)），请稍后再试。")
             case .decoding(let message): message
             case .notReadableBack:
-                "文件已经写上去了，但读回来核对不上，这次不算备份成功。"
+                String(localized: "文件已经写上去了，但读回来核对不上，这次不算备份成功。")
             }
         }
 
@@ -162,8 +162,8 @@ struct WebDAVClient {
         /// 这一句是给查问题的人看的，一个字不能少。
         var logDescription: String {
             switch self {
-            case .badStatus(let status): "服务器返回 HTTP \(status)"
-            case .emptyBackup: "云盘上的备份文件是 0 字节"
+            case .badStatus(let status): String(localized: "服务器返回 HTTP \(status)")
+            case .emptyBackup: String(localized: "云盘上的备份文件是 0 字节")
             case .decoding(let message): message
             default: errorDescription ?? ""
             }
@@ -189,7 +189,7 @@ struct WebDAVClient {
         // 云盘上出现过 0 字节的备份文件，靠这两个数分得清是「我们没发出去」
         // 还是「服务器没存」——不然只能猜。
         KazumiLogBuffer.shared.append(
-            "WebDAV PUT \(Self.backupFileName) 发出 \(body.count) 字节，HTTP \(status)",
+            String(localized: "WebDAV PUT \(Self.backupFileName) 发出 \(body.count) 字节，HTTP \(status)"),
             category: .network
         )
         try Self.validate(response)
@@ -203,7 +203,7 @@ struct WebDAVClient {
         let (data, response) = try await KazumiNetworkPolicy.requestSession.session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         KazumiLogBuffer.shared.append(
-            "WebDAV GET \(Self.backupFileName) 收到 \(data.count) 字节，HTTP \(status)",
+            String(localized: "WebDAV GET \(Self.backupFileName) 收到 \(data.count) 字节，HTTP \(status)"),
             category: .network
         )
         try Self.validate(response)
@@ -213,7 +213,7 @@ struct WebDAVClient {
         // WebDAV 服务器出错时常常也是 200，回的却是一张 HTML 登录页 / 错误页。
         // 先看开头是不是 JSON，别让解码器只报一句英文的「格式不对」。
         guard Self.looksLikeJSON(data) else {
-            throw WebDAVError.decoding("云盘上的那个文件不是备份文件（开头不是 JSON），可能是登录页或错误页。")
+            throw WebDAVError.decoding(String(localized: "云盘上的那个文件不是备份文件（开头不是 JSON），可能是登录页或错误页。"))
         }
         do {
             return try Self.decoder().decode(Payload.self, from: data)
@@ -221,14 +221,14 @@ struct WebDAVClient {
             // DecodingError 的 localizedDescription 是系统英文，用户看不懂，这里自己归类成中文。
             switch decoding {
             case .dataCorrupted:
-                throw WebDAVError.decoding("云盘上的备份文件不是有效的备份（可能不是本应用写的，或者文件已损坏）。")
+                throw WebDAVError.decoding(String(localized: "云盘上的备份文件不是有效的备份（可能不是本应用写的，或者文件已损坏）。"))
             case .keyNotFound, .typeMismatch, .valueNotFound:
-                throw WebDAVError.decoding("备份文件格式跟当前版本对不上（缺少或多余的字段）。")
+                throw WebDAVError.decoding(String(localized: "备份文件格式跟当前版本对不上（缺少或多余的字段）。"))
             default:
-                throw WebDAVError.decoding("备份文件读取失败，格式不对。")
+                throw WebDAVError.decoding(String(localized: "备份文件读取失败，格式不对。"))
             }
         } catch {
-            throw WebDAVError.decoding("备份文件读取失败，格式不对。")
+            throw WebDAVError.decoding(String(localized: "备份文件读取失败，格式不对。"))
         }
     }
 

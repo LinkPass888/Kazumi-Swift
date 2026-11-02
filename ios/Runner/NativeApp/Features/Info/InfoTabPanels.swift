@@ -28,11 +28,11 @@ enum InfoTab: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .overview: "概览"
-        case .comments: "吐槽"
-        case .characters: "角色"
+        case .overview: String(localized: "概览")
+        case .comments: String(localized: "吐槽")
+        case .characters: String(localized: "角色")
         case .relations: "关联"
-        case .staff: "制作人员"
+        case .staff: String(localized: "制作人员")
         }
     }
 }
@@ -88,7 +88,7 @@ struct InfoOverviewPanel: View {
 
     private var summary: String {
         let text = item.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? "暂无简介" : text
+        return text.isEmpty ? String(localized: "暂无简介") : text
     }
 
     private var needsCollapse: Bool {
@@ -102,9 +102,9 @@ struct InfoOverviewPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            InfoSectionTitle(text: "简介")
+            InfoSectionTitle(text: String(localized: "简介"))
             intro
-            InfoSectionTitle(text: "标签")
+            InfoSectionTitle(text: String(localized: "标签"))
                 .padding(.top, 8)
             tags
         }
@@ -118,7 +118,7 @@ extension InfoOverviewPanel {
         VStack(alignment: .leading, spacing: 2) {
             Text(summary)
                 .font(.callout)
-                .foregroundStyle(summary == "暂无简介" ? .secondary : .primary)
+                .foregroundStyle(summary == String(localized: "暂无简介") ? .secondary : .primary)
                 .lineLimit(introExpanded ? nil : Self.collapsedLines)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -339,9 +339,9 @@ struct InfoCommentsPanel: View {
             }
 
             if isLoading && comments.isEmpty {
-                InfoPanelPlaceholder(symbol: "ellipsis.bubble", text: "正在加载吐槽…")
+                InfoPanelPlaceholder(symbol: "ellipsis.bubble", text: String(localized: "正在加载吐槽…"))
             } else if comments.isEmpty {
-                InfoPanelPlaceholder(symbol: "text.bubble", text: "还没有人吐槽这部番")
+                InfoPanelPlaceholder(symbol: "text.bubble", text: String(localized: "还没有人吐槽这部番"))
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(comments) { comment in
@@ -357,7 +357,7 @@ struct InfoCommentsPanel: View {
                         Divider()
                     }
                     if total > comments.count {
-                        Text("已显示 \(comments.count) / \(total) 条")
+                        Text(String(localized: "已显示 \(comments.count) / \(total) 条"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -424,7 +424,7 @@ struct InfoCommentsPanel: View {
                 draft = ""
                 isFocused = false
             } else {
-                errorText = "发送失败：请先在「我的」里登录 Bangumi 后再试。"
+                errorText = String(localized: "发送失败：请先在「我的」里登录 Bangumi 后再试。")
             }
         }
     }
@@ -447,9 +447,9 @@ struct InfoCharactersPanel: View {
 
     var body: some View {
         if isLoading && characters.isEmpty {
-            InfoPanelPlaceholder(symbol: "person.2", text: "正在加载角色…")
+            InfoPanelPlaceholder(symbol: "person.2", text: String(localized: "正在加载角色…"))
         } else if characters.isEmpty {
-            InfoPanelPlaceholder(symbol: "person.2", text: "暂无角色信息")
+            InfoPanelPlaceholder(symbol: "person.2", text: String(localized: "暂无角色信息"))
         } else {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(characters) { character in
@@ -512,9 +512,9 @@ struct InfoRelationsPanel: View {
 
     var body: some View {
         if isLoading && relations.isEmpty {
-            InfoPanelPlaceholder(symbol: "square.stack", text: "正在加载关联条目…")
+            InfoPanelPlaceholder(symbol: "square.stack", text: String(localized: "正在加载关联条目…"))
         } else if relations.isEmpty {
-            InfoPanelPlaceholder(symbol: "square.stack", text: "暂无关联条目")
+            InfoPanelPlaceholder(symbol: "square.stack", text: String(localized: "暂无关联条目"))
         } else {
             LazyVStack(spacing: 8) {
                 ForEach(relations) { relation in
@@ -567,9 +567,9 @@ struct InfoStaffPanel: View {
 
     var body: some View {
         if isLoading && staff.isEmpty {
-            InfoPanelPlaceholder(symbol: "person.text.rectangle", text: "正在加载制作人员…")
+            InfoPanelPlaceholder(symbol: "person.text.rectangle", text: String(localized: "正在加载制作人员…"))
         } else if staff.isEmpty {
-            InfoPanelPlaceholder(symbol: "person.text.rectangle", text: "暂无制作人员信息")
+            InfoPanelPlaceholder(symbol: "person.text.rectangle", text: String(localized: "暂无制作人员信息"))
         } else {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(staff) { member in

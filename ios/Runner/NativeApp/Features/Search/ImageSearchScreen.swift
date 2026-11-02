@@ -213,8 +213,8 @@ struct ImageSearchScreen: View {
     }
 
     private func headlineText(compact: Bool) -> String {
-        if showResults { return "搜索图片" }
-        return compact ? "用截图找到番名" : "这一幕，\n出自哪部番？"
+        if showResults { return String(localized: "搜索图片") }
+        return compact ? String(localized: "用截图找到番名") : String(localized: "这一幕，\n出自哪部番？")
     }
 
     /// 对应 _ImageSourceSelector：本地截图 / 图片链接。
@@ -356,9 +356,9 @@ struct ImageSearchScreen: View {
     private var primaryAction: some View {
         if useURL || imageFile != nil {
             let title: String = {
-                if controller.isSearching { return "正在识别" }
-                if isPicking { return "正在读取图片" }
-                return useURL ? "开始识别" : "识别这张截图"
+                if controller.isSearching { return String(localized: "正在识别") }
+                if isPicking { return String(localized: "正在读取图片") }
+                return useURL ? String(localized: "开始识别") : String(localized: "识别这张截图")
             }()
             Button {
                 search()
@@ -414,7 +414,7 @@ struct ImageSearchScreen: View {
                     .controlSize(.large)
                 Text("正在寻找这一幕")
                     .font(.title3.weight(.bold))
-                Text("正在比对动画画面，匹配番名、集数与时间。\n请稍等片刻。")
+                Text(String(localized: "正在比对动画画面，匹配番名、集数与时间。\n请稍等片刻。"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -423,11 +423,11 @@ struct ImageSearchScreen: View {
             .padding(.vertical, 32)
         } else if controller.results.isEmpty {
             if controller.errorMessage == ImageSearchController.emptyResultMessage {
-                emptyState(icon: "picture", title: "没有找到匹配画面", message: nil)
+                emptyState(icon: "picture", title: String(localized: "没有找到匹配画面"), message: nil)
             } else {
                 emptyState(
                     icon: "wifi.exclamationmark",
-                    title: "这次识别未完成",
+                    title: String(localized: "这次识别未完成"),
                     message: controller.errorMessage
                 )
             }
@@ -438,7 +438,7 @@ struct ImageSearchScreen: View {
 
     private var resultsContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("找到 \(controller.results.count) 个相似片段")
+            Text(String(localized: "找到 \(controller.results.count) 个相似片段"))
                 .font(.title3.weight(.bold))
             Text("按画面相似度排序，先对照截图再确认。")
                 .font(.subheadline)
@@ -499,7 +499,7 @@ struct ImageSearchScreen: View {
 
     /// 第三段：站点名是主题色＋下划线的链接（Colo 3103），其余是普通正文。
     private var privacyNotice: AttributedString {
-        var text = AttributedString("识别由 trace.moe 提供。开始识别后，所选图片或图片链接会发送至该服务。")
+        var text = AttributedString(String(localized: "识别由 trace.moe 提供。开始识别后，所选图片或图片链接会发送至该服务。"))
         if let range = text.range(of: "trace.moe") {
             text[range].link = URL(string: "https://trace.moe")
             text[range].underlineStyle = .single
@@ -552,7 +552,7 @@ struct ImageSearchScreen: View {
         guard let value = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
               ImageSearchURL.httpURL(from: value) != nil
         else {
-            withAnimation(.snappy) { toast = "剪贴板里没有可用的图片链接" }
+            withAnimation(.snappy) { toast = String(localized: "剪贴板里没有可用的图片链接") }
             Task {
                 try? await Task.sleep(for: .seconds(2))
                 withAnimation(.snappy) { toast = nil }
@@ -581,12 +581,12 @@ struct ImageSearchScreen: View {
                 guard let data = try await item.loadTransferable(type: Data.self),
                       let image = UIImage(data: data)
                 else {
-                    inputError = "无法读取这张图片，请换一张"
+                    inputError = String(localized: "无法读取这张图片，请换一张")
                     return
                 }
                 adopt(PickedImage(image: image, fileName: "screenshot"))
             } catch {
-                inputError = "无法读取这张图片，请换一张"
+                inputError = String(localized: "无法读取这张图片，请换一张")
             }
         }
     }
@@ -636,7 +636,7 @@ struct ImageSearchScreen: View {
         let trimmed = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
         let sourceURL = ImageSearchURL.httpURL(from: trimmed)
         guard useURL ? sourceURL != nil : imageFile != nil else {
-            inputError = "请输入有效的 HTTP 或 HTTPS 图片链接"
+            inputError = String(localized: "请输入有效的 HTTP 或 HTTPS 图片链接")
             isURLFocused = true
             return
         }
@@ -663,7 +663,7 @@ struct ImageSearchScreen: View {
     private func openExternal(_ url: URL) {
         UIApplication.shared.open(url, options: [:]) { success in
             guard !success else { return }
-            withAnimation(.snappy) { toast = "暂时无法打开链接，请稍后再试" }
+            withAnimation(.snappy) { toast = String(localized: "暂时无法打开链接，请稍后再试") }
             Task {
                 try? await Task.sleep(for: .seconds(2))
                 withAnimation(.snappy) { toast = nil }

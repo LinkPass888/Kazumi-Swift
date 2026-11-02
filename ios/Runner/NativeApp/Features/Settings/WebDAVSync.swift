@@ -39,17 +39,17 @@ enum WebDAVSync {
         /// 同步做完给用户看的那一句。
         var doneMessage: String {
             switch self {
-            case .history: "观看记录已同步"
-            case .collect: "收藏已同步"
-            case .shield: "弹幕屏蔽词已同步"
+            case .history: String(localized: "观看记录已同步")
+            case .collect: String(localized: "收藏已同步")
+            case .shield: String(localized: "弹幕屏蔽词已同步")
             }
         }
 
         var runningMessage: String {
             switch self {
-            case .history: "正在同步观看记录…"
-            case .collect: "正在同步收藏…"
-            case .shield: "正在同步弹幕屏蔽词…"
+            case .history: String(localized: "正在同步观看记录…")
+            case .collect: String(localized: "正在同步收藏…")
+            case .shield: String(localized: "正在同步弹幕屏蔽词…")
             }
         }
     }
@@ -91,11 +91,11 @@ enum WebDAVSync {
             return Outcome(ok: true, message: "", log: "")
         }
         guard !settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return Outcome(ok: false, message: "先填 WebDAV 地址", log: "同步跳过：没配地址")
+            return Outcome(ok: false, message: String(localized: "先填 WebDAV 地址"), log: "同步跳过：没配地址")
         }
 
         let client = WebDAVClient(settings: settings)
-        progress?(ProgressEvent(text: "正在读取云盘…", current: 0, total: 0))
+        progress?(ProgressEvent(text: String(localized: "正在读取云盘…"), current: 0, total: 0))
         let remote: WebDAVClient.Payload?
         /// 云盘上那份是空的（0 字节）：当作还没备份，这次上传会把它覆盖掉。
         /// 空文件里没有任何数据，覆盖它不会丢掉任何东西。
@@ -115,7 +115,7 @@ enum WebDAVSync {
         } catch {
             return Outcome(
                 ok: false,
-                message: "同步没能完成：\(Self.friendlyText(error))",
+                message: String(localized: "同步没能完成：\(Self.friendlyText(error))"),
                 log: "同步读云盘失败：\(Self.technicalText(error))"
             )
         }
@@ -275,7 +275,7 @@ enum WebDAVSync {
             rules = remote?.danmakuRules ?? ""
         }
 
-        progress?(ProgressEvent(text: "正在上传合并结果…", current: 0, total: 0))
+        progress?(ProgressEvent(text: String(localized: "正在上传合并结果…"), current: 0, total: 0))
         let payload = WebDAVClient.Payload(
             entries: entries,
             history: history,
@@ -288,7 +288,7 @@ enum WebDAVSync {
         } catch {
             return Outcome(
                 ok: false,
-                message: "同步没能完成：\(Self.friendlyText(error))",
+                message: String(localized: "同步没能完成：\(Self.friendlyText(error))"),
                 log: "同步写云盘失败：\(Self.technicalText(error))"
             )
         }
@@ -337,7 +337,7 @@ enum WebDAVSync {
                     client: client
                 ) { current, total in
                     progress?(ProgressEvent(
-                        text: "正在写回原版观看记录 · \(current) / \(total)",
+                        text: String(localized: "正在写回原版观看记录 · \(current) / \(total)"),
                         current: current,
                         total: total
                     ))
@@ -360,34 +360,36 @@ enum WebDAVSync {
         }
 
         var summaryParts: [String] = []
-        if contents.contains(.history) { summaryParts.append("观看记录 \(history.count) 条") }
-        if contents.contains(.collect) { summaryParts.append("收藏 \(entries.count) 部") }
-        if contents.contains(.shield) { summaryParts.append("屏蔽词 \(Self.ruleCount(rules)) 条") }
+        if contents.contains(.history) { summaryParts.append(String(localized: "观看记录 \(history.count) 条")) }
+        if contents.contains(.collect) { summaryParts.append(String(localized: "收藏 \(entries.count) 部")) }
+        if contents.contains(.shield) { summaryParts.append(String(localized: "屏蔽词 \(Self.ruleCount(rules)) 条")) }
         let summary = summaryParts.joined(separator: " · ")
 
-        let counts = "观看记录 \(library.history.count) 条 / 收藏 \(library.entries.count) 部 / 屏蔽词 \(Self.ruleCount(rules)) 条"
+        let counts = String(localized: "观看记录 \(library.history.count) 条 / 收藏 \(library.entries.count) 部 / 屏蔽词 \(Self.ruleCount(rules)) 条")
         var legacyParts: [String] = []
-        if legacyHistoryCount > 0 { legacyParts.append("历史 \(legacyHistoryCount) 条") }
-        if !legacyRules.isEmpty { legacyParts.append("屏蔽词 \(legacyRules.count) 条") }
-        if legacyCollectCount > 0 { legacyParts.append("收藏 \(legacyCollectCount) 部") }
-        let legacy = legacyParts.isEmpty ? "" : "；原版旧数据：\(legacyParts.joined(separator: "、"))"
+        if legacyHistoryCount > 0 { legacyParts.append(String(localized: "历史 \(legacyHistoryCount) 条")) }
+        if !legacyRules.isEmpty { legacyParts.append(String(localized: "屏蔽词 \(legacyRules.count) 条")) }
+        if legacyCollectCount > 0 { legacyParts.append(String(localized: "收藏 \(legacyCollectCount) 部")) }
+        let listSep = "、"
+        let legacy = legacyParts.isEmpty ? "" : String(localized: "；原版旧数据：\(legacyParts.joined(separator: listSep))")
         if let writeBackError {
             return Outcome(
                 ok: false,
-                message: "已同步，但没能写回旧版格式：\(writeBackError)",
+                message: String(localized: "已同步，但没能写回旧版格式：\(writeBackError)"),
                 log: "多设备同步完成但写回原版格式失败（\(counts)\(legacy)）：\(writeBackError)",
-                summary: "\(summary) · 写回旧版格式失败"
+                summary: String(localized: "\(summary) · 写回旧版格式失败")
             )
         }
-        let base = contents.count == 1 ? contents[0].doneMessage : "同步完成"
+        let base = contents.count == 1 ? contents[0].doneMessage : String(localized: "同步完成")
         // 云盘上原来那份是空的：说一句，别让他继续以为云上一直存着一份。
         let message = cloudBackupWasEmpty
-            ? "\(base)（云盘上原来那份是空的，已用这次的结果覆盖）"
+            ? String(localized: "\(base)（云盘上原来那份是空的，已用这次的结果覆盖）")
             : base
+        let emptyNote = cloudBackupWasEmpty ? ")；云盘原文件为 0 字节，已覆盖" : ""
         return Outcome(
             ok: true,
             message: message,
-            log: "多设备同步完成（\(counts)\(legacy)\(cloudBackupWasEmpty ? "；云盘原文件为 0 字节，已覆盖" : "")",
+            log: "多设备同步完成（\(counts)\(legacy)\(emptyNote)",
             summary: summary
         )
     }
@@ -472,10 +474,10 @@ enum WebDAVSync {
     /// 都跟网络无关（云盘上文件是空的、格式对不上），等于把问题直接推给用户。
     static func friendlyText(_ error: Error) -> String {
         if let webdav = error as? WebDAVClient.WebDAVError {
-            return webdav.errorDescription ?? "云盘读写失败。"
+            return webdav.errorDescription ?? String(localized: "云盘读写失败。")
         }
         if error is URLError {
-            return "连不上服务器，请检查网络或服务器地址。"
+            return String(localized: "连不上服务器，请检查网络或服务器地址。")
         }
         return error.localizedDescription
     }
