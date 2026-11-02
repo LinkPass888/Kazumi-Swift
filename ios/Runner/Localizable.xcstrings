@@ -1,6 +1,17 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    " · 已选 %@ 天": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " · 已選 %@ 天"
+          }
+        }
+      }
+    },
     " 等": {
       "localizations": {
         "zh-Hant": {
@@ -1397,12 +1408,45 @@
         }
       }
     },
+    "不限": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不限"
+          }
+        }
+      }
+    },
     "不限季度": {
       "localizations": {
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
             "value": "不限季度"
+          }
+        }
+      }
+    },
+    "不限日期": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不限日期"
+          }
+        }
+      }
+    },
+    "不限题材": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不限題材"
           }
         }
       }
@@ -7301,6 +7345,17 @@
         }
       }
     },
+    "显示全部": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示全部"
+          }
+        }
+      }
+    },
     "显示密码": {
       "localizations": {
         "zh-Hant": {
@@ -9773,6 +9828,17 @@
         }
       }
     },
+    "相关度": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "相關度"
+          }
+        }
+      }
+    },
     "看到 ": {
       "localizations": {
         "zh-Hant": {
@@ -10830,6 +10896,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "觀看集數"
+          }
+        }
+      }
+    },
+    "规则": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "規則"
           }
         }
       }
@@ -12994,6 +13071,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "隱藏密碼"
+          }
+        }
+      }
+    },
+    "隐藏已弃": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隱藏已棄"
+          }
+        }
+      }
+    },
+    "隐藏已看": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隱藏已看"
           }
         }
       }

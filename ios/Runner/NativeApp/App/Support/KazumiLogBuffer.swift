@@ -23,10 +23,10 @@ final class KazumiLogBuffer: Sendable {
 
         var title: String {
             switch self {
-            case .plugin: "规则"
-            case .network: "网络"
-            case .player: "播放"
-            case .storage: "存储"
+            case .plugin: String(localized: "规则")
+            case .network: String(localized: "网络")
+            case .player: String(localized: "播放")
+            case .storage: String(localized: "存储")
             }
         }
     }

@@ -28,7 +28,7 @@ enum CollectSort: String, CaseIterable, Identifiable, Hashable, Sendable {
     /// 菜单文案，顺序即 `allCases` 的顺序（照 main）。
     var label: String {
         switch self {
-        case .updateTime: "更新时间"
+        case .updateTime: String(localized: "更新时间")
         case .recentlyChanged: String(localized: "最近变更")
         case .title: String(localized: "番剧名称")
         case .rating: String(localized: "评分最高")

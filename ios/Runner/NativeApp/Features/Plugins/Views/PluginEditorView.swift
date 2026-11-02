@@ -25,7 +25,7 @@ struct PluginEditorView: View {
         var title: String {
             switch self {
             case .basic: String(localized: "基本信息")
-            case .search: "搜索规则"
+            case .search: String(localized: "搜索规则")
             case .chapter: String(localized: "选集规则")
             case .advanced: String(localized: "高级设置")
             }

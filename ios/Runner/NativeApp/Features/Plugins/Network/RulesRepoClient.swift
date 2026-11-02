@@ -33,7 +33,7 @@ enum RulesMirror: String, Sendable, CaseIterable {
         case .ghProxy: "gh-proxy"
         case .ghfast: "ghfast"
         case .gitcode: "GitCode"
-        case .direct: "直连"
+        case .direct: String(localized: "直连")
         }
     }
 

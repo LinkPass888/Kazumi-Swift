@@ -62,7 +62,7 @@ struct CaptchaSheet: View {
     private var sheetTitle: String {
         switch flow.phase {
         case .completed: String(localized: "验证通过")
-        case .cancelled: "已取消验证"
+        case .cancelled: String(localized: "已取消验证")
         default: "需要验证"
         }
     }
@@ -86,7 +86,7 @@ struct CaptchaSheet: View {
         case .verifying: String(localized: "正在验证")
         case .completed: String(localized: "即将自动继续检索。")
         case .failed(let message): message
-        case .cancelled: "已取消验证"
+        case .cancelled: String(localized: "已取消验证")
         default: flow.requiresUserInput ? String(localized: "请输入页面上的验证码") : String(localized: "正在自动完成站点验证，请勿关闭…")
         }
     }

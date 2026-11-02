@@ -30,9 +30,9 @@ enum WebDAVSync {
         /// 屏上那行标题，跟原版一致。
         var rowTitle: String {
             switch self {
-            case .history: "观看记录"
-            case .collect: "收藏"
-            case .shield: "弹幕屏蔽词"
+            case .history: String(localized: "观看记录")
+            case .collect: String(localized: "收藏")
+            case .shield: String(localized: "弹幕屏蔽词")
             }
         }
 

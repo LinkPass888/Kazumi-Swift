@@ -25,10 +25,10 @@ enum PopularListSource: Hashable, Sendable {
 
     var title: String {
         switch self {
-        case .trending: "热门番组"
-        case .season: "本季新番"
-        case .ranked: "综合排名"
-        case .collected: "收藏榜"
+        case .trending: String(localized: "热门番组")
+        case .season: String(localized: "本季新番")
+        case .ranked: String(localized: "综合排名")
+        case .collected: String(localized: "收藏榜")
         case .tag(let tag): tag
         }
     }

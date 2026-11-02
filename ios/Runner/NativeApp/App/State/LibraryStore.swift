@@ -30,11 +30,11 @@ enum CollectType: Int, Codable, CaseIterable, Sendable, Identifiable {
     var title: String {
         switch self {
         case .none: String(localized: "未收藏")
-        case .watching: "在看"
-        case .wish: "想看"
-        case .onHold: "搁置"
-        case .watched: "看过"
-        case .dropped: "抛弃"
+        case .watching: String(localized: "在看")
+        case .wish: String(localized: "想看")
+        case .onHold: String(localized: "搁置")
+        case .watched: String(localized: "看过")
+        case .dropped: String(localized: "抛弃")
         }
     }
 
@@ -62,11 +62,11 @@ enum CollectType: Int, Codable, CaseIterable, Sendable, Identifiable {
     var buttonTitle: String {
         switch self {
         case .none: String(localized: "未追")
-        case .watching: "在看"
-        case .wish: "想看"
-        case .onHold: "搁置"
-        case .watched: "看过"
-        case .dropped: "抛弃"
+        case .watching: String(localized: "在看")
+        case .wish: String(localized: "想看")
+        case .onHold: String(localized: "搁置")
+        case .watched: String(localized: "看过")
+        case .dropped: String(localized: "抛弃")
         }
     }
 

@@ -47,12 +47,7 @@ struct SearchFilterSheet: View {
     ]
 
     /// 排序项与 main 的 _searchSortLabels 一致。
-    private static let sorts: [(value: String, title: String)] = [
-        ("heat", "热度"),
-        ("rank", "排名"),
-        ("score", "评分"),
-        ("match", "匹配"),
-    ]
+    private static let sorts: [String] = ["heat", "rank", "score", "match"]
 
     private static let weekdayTitles = ["一", "二", "三", "四", "五", "六", "日"]
 
@@ -164,14 +159,14 @@ struct SearchFilterSheet: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Menu {
-                ForEach(Self.sorts, id: \.value) { sort in
+                ForEach(Self.sorts, id: \.self) { sort in
                     Button {
-                        state.sort = sort.value
+                        state.sort = sort
                     } label: {
-                        if sort.value == state.sort {
-                            Label("按\(sort.title)排序", systemImage: "checkmark")
+                        if sort == state.sort {
+                            Label("按\(Self.sortTitle(sort))排序", systemImage: "checkmark")
                         } else {
-                            Text("按\(sort.title)排序")
+                            Text("按\(Self.sortTitle(sort))排序")
                         }
                     }
                 }
@@ -195,7 +190,12 @@ struct SearchFilterSheet: View {
     }
 
     private static func sortTitle(_ value: String) -> String {
-        sorts.first { $0.value == value }?.title ?? "热度"
+        switch value {
+        case "heat": String(localized: "热度")
+        case "rank": String(localized: "排名")
+        case "score": String(localized: "评分")
+        default: String(localized: "相关度")
+        }
     }
 
     // MARK: - 四组
@@ -203,7 +203,7 @@ struct SearchFilterSheet: View {
     private var tagsGroup: some View {
         FilterGroup(
             title: "题材标签",
-            summary: state.tags.isEmpty ? "不限题材" : state.tags.joined(separator: "、"),
+            summary: state.tags.isEmpty ? String(localized: "不限题材") : state.tags.joined(separator: "、"),
             isExpanded: $tagsExpanded
         ) {
             VStack(alignment: .leading, spacing: 0) {
@@ -325,7 +325,7 @@ struct SearchFilterSheet: View {
                 KazumiFlowLayout(spacing: 8, rowSpacing: 4) {
                     ForEach(1...7, id: \.self) { day in
                         chip(
-                            "周" + Self.weekdayTitles[day - 1],
+                            String(localized: "周\(Self.weekdayTitles[day - 1])"),
                             selected: state.weekdays.contains(day)
                         ) {
                             if let index = state.weekdays.firstIndex(of: day) {
@@ -444,7 +444,11 @@ struct SearchFilterSheet: View {
             } label: {
                 Text("查看结果")
                     .font(.body.weight(.semibold))
-                    .frame(width: 130, height: 56)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 130, minHeight: 56)
                     .background(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .fill(KazumiPalette.accent(for: colorScheme))
@@ -518,37 +522,37 @@ struct SearchFilterSheet: View {
         if !state.season.isEmpty {
             text = state.season
         } else if let range = state.dateRange {
-            text = "\(range.start) 至 \(range.end)"
+            text = String(localized: "\(range.start) 至 \(range.end)")
         } else {
-            text = "不限日期"
+            text = String(localized: "不限日期")
         }
         if !state.weekdays.isEmpty {
-            text += " · 已选 \(state.weekdays.count) 天"
+            text += String(localized: " · 已选 \(String(state.weekdays.count)) 天")
         }
         return text
     }
 
     private var seasonDisplayName: String {
-        guard !state.season.isEmpty else { return "不限季度" }
+        guard !state.season.isEmpty else { return String(localized: "不限季度") }
         return seasonOptions.first { $0.value == state.season }?.label ?? state.season
     }
 
     private var scoreSummary: String {
         var parts: [String] = []
         if let range = state.scoreRange, range.isValid {
-            parts.append("评分 \(scoreText(range))")
+            parts.append(String(localized: "评分 \(scoreText(range))"))
         }
         if let range = state.rankRange, range.isValid {
-            parts.append("排名 \(rankText(range))")
+            parts.append(String(localized: "排名 \(rankText(range))"))
         }
-        return parts.isEmpty ? "不限" : parts.joined(separator: " · ")
+        return parts.isEmpty ? String(localized: "不限") : parts.joined(separator: " · ")
     }
 
     private var collectSummary: String {
         var parts: [String] = []
-        if notShowWatched { parts.append("隐藏已看") }
-        if notShowAbandoned { parts.append("隐藏已弃") }
-        return parts.isEmpty ? "显示全部" : parts.joined(separator: " · ")
+        if notShowWatched { parts.append(String(localized: "隐藏已看")) }
+        if notShowAbandoned { parts.append(String(localized: "隐藏已弃")) }
+        return parts.isEmpty ? String(localized: "显示全部") : parts.joined(separator: " · ")
     }
 
     /// 评分那一行的写法：7.0–10.0。格式化在 SearchFilterState 那边一份，
@@ -621,7 +625,7 @@ struct SearchFilterSheet: View {
 /// 一组：组头（标题＋条件摘要，点它折叠／展开）＋内容。
 /// 对应 main 的 _SearchFilterGroup；组头不画边框，组间那条线由外面画。
 private struct FilterGroup<Content: View>: View {
-    let title: String
+    let title: LocalizedStringKey
     let summary: String
     @Binding var isExpanded: Bool
     @ViewBuilder var content: () -> Content

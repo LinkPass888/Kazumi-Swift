@@ -81,7 +81,7 @@ final class InfoController {
             switch status {
             case .pending: String(localized: "检索中…")
             case .success: results.isEmpty ? String(localized: "无结果") : String(localized: "\(String(describing: results.count)) 个结果")
-            case .noResult: "无结果"
+            case .noResult: String(localized: "无结果")
             case .error: String(localized: "检索失败")
             case .captcha: String(localized: "需要验证")
             }

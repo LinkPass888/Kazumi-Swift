@@ -31,7 +31,7 @@ enum InfoTab: String, CaseIterable, Identifiable, Sendable {
         case .overview: String(localized: "概览")
         case .comments: String(localized: "吐槽")
         case .characters: String(localized: "角色")
-        case .relations: "关联"
+        case .relations: String(localized: "关联")
         case .staff: String(localized: "制作人员")
         }
     }

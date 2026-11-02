@@ -215,8 +215,8 @@ private struct PluginCatalogRow: View {
 
     private var buttonTitle: String {
         switch status {
-        case .install: "安装"
-        case .installed: "已安装"
+        case .install: String(localized: "安装")
+        case .installed: String(localized: "已安装")
         case .update: String(localized: "更新")
         }
     }

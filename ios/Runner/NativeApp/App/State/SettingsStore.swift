@@ -67,7 +67,7 @@ enum SuperResolutionMode: Int, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .off: "关闭"
+        case .off: String(localized: "关闭")
         case .efficiency: String(localized: "效率档")
         case .quality: String(localized: "质量档")
         }
