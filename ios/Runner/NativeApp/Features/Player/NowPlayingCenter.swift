@@ -125,13 +125,39 @@ final class NowPlayingCenter {
     /// 遥控键的转接盒：回调与「是否在播」都在这里，不带主线程隔离。
     /// 系统在哪个队列回调都不会撞断言；真正动作回主线程做。
     private final class CommandBox: @unchecked Sendable {
-        var onPlay: (() -> Void)?
-        var onPause: (() -> Void)?
-        var onNext: (() -> Void)?
-        var onPrevious: (() -> Void)?
-        var onSeek: ((Double) -> Void)?
+        private let lock = NSLock()
+        private var play: (() -> Void)?
+        private var pause: (() -> Void)?
+        private var next: (() -> Void)?
+        private var previous: (() -> Void)?
+        private var seek: ((Double) -> Void)?
         /// toggle 那颗键据此决定叫停还是叫播。
-        var isPlaying = false
+        private var playing = false
+
+        var onPlay: (() -> Void)? {
+            get { lock.lock(); defer { lock.unlock() }; return play }
+            set { lock.lock(); defer { lock.unlock() }; play = newValue }
+        }
+        var onPause: (() -> Void)? {
+            get { lock.lock(); defer { lock.unlock() }; return pause }
+            set { lock.lock(); defer { lock.unlock() }; pause = newValue }
+        }
+        var onNext: (() -> Void)? {
+            get { lock.lock(); defer { lock.unlock() }; return next }
+            set { lock.lock(); defer { lock.unlock() }; next = newValue }
+        }
+        var onPrevious: (() -> Void)? {
+            get { lock.lock(); defer { lock.unlock() }; return previous }
+            set { lock.lock(); defer { lock.unlock() }; previous = newValue }
+        }
+        var onSeek: ((Double) -> Void)? {
+            get { lock.lock(); defer { lock.unlock() }; return seek }
+            set { lock.lock(); defer { lock.unlock() }; seek = newValue }
+        }
+        var isPlaying: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return playing }
+            set { lock.lock(); defer { lock.unlock() }; playing = newValue }
+        }
     }
 
     private let commands = CommandBox()

@@ -91,6 +91,7 @@ struct PopularHero: View {
     /// 刚从规则仓库回来：把面板重开一次，别再停在空状态（Colo 3974）。
     @State private var returnFromRuleShop = false
     @State private var depthBeforeRuleShop = 0
+    @State private var sourceNavigationRevision: UInt = 0
 
     private var navigationDepth: Int {
         router.popularPath.count + router.timelinePath.count
@@ -299,8 +300,15 @@ struct PopularHero: View {
         // 选源面板不再挂在这一页上（2026-10-28 计时：点下去到面板开始画 3.6 秒，
         // 全耗在「弹之前先把这一页重排一遍」）。现在交给根层去弹，
         // 这一页只负责交出控制器和两个回调。
+        .onChange(of: router.externalNavigationRevision) { _, _ in
+            returnToSourcesAfterPlayer = false
+            returnFromRuleShop = false
+            goToRuleShopAfterDismiss = false
+            sourceController?.closeSourceSearch()
+        }
         .onChange(of: SourceSheetCoordinator.shared.isPresented) { _, presented in
-            guard !presented else { return }
+            guard sourceNavigationRevision == router.externalNavigationRevision,
+                  !presented else { return }
             // 面板关完了：该进规则仓库就进（等关闭动画收完，两个动画不抢）。
             if goToRuleShopAfterDismiss {
                 goToRuleShopAfterDismiss = false
@@ -308,17 +316,18 @@ struct PopularHero: View {
                 depthBeforeRuleShop = navigationDepth
                 router.push(.pluginShop)
             }
-            SourceSheetCoordinator.shared.clearIfNeeded()
         }
         // 从播放页返回：把面板放回来。
         .onChange(of: navigationDepth) { _, newDepth in
-            guard returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
+            guard sourceNavigationRevision == router.externalNavigationRevision,
+                  returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
             returnToSourcesAfterPlayer = false
             if let controller = sourceController { presentSources(controller) }
         }
         // 从规则仓库回来：规则装上了就把面板重开一次；还是空的就留在原地。
         .onChange(of: navigationDepth) { _, newDepth in
-            guard returnFromRuleShop, newDepth <= depthBeforeRuleShop else { return }
+            guard sourceNavigationRevision == router.externalNavigationRevision,
+                  returnFromRuleShop, newDepth <= depthBeforeRuleShop else { return }
             returnFromRuleShop = false
             guard !environment.plugins.pluginList.isEmpty else { return }
             guard let controller = sourceController else { return }
@@ -721,9 +730,14 @@ struct PopularHero: View {
 
     /// 把面板交给根层去弹：这里只给控制器和两个回调，不动这一页的布局。
     private func presentSources(_ controller: InfoController) {
+        guard router.pendingExternalLink == nil else { return }
+        sourceNavigationRevision = router.externalNavigationRevision
+        let revision = router.externalNavigationRevision
         SourceSheetCoordinator.shared.present(
             controller: controller,
             onPlay: { pluginName, result in
+                guard revision == router.externalNavigationRevision,
+                      router.pendingExternalLink == nil else { return }
                 SourceSheetCoordinator.shared.dismiss()
                 returnToSourcesAfterPlayer = true
                 depthBeforePlayer = navigationDepth
@@ -747,6 +761,8 @@ struct PopularHero: View {
                 )
             },
             onOpenRuleShop: {
+                guard revision == router.externalNavigationRevision,
+                      router.pendingExternalLink == nil else { return }
                 // 面板自己关，这里只记下来，等它关完再推页。
                 goToRuleShopAfterDismiss = true
                 SourceSheetCoordinator.shared.dismiss()

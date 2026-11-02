@@ -23,6 +23,12 @@ struct AliasPickerTarget: Identifiable, Hashable {
     }
 }
 
+struct CaptchaFlowBox: Identifiable {
+    let name: String
+    let flow: CaptchaFlow
+    var id: String { name }
+}
+
 /// 选源面板的耗时只写日志，不上屏（Colo 2026-10-28）。
 ///
 /// 白屏那次是拿它量的：点下去 → 面板开始画 → 列表画出来。
@@ -60,6 +66,7 @@ struct SourceSheet: View {
     @State private var browserFailure = false
     /// 正在选别名去检索的来源；为空表示没有打开别名选择器。
     @State private var aliasPickerTarget: AliasPickerTarget?
+    @State private var captchaFlow: CaptchaFlowBox?
     /// 正在修改检索词的来源；为空表示没有弹出输入框。
     @State private var keywordTarget: String?
     @State private var keywordDraft = ""
@@ -102,6 +109,36 @@ struct SourceSheet: View {
         }
         .sheet(item: $aliasPickerTarget) { target in
             aliasPicker(for: target.sourceName)
+        }
+        .interactiveDismissDisabled(captchaFlow != nil)
+        .overlay {
+            if let box = captchaFlow {
+                let maxHeight: CGFloat = switch box.flow.phase {
+                case .completed: 220
+                case .failed, .cancelled: 240
+                default: 560
+                }
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            Task {
+                                switch box.flow.phase {
+                                case .completed: return
+                                case .failed, .cancelled: break
+                                default: await box.flow.cancel()
+                                }
+                                captchaFlow = nil
+                            }
+                        }
+                    CaptchaSheet(flow: box.flow) { captchaFlow = nil }
+                        .frame(maxWidth: 420, maxHeight: maxHeight)
+                        .background(KazumiPalette.heroBackground(for: colorScheme))
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .shadow(radius: 24)
+                        .padding(24)
+                }
+            }
         }
         // 修改此来源的检索词（main 的 onSourceSearch）：只重检这一个来源。
         .alert(
@@ -295,6 +332,20 @@ struct SourceSheet: View {
                         Divider().padding(.leading, 16)
                     }
                 }
+            }
+
+            if group.status == .captcha {
+                Divider().padding(.leading, 14)
+                Button {
+                    guard let flow = controller.searchService.makeCaptchaFlow(
+                        for: group.name,
+                        keyword: group.keyword
+                    ) else { return }
+                    captchaFlow = CaptchaFlowBox(name: group.name, flow: flow)
+                } label: {
+                    actionRowLabel(icon: "checkmark.shield", title: "进行验证")
+                }
+                .buttonStyle(.plain)
             }
 
             // 一格里最多一行动作：失败只留「重试」，找不到只留「使用别名」。

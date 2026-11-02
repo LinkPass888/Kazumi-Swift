@@ -18,7 +18,7 @@ enum CaptchaFlowError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .timedOut: "验证超时，请稍后重试"
+        case .timedOut: "验证失败，请稍后重试"
         case .failed: "验证失败，请稍后重试"
         case .cancelled: "已取消验证"
         }

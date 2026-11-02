@@ -103,6 +103,11 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleSignature: "????"
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLName: com.predidit.kazumi.navigation
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - kazumi
         # DanDanPlay 弹幕接口的凭据（构建时通过 DANDAN_APP_ID / DANDAN_APP_SECRET 注入）。
         # 空值时弹幕功能不可用；设置页不再提供手填（LP 2026-10-24）。
         DanDanAppId: $(DANDAN_APP_ID)

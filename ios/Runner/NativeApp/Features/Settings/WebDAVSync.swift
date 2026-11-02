@@ -226,6 +226,29 @@ enum WebDAVSync {
             )
         }
 
+        if contents.contains(.collect) {
+            entries = mergeEntries(local: library.entries, remote: entries)
+            var removals: [Int: Date] = [:]
+            func noteRemoval(_ id: Int, _ date: Date) {
+                if let existing = removals[id], existing >= date { return }
+                removals[id] = date
+            }
+            for item in mergedRemovals { noteRemoval(item.id, item.removedAt) }
+            for item in library.removedEntries { noteRemoval(item.id, item.removedAt) }
+            entries.removeAll { entry in
+                guard let removedAt = removals[entry.id] else { return false }
+                return removedAt > entry.updatedAt
+            }
+            let collectedIDs = Set(entries.map(\.id))
+            mergedRemovals = removals
+                .filter { !collectedIDs.contains($0.key) }
+                .map { RemovedEntry(id: $0.key, removedAt: $0.value) }
+                .sorted { $0.id < $1.id }
+        }
+        if contents.contains(.history) {
+            history = mergeHistory(local: library.history, remote: history)
+        }
+
         // 落到本机：开着的那几类用合并结果，没开的原样不动。
         let localEntries = contents.contains(.collect) ? entries : library.entries
         let localHistory = contents.contains(.history) ? history : library.history

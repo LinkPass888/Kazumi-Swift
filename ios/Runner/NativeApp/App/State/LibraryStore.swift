@@ -538,6 +538,11 @@ final class LibraryStore {
         save()
     }
 
+    func removeHistory(recordIDs: Set<String>) {
+        history.removeAll { recordIDs.contains($0.id) }
+        save()
+    }
+
     /// 删掉这部剧的全部记录（不分规则）。
     func removeHistory(bangumiID: Int) {
         history.removeAll { $0.bangumiID == bangumiID }

@@ -141,21 +141,26 @@ final class PluginsController {
             return
         }
         var migrated: [Plugin] = []
+        var migratedURLs: [URL] = []
         for url in entries where url.pathExtension == "json" {
             do {
                 let decoded = try JSONValue.decode(try String(contentsOf: url, encoding: .utf8))
                 migrated.append(Plugin(json: decoded))
-                try FileManager.default.removeItem(at: url)
+                migratedURLs.append(url)
             } catch {
                 errorReporter("Plugin: failed to migrate legacy rule \(url.lastPathComponent)", error)
             }
         }
         guard !migrated.isEmpty else { return }
+        let legacyURLs = migratedURLs
         pluginList = migrated
         mutations = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try self.persist()
+                for url in legacyURLs {
+                    try? FileManager.default.removeItem(at: url)
+                }
             } catch {
                 self.errorReporter("Plugin: failed to persist migrated rules", error)
             }

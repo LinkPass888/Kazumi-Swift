@@ -34,6 +34,7 @@ struct BangumiInfoScreen: View {
     @State private var returnToSourcesAfterPlayer = false
     /// 推播放页之前的栈深，用来判断已经退回详情页了。
     @State private var depthBeforePlayer = 0
+    @State private var sourceNavigationRevision: UInt = 0
 
     /// 当前所在 Tab 的导航栈深度。四个 Tab 都算上，页面不关心自己在哪个 Tab。
     private var navigationDepth: Int {
@@ -74,6 +75,14 @@ struct BangumiInfoScreen: View {
             if controller == nil {
                 await load()
             }
+        }
+        .onChange(of: router.externalModalDismissalRevision) { _, _ in
+            isShowingSources = false
+        }
+        .onChange(of: router.externalNavigationRevision) { _, _ in
+            returnToSourcesAfterPlayer = false
+            pendingTimelineItem = nil
+            controller?.closeSourceSearch()
         }
         .onChange(of: bangumiID) { _, _ in
             controller = nil
@@ -175,6 +184,8 @@ struct BangumiInfoScreen: View {
             SourceSheet(
                 controller: current,
                 onPlay: { pluginName, result in
+                    guard router.pendingExternalLink == nil else { return }
+                    sourceNavigationRevision = router.externalNavigationRevision
                     isShowingSources = false
                     returnToSourcesAfterPlayer = true
                     depthBeforePlayer = navigationDepth
@@ -201,6 +212,8 @@ struct BangumiInfoScreen: View {
                 // 空面板上的「去规则仓库添加」：不传这个就只有 dismiss，按钮点了不跳（LP 2026-10-29）。
                 // 跟点结果一样先收面板，回来再把面板开一次——装完规则正好接着选源。
                 onOpenRuleShop: {
+                    guard router.pendingExternalLink == nil else { return }
+                    sourceNavigationRevision = router.externalNavigationRevision
                     isShowingSources = false
                     returnToSourcesAfterPlayer = true
                     depthBeforePlayer = navigationDepth
@@ -210,7 +223,9 @@ struct BangumiInfoScreen: View {
         }
         // 从播放页返回：把面板放回来。栈深回到推播放页之前就说明回来了。
         .onChange(of: navigationDepth) { _, newDepth in
-            guard returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
+            guard sourceNavigationRevision == router.externalNavigationRevision,
+                  router.pendingExternalLink == nil,
+                  returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
             returnToSourcesAfterPlayer = false
             isShowingSources = true
         }

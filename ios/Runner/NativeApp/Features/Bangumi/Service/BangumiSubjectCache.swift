@@ -69,7 +69,7 @@ final class BangumiSubjectCache {
               let savedAt = payload.infoSavedAt,
               Date().timeIntervalSince1970 - savedAt < Self.infoMaxAge
         else { return nil }
-        let item = BangumiItem.fromJSON(JSONValue(any: info))
+        let item = BangumiItem.fromJSON(JSONValue(any: info.value))
         // 没标题的旧缓存当没有（LP 2997）：以前会把半截响应存进去，
         // 之后详情页就一直拿它铺页面，停在「未知」那张空页上。
         guard !item.displayName.isEmpty else { return nil }
@@ -86,7 +86,7 @@ final class BangumiSubjectCache {
               let savedAt = payload.episodesSavedAt,
               Date().timeIntervalSince1970 - savedAt < Self.episodesMaxAge
         else { return nil }
-        let parsed = raw.map { BangumiEpisode.fromJSON(JSONValue(any: $0)) }
+        let parsed = raw.map { BangumiEpisode.fromJSON(JSONValue(any: $0.value)) }
         // 一集首播日期都没有的缓存当没有（LP 3013）：早期版本存过没有 airdate 的
         // 剧集，结果「更新进度」永远算成 0 集、整行不显示，缓存还挡着不再去拉。
         // 只认「一条日期都没有」这种情况，正常的未播出番（日期为空）不受影响。
@@ -127,12 +127,13 @@ final class BangumiSubjectCache {
     /// 接口返回的完整条目，落盘。
     func store(info json: JSONValue, for bangumiID: Int) {
         // 半截响应不落盘：存了会顶掉原来那份好的，还会被当成「有数据」不再刷新。
-        guard !BangumiItem.fromJSON(json).displayName.isEmpty else { return }
+        let item = BangumiItem.fromJSON(json)
+        guard !item.displayName.isEmpty else { return }
         var payload = loadPayload(bangumiID) ?? Payload()
         payload.info = AnyCodableJSON(json.foundationObject)
         payload.infoSavedAt = Date().timeIntervalSince1970
         save(payload, for: bangumiID)
-        items[bangumiID] = BangumiItem.fromJSON(json)
+        items[bangumiID] = item
         infoSavedAt[bangumiID] = payload.infoSavedAt
     }
 

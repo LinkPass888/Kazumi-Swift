@@ -10,14 +10,9 @@
 import SwiftUI
 
 struct KazumiRootView: View {
-    @State private var environment: AppEnvironment
-    @State private var storageFailure: AppEnvironment.StartupFailure?
-
-    init() {
-        let result = AppEnvironment.makeAtLaunch()
-        _environment = State(initialValue: result.environment)
-        _storageFailure = State(initialValue: result.failure)
-    }
+    // The UIKit scene owns this environment, including its one router.
+    let environment: AppEnvironment
+    var storageFailure: AppEnvironment.StartupFailure?
 
     var body: some View {
         AppRoot(failure: storageFailure)

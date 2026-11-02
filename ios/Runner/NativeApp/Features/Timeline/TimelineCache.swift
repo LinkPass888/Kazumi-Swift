@@ -121,6 +121,20 @@ final class TimelineCache {
         return days
     }
 
+    /// 快捷指令只读磁盘快照，不刷新、不删除跨季缓存，也不把读取时刻冒充保存时刻。
+    func localCurrentSnapshot(seasonStart: String) -> (days: [JSONValue], savedAt: Date?)? {
+        let url = fileURL(currentSeason: true, seasonStart: nil)
+        guard let data = try? Data(contentsOf: url),
+              case let .object(root)? = try? JSONValue.decode(String(decoding: data, as: UTF8.self)),
+              case let .string(season)? = root["season"], season == seasonStart,
+              case let .array(days)? = root["days"], days.count == 7,
+              days.allSatisfy({ if case .array = $0 { return true }; return false })
+        else { return nil }
+        // 与页面的“全空就刷新”策略分开：只读指令应区分有效空缓存与没有缓存。
+        let savedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        return (days, savedAt)
+    }
+
     /// 往期季度的原始 JSON。
     func seasonRawDays(start: String) -> [JSONValue]? {
         guard let data = try? Data(contentsOf: fileURL(currentSeason: false, seasonStart: start)) else {

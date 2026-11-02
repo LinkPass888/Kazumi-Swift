@@ -93,7 +93,7 @@ struct ApiRuleStrategyTests {
     }
 
     @Test("搜索解析：名称、来源与详情页模板") func parseSearch() throws {
-        let raw = #"{"data":[{"name":"进击的巨人","url":"GV123"},{"name":"","url":"broken"}]}"#
+        let raw = #"{"data":[{"name":"进击的巨人","url":"123"},{"name":"","url":"broken"}]}"#
         let config = ApiSearchConfig(
             request: ApiRequestConfig(url: "https://a.com"),
             listPath: "$.data[*]",
@@ -129,7 +129,7 @@ struct ApiRuleStrategyTests {
         let config = ApiChapterConfig(
             request: ApiRequestConfig(url: "https://a.com"),
             format: .nested,
-            episodeUrlPath: "",
+            episodeUrlPath: "$.id",
             episodePage: ApiEpisodePageConfig(json: .object([
                 "url": .string("/play/@episodeUrl"),
                 "query": .object(["road": .string("@roadNumber")])
@@ -249,7 +249,7 @@ struct PluginImportTests {
 
     @Test("同名规则合并去重且保留顺序") func dedupe() {
         let other = ruleJSON.replacingOccurrences(of: "测试站", with: "其他站")
-        let input = "[\"\(other)\",\"\(ruleJSON)\",\"\(ruleJSON)\"]"
+        let input = "[\(other),\(ruleJSON),\(ruleJSON)]"
         let result = PluginImportParser.parse(input)
         #expect(result.plugins.count == 2)
         #expect(result.plugins.first?.name == "其他站")

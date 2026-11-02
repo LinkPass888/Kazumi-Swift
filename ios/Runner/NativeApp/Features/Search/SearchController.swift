@@ -46,10 +46,9 @@ final class SearchController {
 
         let filterState = SearchParser(input).toFilterState()
         if let id = Int(filterState.id), !filterState.id.isEmpty {
-            if let item = await BangumiAPI.info(id: id) {
-                guard generation == searchGeneration else { return }
-                bangumiList = [item]
-            }
+            let item = await BangumiAPI.info(id: id)
+            guard generation == searchGeneration else { return }
+            if let item { bangumiList = [item] }
             hasMoreSearchResults = false
             isLoading = false
             isTimeOut = bangumiList.isEmpty

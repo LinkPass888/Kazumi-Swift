@@ -11,6 +11,60 @@
 import Foundation
 import Observation
 
+/// Pure URL parsing; receiving an invalid URL must not change navigation state.
+enum KazumiLink: Equatable, Sendable {
+    case bangumi(Int)
+    case search(String)
+    case library
+    case history
+    case downloads
+    /// A local shortcut to details; source selection remains an explicit user action.
+    case watch(Int)
+
+    static func parse(_ url: URL) -> KazumiLink? {
+        guard url.scheme?.lowercased() == "kazumi",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.user == nil, components.password == nil, components.port == nil,
+              let host = components.host else { return nil }
+        // Validate UTF-8/percent decoding before Foundation's queryItems convenience API.
+        guard components.percentEncodedPath.removingPercentEncoding != nil,
+              components.percentEncodedQuery?.removingPercentEncoding != nil
+                || components.percentEncodedQuery == nil else { return nil }
+        switch host.lowercased() {
+        case "bangumi", "watch":
+            let segments = components.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: false)
+            guard segments.count == 2, segments[0].isEmpty,
+                  let raw = String(segments[1]).removingPercentEncoding,
+                  !raw.isEmpty, raw.utf8.allSatisfy({ (48...57).contains($0) }),
+                  let id = Int(raw), id > 0, String(id) == raw else { return nil }
+            return host.lowercased() == "watch" ? .watch(id) : .bangumi(id)
+        case "search":
+            // Match URI query semantics: '+' means space; encoded %2B remains a plus.
+            let pairs = (components.percentEncodedQuery ?? "").split(separator: "&")
+            for pair in pairs {
+                let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                let name = String(parts[0]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding
+                guard name == "query" else { continue }
+                let value = parts.count == 2 ? String(parts[1]) : ""
+                guard let decoded = value.replacingOccurrences(of: "+", with: " ").removingPercentEncoding else { return nil }
+                let query = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
+                return query.isEmpty ? nil : .search(query)
+            }
+            return nil
+        case "library", "history", "downloads":
+            guard components.path.isEmpty || components.path == "/",
+                  components.query == nil, components.fragment == nil else { return nil }
+            switch host.lowercased() {
+            case "library": return .library
+            case "history": return .history
+            default: return .downloads
+            }
+        default:
+            return nil
+        }
+    }
+}
+
 /// 一级目的地。
 enum AppDestination: String, CaseIterable, Identifiable, Hashable, Sendable {
     case popular
@@ -304,6 +358,75 @@ final class AppRouter {
     var timelinePath: [AppRoute] = []
     var collectPath: [AppRoute] = []
     var myPath: [AppRoute] = []
+
+    /// Invalidate source-sheet return callbacks before any external path mutation.
+    private(set) var externalNavigationRevision: UInt = 0
+    private(set) var externalModalDismissalRevision: UInt = 0
+    private(set) var pendingExternalLink: KazumiLink?
+    private(set) var externalRequestRevision: UInt = 0
+    var isRootMounted = false
+    /// Screenshot export can defer navigation without stopping or replacing the player.
+    var externalNavigationDeferralCount = 0
+    @ObservationIgnored var onExternalNavigationRequested: (() -> Void)?
+
+    @discardableResult
+    func openURL(_ url: URL) -> Bool {
+        guard let link = KazumiLink.parse(url) else { return false }
+        open(link)
+        return true
+    }
+
+    /// Shared ingress for validated foreground App Intent and debug requests.
+    func open(_ link: KazumiLink) {
+        externalRequestRevision &+= 1
+        pendingExternalLink = link
+        onExternalNavigationRequested?()
+    }
+
+    func beginExternalNavigation() {
+        externalNavigationRevision &+= 1
+    }
+
+    func externalModalsDidDismiss() {
+        externalModalDismissalRevision &+= 1
+    }
+
+    /// Preserve unrelated tab stacks, but remove every player and everything above it.
+    /// The target stack is cleared separately, then mounted before its new route is pushed.
+    func prepareExternalNavigation() -> AppDestination? {
+        guard let link = pendingExternalLink else { return nil }
+        let target: AppDestination
+        switch link {
+        case .library: target = .collect
+        case .history, .downloads: target = .my
+        case .bangumi, .search, .watch: target = selectedDestination
+        }
+        for destination in AppDestination.allCases {
+            let routes = path(for: destination)
+            if destination == target {
+                setPath([], for: destination)
+            } else if let index = routes.firstIndex(where: {
+                if case .player = $0 { return true }
+                return false
+            }) {
+                setPath(Array(routes.prefix(index)), for: destination)
+            }
+        }
+        selectedDestination = target
+        return target
+    }
+
+    func finishExternalNavigation() {
+        guard let link = pendingExternalLink else { return }
+        pendingExternalLink = nil
+        switch link {
+        case .bangumi(let id), .watch(let id): push(.bangumiInfo(bangumiID: id, zoom: false))
+        case .search(let query): push(.search(keyword: query))
+        case .library: break
+        case .history: push(.history)
+        case .downloads: push(.download)
+        }
+    }
 
     /// 启动时打开的标签（对应原版的 defaultStartupPage）。
     init(defaultStartupPage: String = "/tab/popular/") {

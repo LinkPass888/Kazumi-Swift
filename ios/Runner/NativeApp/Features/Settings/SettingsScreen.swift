@@ -183,6 +183,16 @@ struct SettingsScreen: View {
                     Text(group.title)
                 }
             }
+            #if DEBUG
+            Section("开发验证") {
+                NavigationLink {
+                    KazumiIntentDebugView()
+                } label: {
+                    Label("快捷指令验证", systemImage: "command")
+                }
+                .accessibilityIdentifier("debug-intents")
+            }
+            #endif
         }
         // 顶部滚动边缘：列表顶部用渐进模糊（.soft）。
         .scrollEdgeEffectStyle(.soft, for: .top)

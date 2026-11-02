@@ -366,6 +366,7 @@ struct PlayerScreen: View {
     /// 侧滑返回时页面跟着手走多少点。
     /// 这一次拖动是不是从左边边缘起手、按侧滑返回处理。
     @State private var sleepTimerRemaining: Int?
+    @State private var sleepTimerChosenMinutes: Int?
     @State private var sleepTimerTask: Task<Void, Never>?
     /// 片头片尾弹窗：AniSkip 的时间轴 + 倒数 / 撤销 / 切集三态。
     @State private var skipPill = SkipSegmentPillModel()
@@ -1608,7 +1609,9 @@ struct PlayerScreen: View {
         noteInteraction()
         showControlsBriefly()
         flashScreenshot()
+        environment.router.externalNavigationDeferralCount += 1
         Task { @MainActor in
+            defer { environment.router.externalNavigationDeferralCount -= 1 }
             let captured = await surface.captureFrame()
             guard let url = captured.url else {
                 // 抓帧自己会给一句能直接给用户看的话（哪种方式、多少毫秒、什么尺寸），
@@ -1792,7 +1795,7 @@ struct PlayerScreen: View {
         orientationRequestTask?.cancel()
         orientationGeneration += 1
         let generation = orientationGeneration
-        let wantsLandscape = mask.contains(.landscape)
+        let wantsLandscape = !mask.intersection(.landscape).isEmpty
         orientationRequestTask = Task { @MainActor in
             for attempt in 0..<12 {          // 12 × 250ms = 3 秒
                 await Task.yield()
@@ -2310,19 +2313,24 @@ struct PlayerScreen: View {
 
     /// 定时关闭的菜单标题：定上了就把分钟数写在上面。
     private var sleepTimerTitle: String {
-        if let minutes = sleepTimerMinutes { return "定时关闭（\(minutes) 分钟）" }
+        if let minutes = sleepTimerRemainingMinutes { return "定时关闭（\(minutes) 分钟）" }
         return "定时关闭"
     }
 
     /// 面板右边那行字：没开写「不开启」，开着写还剩几分钟（每分钟自己走）。
     private var sleepTimerValue: String {
-        guard let minutes = sleepTimerMinutes else { return "不开启" }
+        guard let minutes = sleepTimerRemainingMinutes else { return "不开启" }
         return "还剩 \(minutes) 分钟"
     }
 
-    private var sleepTimerMinutes: Int? {
+    private var sleepTimerRemainingMinutes: Int? {
         guard let remaining = sleepTimerRemaining else { return nil }
         return max(1, Int((Double(remaining) / 60).rounded(.up)))
+    }
+
+    /// 用户选的那一档（选中的勾看它，不跟着倒数变）。
+    private var sleepTimerMinutes: Int? {
+        sleepTimerChosenMinutes
     }
 
     /// 子菜单那一项的标题：定上了就把剩余时间写上去（LP 4669），例如
@@ -2339,6 +2347,7 @@ struct PlayerScreen: View {
         noteInteraction()
         sleepTimerTask?.cancel()
         sleepTimerRemaining = minutes * 60
+        sleepTimerChosenMinutes = minutes
         let target = minutes * 60
         sleepTimerTask = Task { @MainActor in
             var left = target
@@ -2349,6 +2358,7 @@ struct PlayerScreen: View {
                 sleepTimerRemaining = left
             }
             sleepTimerRemaining = nil
+            sleepTimerChosenMinutes = nil
             surface.pause()
             // 定时关闭那句跟倍速、收藏同一条线（LP 4668）。
             surface.hudToastMessage = "定时关闭：已暂停"
@@ -2361,6 +2371,7 @@ struct PlayerScreen: View {
         sleepTimerTask?.cancel()
         sleepTimerTask = nil
         sleepTimerRemaining = nil
+        sleepTimerChosenMinutes = nil
     }
 
     /// 远程投屏：把系统那粒 AirPlay 按钮摆出来，点它选设备。

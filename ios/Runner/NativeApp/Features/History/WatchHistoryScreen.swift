@@ -65,9 +65,7 @@ struct WatchHistoryScreen: View {
         }
         .confirmationDialog("确定清空全部观看历史？", isPresented: $isConfirmingClear, titleVisibility: .visible) {
             Button("清空全部", role: .destructive) {
-                for record in records {
-                    library.removeHistory(recordID: record.id)
-                }
+                library.removeHistory(recordIDs: Set(records.map(\.id)))
             }
             Button("取消", role: .cancel) {}
         }

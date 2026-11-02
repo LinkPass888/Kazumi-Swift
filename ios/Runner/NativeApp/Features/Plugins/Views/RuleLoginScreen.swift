@@ -203,7 +203,8 @@ private struct RuleLoginWebView: UIViewRepresentable {
                         name: $0.name,
                         value: $0.value,
                         domain: $0.domain,
-                        path: $0.path
+                        path: $0.path,
+                        isSecure: $0.isSecure
                     )
                 }
                 // 用 WebView 真正发出去的 UA，站点绑定指纹时才对得上。

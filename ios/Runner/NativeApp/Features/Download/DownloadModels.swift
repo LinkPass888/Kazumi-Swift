@@ -49,6 +49,7 @@ struct DownloadEpisode: Codable, Identifiable, Sendable, Hashable {
     var errorMessage: String?
     /// 落盘后的相对文件名（相对这条记录的目录）。
     var fileName: String?
+    var directoryPath: String?
     var updatedAt: Date
 
     var id: Int { number }
@@ -84,6 +85,7 @@ struct DownloadEpisode: Codable, Identifiable, Sendable, Hashable {
         downloadedBytes: Int64 = 0,
         errorMessage: String? = nil,
         fileName: String? = nil,
+        directoryPath: String? = nil,
         updatedAt: Date = Date()
     ) {
         self.number = number
@@ -96,6 +98,7 @@ struct DownloadEpisode: Codable, Identifiable, Sendable, Hashable {
         self.downloadedBytes = downloadedBytes
         self.errorMessage = errorMessage
         self.fileName = fileName
+        self.directoryPath = directoryPath
         self.updatedAt = updatedAt
     }
 }
@@ -116,6 +119,42 @@ struct DownloadRecord: Codable, Identifiable, Sendable {
     /// （LP 5508 抓包：`get_detail?vod_id=<m3u8 地址>` → 1001 参数错误）。
     /// 旧记录没有这个字段，解码出来是空串，回放时退回老样子。
     var itemSource: String = ""
+
+    init(
+        bangumiID: Int,
+        title: String,
+        coverURL: String,
+        pluginName: String,
+        road: Int,
+        episodes: [DownloadEpisode],
+        createdAt: Date,
+        itemSource: String = ""
+    ) {
+        self.bangumiID = bangumiID
+        self.title = title
+        self.coverURL = coverURL
+        self.pluginName = pluginName
+        self.road = road
+        self.episodes = episodes
+        self.createdAt = createdAt
+        self.itemSource = itemSource
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bangumiID, title, coverURL, pluginName, road, episodes, createdAt, itemSource
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bangumiID = try container.decode(Int.self, forKey: .bangumiID)
+        title = try container.decode(String.self, forKey: .title)
+        coverURL = try container.decode(String.self, forKey: .coverURL)
+        pluginName = try container.decode(String.self, forKey: .pluginName)
+        road = try container.decode(Int.self, forKey: .road)
+        episodes = try container.decode([DownloadEpisode].self, forKey: .episodes)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        itemSource = try container.decodeIfPresent(String.self, forKey: .itemSource) ?? ""
+    }
 
     /// 记录主键：同一部番、同一条规则、同一条线路算一份。
     var id: String { Self.key(bangumiID: bangumiID, pluginName: pluginName, road: road) }

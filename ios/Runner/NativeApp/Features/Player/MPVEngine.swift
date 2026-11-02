@@ -1247,6 +1247,7 @@ private struct CommandRequest {
 
 /// 在 mpv 自己的线程上收事件，攒成快照再递回主线程。
 final class MPVEventPump: @unchecked Sendable {
+    nonisolated(unsafe) private static let queueKey = DispatchSpecificKey<Bool>()
     private let mpv: OpaquePointer
     private let queue = DispatchQueue(label: "kazumi.mpv.events", qos: .userInteractive)
     private let onSnapshot: @Sendable (MPVSnapshot) -> Void
@@ -1277,6 +1278,7 @@ final class MPVEventPump: @unchecked Sendable {
         self.mpv = mpv
         self.onSnapshot = onSnapshot
         onLog = log
+        queue.setSpecific(key: Self.queueKey, value: true)
     }
 
     func start() {
@@ -1302,7 +1304,8 @@ final class MPVEventPump: @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(250))
         timer.setEventHandler { [weak self] in
-            self?.drain()
+            guard let self, self.running else { return }
+            self.drain()
         }
         timer.resume()
         ticker = timer
@@ -1316,6 +1319,10 @@ final class MPVEventPump: @unchecked Sendable {
         ticker?.cancel()
         ticker = nil
         mpv_set_wakeup_callback(mpv, nil, nil)
+        // 句柄随后就会被销毁，必须先等读事件的队列空下来；已经在队列上就不能等自己。
+        if DispatchQueue.getSpecific(key: Self.queueKey) == nil {
+            queue.sync {}
+        }
     }
 
     /// 引擎要开始新的一次加载了（换集 / 重试 / 换源）。
@@ -1341,9 +1348,9 @@ final class MPVEventPump: @unchecked Sendable {
     }
 
     fileprivate func signal() {
-        guard running else { return }
         queue.async { [weak self] in
-            self?.drain()
+            guard let self, self.running else { return }
+            self.drain()
         }
     }
 

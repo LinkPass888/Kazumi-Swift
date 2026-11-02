@@ -68,7 +68,11 @@ final class DownloadEngine: @unchecked Sendable {
 
     /// 取某个地址该带的 Cookie：规则登录过才有，按地址的域和路径筛（Fuck 5469 第 2 条）。
     /// 下载取的是播放页里那份媒体，规则要登录时这份请求同样得带。
-    var cookieForURL: (@Sendable (URL) -> String?)?
+    private let cookieForURL: (@Sendable (URL) -> String?)?
+
+    init(cookieForURL: (@Sendable (URL) -> String?)? = nil) {
+        self.cookieForURL = cookieForURL
+    }
 
     private func applyCookie(to request: inout URLRequest, url: URL) {
         guard let cookie = cookieForURL?(url), !cookie.isEmpty else { return }

@@ -429,7 +429,7 @@ final class CaptchaWebView: NSObject {
     private static func customScript(_ script: String) -> String {
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
         // 空脚本直接走 fail 分支，与 Dart 端 `!${script.trim().isEmpty ? 'false' : 'true'}` 等价。
-        let guardExpression = trimmed.isEmpty ? "true" : "false"
+        let guardExpression = trimmed.isEmpty ? "false" : "true"
         return """
         (function() {
           try {

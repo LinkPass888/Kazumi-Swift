@@ -20,6 +20,7 @@ final class PluginCookieStore: @unchecked Sendable {
         var value: String
         var domain: String
         var path: String
+        var isSecure: Bool? = nil
     }
 
     /// 落盘用：Cookie 与 UA 一起存，重启后登录态还在。
@@ -151,11 +152,13 @@ final class PluginCookieStore: @unchecked Sendable {
     func cookies(pluginName: String, url: String) -> [Cookie] {
         guard let components = URLComponents(string: url) else { return [] }
         let host = (components.host ?? "").lowercased()
+        let isHTTPS = components.scheme?.lowercased() == "https"
         let requestPath = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
         lock.lock()
         defer { lock.unlock() }
         guard let jar = jars[pluginName] else { return [] }
         return jar.filter { cookie in
+            if cookie.isSecure == true, !isHTTPS { return false }
             // 域级 Cookie 存下来是带前导点的（`.cycani.org`）：不去点永远筛不上，
             // 整条被静默丢掉（Fuck 5469）。
             let domain = Self.normalizedDomain(cookie.domain)

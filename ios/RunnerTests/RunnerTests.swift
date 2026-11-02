@@ -12,14 +12,14 @@ import Testing
 struct RunnerTests {
     @Test("应用包信息保持原样")
     func hostAppIdentity() {
-        let host = Bundle(for: BundleToken.self)
+        let host = Bundle.main
         #expect(host.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String == "Kazumi")
         #expect(host.object(forInfoDictionaryKey: "CFBundleName") as? String == "kazumi")
     }
 
     @Test("Anime4K 着色器随包分发")
     func anime4kShadersBundled() {
-        let host = Bundle(for: BundleToken.self)
+        let host = Bundle.main
         let shader = host.url(
             forResource: "Anime4K_Upscale_CNN_x2_M",
             withExtension: "glsl",
@@ -28,5 +28,3 @@ struct RunnerTests {
         #expect(shader != nil)
     }
 }
-
-private final class BundleToken {}

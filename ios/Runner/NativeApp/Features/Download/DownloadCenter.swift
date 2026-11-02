@@ -33,7 +33,6 @@ final class DownloadCenter {
     /// 界面拿来当 toast 显示完就把 `notice` 清掉，所以它不会自己一直在。
     var failureNotice: String?
 
-    private let engine = DownloadEngine()
     private let resolver = EpisodeMediaResolver()
     private let directory: DownloadDirectoryStore
     private let plugins: PluginsController?
@@ -206,7 +205,9 @@ final class DownloadCenter {
     /// 删掉一份记录连同它的文件。
     func removeRecord(_ record: DownloadRecord) {
         cancel(recordKey: record.id, numbers: record.episodes.map(\.number))
-        try? FileManager.default.removeItem(at: folderURL(for: record))
+        for folder in recordFolders(for: record) where !isFolderReferenced(folder, excluding: record.id) {
+            try? FileManager.default.removeItem(at: folder)
+        }
         records.removeAll { $0.id == record.id }
         activeNumbers[record.id] = nil
         persist()
@@ -234,20 +235,21 @@ final class DownloadCenter {
     /// 离线下载总共占了多少字节（文件真的在盘上的才算）。
     func totalBytes() -> Int64 {
         records.reduce(Int64(0)) { total, record in
-            let folder = folderURL(for: record)
-            let url = URL(filePath: folder.path)
-            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey]),
-                  values.isDirectory == true,
-                  let files = try? FileManager.default.contentsOfDirectory(
-                    at: url,
-                    includingPropertiesForKeys: [.fileSizeKey],
-                    options: [.skipsHiddenFiles]
-                  )
-            else { return total }
             var sum: Int64 = 0
-            for file in files {
-                guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize else { continue }
-                sum += Int64(size)
+            for folder in recordFolders(for: record) {
+                let url = URL(filePath: folder.path)
+                guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey]),
+                      values.isDirectory == true,
+                      let files = try? FileManager.default.contentsOfDirectory(
+                        at: url,
+                        includingPropertiesForKeys: [.fileSizeKey],
+                        options: [.skipsHiddenFiles]
+                      )
+                else { continue }
+                for file in files {
+                    guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize else { continue }
+                    sum += Int64(size)
+                }
             }
             return total + sum
         }
@@ -256,15 +258,27 @@ final class DownloadCenter {
     /// 一次删多集（多选删除用）。
     func removeEpisodes(recordKey: String, numbers: [Int]) {
         guard let record = records.first(where: { $0.id == recordKey }), !numbers.isEmpty else { return }
-        let folder = folderURL(for: record)
         let targets = record.episodes.filter { numbers.contains($0.number) }
         cancel(recordKey: recordKey, numbers: numbers)
+        var listings: [String: [URL]] = [:]
         for episode in targets {
-            if let file = episode.fileName {
-                // 分片一起删：本地播放列表指向它们，留下就是垃圾。
-                try? FileManager.default.removeItem(at: folder.appending(path: file))
+            for folder in folders(for: record, episode: episode) {
+                let items: [URL]
+                if let cached = listings[folder.path] {
+                    items = cached
+                } else {
+                    items = (try? FileManager.default.contentsOfDirectory(
+                        at: folder,
+                        includingPropertiesForKeys: nil
+                    )) ?? []
+                    listings[folder.path] = items
+                }
+                if let file = episode.fileName {
+                    // 分片一起删：本地播放列表指向它们，留下就是垃圾。
+                    try? FileManager.default.removeItem(at: folder.appending(path: file))
+                }
+                removeSegments(in: folder, prefix: "ep-\(episode.number)", items: items)
             }
-            removeSegments(in: folder, prefix: "ep-\(episode.number)")
         }
         updateMany(recordKey: recordKey, numbers: Set(numbers)) { episodes, number in
             episodes.removeAll { $0.number == number }
@@ -285,8 +299,11 @@ final class DownloadCenter {
               let episode = record.episodes.first(where: { $0.number == number }),
               let file = episode.fileName
         else { return nil }
-        let url = folderURL(for: record).appending(path: file)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        for folder in folders(for: record, episode: episode) {
+            let url = folder.appending(path: file)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        return nil
     }
 
     /// 同上，但只按番剧 + 规则名找，不管线路（Colo 5174）。
@@ -418,17 +435,16 @@ final class DownloadCenter {
         update(item) { $0.status = .downloading }
 
         // 第二步：落盘。
-        let folder = folderURL(for: record)
+        let folder = folderURL(for: record, episode: episode)
         let referer = plugin.referer.isEmpty ? plugin.baseUrl : plugin.referer
         // 规则的会话跟着规则走：登录过就用登录那个 UA，媒体请求也带上它的 Cookie。
         let loginUA = PluginCookieStore.shared.userAgent(for: record.pluginName)
         let userAgent = (loginUA?.isEmpty == false ? loginUA! : plugin.userAgent)
         let pluginName = record.pluginName
-        engine.cookieForURL = { url in
+        let engine = DownloadEngine(cookieForURL: { url in
             let header = PluginCookieStore.shared.cookieHeader(pluginName: pluginName, url: url.absoluteString)
             return header.isEmpty ? nil : header
-        }
-        defer { engine.cookieForURL = nil }
+        })
         let target = try await engine.download(
             mediaURL: mediaURL,
             referer: referer,
@@ -451,6 +467,7 @@ final class DownloadCenter {
             episode.status = .completed
             episode.progress = 1
             episode.fileName = target.lastPathComponent
+            episode.directoryPath = folder.path
             episode.downloadedBytes = size
             episode.totalBytes = size
             episode.updatedAt = Date()
@@ -520,18 +537,59 @@ final class DownloadCenter {
     }
 
     private func folderURL(for record: DownloadRecord) -> URL {
+        let name = "\(record.bangumiID)-\(record.pluginName)-\(record.road)"
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return directory.directoryURL.appending(path: name, directoryHint: .isDirectory)
+    }
+
+    private func legacyFolderURL(for record: DownloadRecord) -> URL {
         let name = "\(record.bangumiID)-\(record.pluginName)"
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
         return directory.directoryURL.appending(path: name, directoryHint: .isDirectory)
     }
 
+    private func folderURL(for record: DownloadRecord, episode: DownloadEpisode) -> URL {
+        if let path = episode.directoryPath, !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return folderURL(for: record)
+    }
+
+    private func folders(for record: DownloadRecord, episode: DownloadEpisode) -> [URL] {
+        if episode.directoryPath?.isEmpty == false {
+            return [folderURL(for: record, episode: episode)]
+        }
+        let folder = folderURL(for: record)
+        let legacy = legacyFolderURL(for: record)
+        return folder.path == legacy.path ? [folder] : [folder, legacy]
+    }
+
+    private func recordFolders(for record: DownloadRecord) -> [URL] {
+        var candidates = record.episodes.flatMap { folders(for: record, episode: $0) }
+        candidates.append(folderURL(for: record))
+        candidates.append(legacyFolderURL(for: record))
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0.path).inserted }
+    }
+
+    private func isFolderReferenced(_ folder: URL, excluding recordID: String) -> Bool {
+        records.contains { other in
+            guard other.id != recordID else { return false }
+            if folderURL(for: other).path == folder.path || legacyFolderURL(for: other).path == folder.path {
+                return true
+            }
+            return other.episodes.contains { $0.directoryPath == folder.path }
+        }
+    }
+
     /// 删掉一集的所有分片（`ep-3-seg-00000.ts`、`ep-3.m3u8`、`ep-3-init.mp4` 之类）。
-    private func removeSegments(in folder: URL, prefix: String) {
-        guard let items = try? FileManager.default.contentsOfDirectory(
+    private func removeSegments(in folder: URL, prefix: String, items: [URL]? = nil) {
+        guard let items = items ?? (try? FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: nil
-        ) else { return }
+        )) else { return }
         for item in items where item.lastPathComponent.hasPrefix(prefix + ".") || item.lastPathComponent.hasPrefix(prefix + "-") {
             try? FileManager.default.removeItem(at: item)
         }
@@ -569,17 +627,26 @@ final class DownloadCenter {
     @discardableResult
     private func dropMissingFiles() -> Int {
         var dropped = 0
+        var adopted = false
         for recordIndex in records.indices {
-            let folder = folderURL(for: records[recordIndex])
-            for index in records[recordIndex].episodes.indices {
-                let episode = records[recordIndex].episodes[index]
+            let record = records[recordIndex]
+            for index in record.episodes.indices {
+                let episode = record.episodes[index]
                 guard episode.status == .completed,
-                      let fileName = episode.fileName,
-                      !FileManager.default.fileExists(
-                        atPath: folder.appending(path: fileName).path
-                      )
+                      let fileName = episode.fileName
                 else { continue }
+                if let folder = folders(for: record, episode: episode).first(where: {
+                    FileManager.default.fileExists(atPath: $0.appending(path: fileName).path)
+                }) {
+                    if records[recordIndex].episodes[index].directoryPath != folder.path {
+                        records[recordIndex].episodes[index].directoryPath = folder.path
+                        adopted = true
+                    }
+                    continue
+                }
+                guard episode.directoryPath?.isEmpty == false else { continue }
                 records[recordIndex].episodes[index].fileName = nil
+                records[recordIndex].episodes[index].directoryPath = nil
                 records[recordIndex].episodes[index].downloadedBytes = 0
                 records[recordIndex].episodes[index].updatedAt = Date()
                 dropped += 1
@@ -587,6 +654,8 @@ final class DownloadCenter {
         }
         if dropped > 0 {
             KazumiLogBuffer.storage("下载记录：\(dropped) 集的文件不在，按未下载处理")
+        }
+        if dropped > 0 || adopted {
             persist()
         }
         return dropped

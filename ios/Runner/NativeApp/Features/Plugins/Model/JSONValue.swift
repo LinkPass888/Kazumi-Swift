@@ -87,7 +87,9 @@ extension JSONValue {
         case .bool(let value): value ? "true" : "false"
         case .int(let value): String(value)
         case .double(let value):
-            value == value.rounded() ? String(Int(value)) : String(value)
+            value == value.rounded()
+                ? (intValue.map { String($0) } ?? String(value))
+                : String(value)
         case .string(let value): value
         case .array, .object:
             JSONValue.serialize(self, pretty: false)
@@ -97,7 +99,9 @@ extension JSONValue {
     var intValue: Int? {
         switch self {
         case .int(let value): value
-        case .double(let value): Int(value)
+        case .double(let value):
+            value.isFinite && value >= -9_223_372_036_854_775_808 && value < 9_223_372_036_854_775_808
+                ? Int(value) : nil
         case .string(let value): Int(value)
         case .bool(let value): value ? 1 : 0
         default: nil

@@ -44,16 +44,23 @@ struct RuleEngine: Sendable {
         }
 
         let raw: String
+        var failureBody: String?
         do {
             raw = try await execute(
                 request,
                 config: config,
                 phase: "search request",
                 cancelToken: cancelToken,
-                wrap: { RuleError.searchFailed(plugin: config.pluginName, cause: describe($0)) }
+                wrap: { error in
+                    if let networkError = error as? NetworkError,
+                       case .badResponse(_, let body, _) = networkError {
+                        failureBody = body
+                    }
+                    return RuleError.searchFailed(plugin: config.pluginName, cause: describe(error))
+                }
             )
         } catch let error as RuleError {
-            if isCaptchaChallengeResponse(error, config: config) {
+            if isCaptchaChallengeResponse(error, body: failureBody, config: config) {
                 throw RuleError.captchaRequired(plugin: config.pluginName)
             }
             throw error
@@ -188,9 +195,9 @@ struct RuleEngine: Sendable {
     /// 注意：`searchFailed` 的 `cause` 在 Swift 侧是 `String?`（由 `describe(_:)` 生成），
     /// 不像 Dart 那样保留原始异常对象，所以这里只能对文本做检测；
     /// 文本为空说明没有可判定内容，直接放弃。
-    private func isCaptchaChallengeResponse(_ error: RuleError, config: RuleExecutionConfig) -> Bool {
+    private func isCaptchaChallengeResponse(_ error: RuleError, body: String?, config: RuleExecutionConfig) -> Bool {
         guard config.searchMode == .xpath, config.antiCrawlerConfig.enabled else { return false }
-        guard case .searchFailed(_, let cause) = error, let body = cause else { return false }
+        guard case .searchFailed = error, let body else { return false }
         if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
         return xpathStrategy.detectsCaptchaChallenge(body, config: config.antiCrawlerConfig)
     }

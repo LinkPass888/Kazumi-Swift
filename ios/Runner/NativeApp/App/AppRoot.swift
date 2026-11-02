@@ -6,6 +6,7 @@
 //  启动后先检查应用更新（有新版就弹更新日志），再检查规则更新。
 //
 
+import AppIntents
 import SwiftUI
 
 struct AppRoot: View {
@@ -35,13 +36,45 @@ struct AppRoot: View {
         // 强调色按 SwiftUI 的当前明暗显式取：这里能读到 `colorScheme`（= 设置里的
         // 主题模式），不再走 UIKit 动态色那条路。
         .tint(accentColor)
+        .onAppIntentExecution(OpenAnimeIntent.self) { intent in
+            guard intent.anime.id > 0,
+                  environment.library.entry(for: intent.anime.id) != nil
+                    || environment.library.record(for: intent.anime.id) != nil else { return }
+            environment.router.open(.bangumi(intent.anime.id))
+        }
+        .onAppIntentExecution(SearchAnimeIntent.self) { intent in
+            let query = intent.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return }
+            environment.router.open(.search(query))
+        }
+        .onAppIntentExecution(OpenLibraryIntent.self) { _ in
+            environment.router.open(.library)
+        }
+        .onAppIntentExecution(OpenHistoryIntent.self) { _ in
+            environment.router.open(.history)
+        }
+        .onAppIntentExecution(OpenDownloadsIntent.self) { _ in
+            environment.router.open(.downloads)
+        }
+        .onAppear {
+            environment.router.isRootMounted = failure == nil
+            environment.router.onExternalNavigationRequested?()
+        }
+        .onChange(of: environment.router.externalNavigationDeferralCount) { _, count in
+            if count == 0 { environment.router.onExternalNavigationRequested?() }
+        }
+        .onChange(of: environment.router.externalNavigationRevision) { _, _ in
+            isShowingAppUpdate = false
+        }
         .task {
             guard failure == nil else { return }
             await environment.updates.checkOnLaunch(
                 settings: environment.settings,
                 plugins: environment.plugins
             )
-            if environment.updates.appUpdate != nil {
+            if environment.updates.appUpdate != nil,
+               environment.router.externalNavigationRevision == 0,
+               environment.router.pendingExternalLink == nil {
                 isShowingAppUpdate = true
             }
         }
@@ -50,7 +83,11 @@ struct AppRoot: View {
         .sheet(isPresented: Binding(
             get: { SourceSheetCoordinator.shared.isPresented },
             set: { SourceSheetCoordinator.shared.isPresented = $0 }
-        )) {
+        ), onDismiss: {
+            SourceSheetCoordinator.shared.dismiss()
+            SourceSheetCoordinator.shared.clearIfNeeded()
+            environment.router.onExternalNavigationRequested?()
+        }) {
             if let controller = SourceSheetCoordinator.shared.controller {
                 SourceSheet(
                     controller: controller,
