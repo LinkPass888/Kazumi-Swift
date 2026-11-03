@@ -432,6 +432,17 @@
         }
       }
     },
+    "%@，已关闭弹幕；再次打开可手动检索": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@，已關閉彈幕；再次開啟可手動檢索"
+          }
+        }
+      }
+    },
     "%@，已启用 %@ 项筛选": {
       "localizations": {
         "zh-Hant": {
@@ -468,6 +479,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@：正在更新本機衝突狀態"
+          }
+        }
+      }
+    },
+    "%lld 项": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 項"
           }
         }
       }
@@ -2323,6 +2344,17 @@
     },
     "内核日志已收到：[%@] 级别=%@": {},
     "内核诊断已限流（保留错误）": {},
+    "内置": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內建"
+          }
+        }
+      }
+    },
     "冬": {
       "localizations": {
         "zh-Hant": {
@@ -2409,6 +2441,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "分隔符號"
+          }
+        }
+      }
+    },
+    "分集加载失败：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "集數載入失敗：%@"
           }
         }
       }
@@ -4425,6 +4468,17 @@
         }
       }
     },
+    "已切换弹幕源": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已切換彈幕來源"
+          }
+        }
+      }
+    },
     "已取消": {
       "localizations": {
         "zh-Hant": {
@@ -5165,6 +5219,17 @@
         }
       }
     },
+    "弹幕加载失败：%@，已关闭弹幕；再次打开可手动检索": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "彈幕載入失敗：%@，已關閉彈幕；再次開啟可手動檢索"
+          }
+        }
+      }
+    },
     "弹幕区域": {
       "localizations": {
         "zh-Hant": {
@@ -5341,6 +5406,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "彈幕樣式"
+          }
+        }
+      }
+    },
+    "弹幕正在加载": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "彈幕載入中"
+          }
+        }
+      }
+    },
+    "弹幕源切换失败：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "彈幕來源切換失敗：%@"
           }
         }
       }
@@ -6405,6 +6492,17 @@
         }
       }
     },
+    "搜索失败：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋失敗：%@"
+          }
+        }
+      }
+    },
     "搜索查询参数": {
       "localizations": {
         "zh-Hant": {
@@ -6635,6 +6733,17 @@
         }
       }
     },
+    "播放器已关闭": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放器已關閉"
+          }
+        }
+      }
+    },
     "播放失败了，换一个源或者重新加载试试": {
       "localizations": {
         "zh-Hant": {
@@ -6721,6 +6830,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "播放進度"
+          }
+        }
+      }
+    },
+    "播放集数已变化，请重试": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放集數已變化，請重試"
           }
         }
       }
@@ -7417,6 +7537,17 @@
         }
       }
     },
+    "暂无分集": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚無集數"
+          }
+        }
+      }
+    },
     "暂无制作人员信息": {
       "localizations": {
         "zh-Hant": {
@@ -7837,6 +7968,17 @@
         }
       }
     },
+    "未找到番剧": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到動畫"
+          }
+        }
+      }
+    },
     "未收藏": {
       "localizations": {
         "zh-Hant": {
@@ -8093,6 +8235,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "本集下載未完成，正在嘗試線上播放"
+          }
+        }
+      }
+    },
+    "本集暂无弹幕；需要时可手动检索": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本集尚無彈幕；需要時可手動檢索"
           }
         }
       }
@@ -9449,6 +9602,17 @@
         }
       }
     },
+    "清除自定义 API，改用安装包内置": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除自訂 API，改用安裝包內建"
+          }
+        }
+      }
+    },
     "源码仓库": {
       "localizations": {
         "zh-Hant": {
@@ -9896,6 +10060,61 @@
           "stringUnit": {
             "state": "translated",
             "value": "直通"
+          }
+        }
+      }
+    },
+    "该分集暂无弹幕": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該集尚無彈幕"
+          }
+        }
+      }
+    },
+    "请输入番剧名称": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請輸入動畫名稱"
+          }
+        }
+      }
+    },
+    "选择分集": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇集數"
+          }
+        }
+      }
+    },
+    "选择弹幕源": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇彈幕來源"
+          }
+        }
+      }
+    },
+    "键": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "鍵"
           }
         }
       }
@@ -13600,16 +13819,6 @@
         }
       }
     },
-    "接口配置": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "介面設定"
-          }
-        }
-      }
-    },
     "API 地址": {
       "localizations": {
         "zh-Hant": {
@@ -13625,17 +13834,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "自訂請求頭"
-          }
-        }
-      }
-    },
-    "请求头名称": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "請求頭名稱"
+            "value": "自訂請求標頭"
           }
         }
       }
@@ -13655,7 +13854,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "刪除請求頭"
+            "value": "刪除請求標頭"
           }
         }
       }
@@ -13675,7 +13874,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "新增請求頭"
+            "value": "新增請求標頭"
           }
         }
       }
@@ -13775,7 +13974,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "請求頭格式錯誤，每行需填寫 Header: Value"
+            "value": "請求標頭格式錯誤，每行需填寫 Header: Value"
           }
         }
       }
@@ -13835,7 +14034,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "回復後請檢查追番同步、多裝置同步和自訂彈幕介面的憑據。"
+            "value": "回復後請檢查追番同步、多裝置同步和自訂彈幕介面的憑證。"
           }
         }
       }
