@@ -192,13 +192,10 @@ struct TimelineScreen: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             seasonTitleButton(expands: !isWideTier)
-            // 宽档把标题与选项钮之间的空档限制在 700 以内（§6.1），整体左对齐。
+            // 筛选钮一律靠右（LP 7182 / Ato 7179：iPad 横屏照抄手机竖屏的对齐；
+            // 原 §6.1 的 700 空档上限 + 尾部 Spacer 会把宽档按钮拽离右缘，撤）。
             Spacer(minLength: 8)
-                .frame(maxWidth: isWideTier ? 700 : nil)
             optionsButton
-            if isWideTier {
-                Spacer(minLength: 0)
-            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)

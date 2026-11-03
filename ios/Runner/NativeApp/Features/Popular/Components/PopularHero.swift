@@ -73,6 +73,13 @@ struct PopularHero: View {
     /// 宽档左栏：封面自己接下拉手势（Colo 6730 做法二 / 6736）。只有按在封面这块矩形里才放大，
     /// 按在信息块上、右栏货架上、两栏中间那条缝上都不动。
     var coverPullGesture: Bool = false
+    /// 拖动量外提（Colo 7139 iPad 竖屏：右栏要跟封面 1:1 同偏移）：传了就用外面的状态，
+    /// 手势直接写这个绑定——封面和右栏货架从同一个状态算偏移，同一个弹簧、零延迟。
+    /// 不传维持内部状态，窄档一个字不动。
+    var dragPullSource: Binding<CGFloat>? = nil
+    /// iPad 竖屏两栏（Colo 7139）：整个英雄行块加同一个 translation offset，
+    /// 信息块不再单独算曲线；窄档 false，信息块照旧单独让封面（Ato 6718）。
+    var blockPullOffset: Bool = false
 
     /// C 档左栏（6888 规格）：iPhone 横屏那一栏只有 210 宽，文字块压封面下沿渐变。
     /// 栏窄，两处跟单栏那套不一样——块底只留 16（不是单栏那条 50），
@@ -89,9 +96,12 @@ struct PopularHero: View {
     /// 这一下手指走过 8 点没有：走过是拖、没走过是点（Colo 6750 / 6763）。
     @State private var isCoverMoved = false
 
+    /// 真正用的拖动量：外提了（iPad 竖屏两栏）用外面的，否则内部状态。
+    private var dragPullValue: CGFloat { dragPullSource?.wrappedValue ?? dragPull }
+
     /// 真正用的放大倍数：外面传进来的（手机那条路）和封面自己拖出来的，取大的那个。
     private var effectiveScale: CGFloat {
-        max(pullScale, 1 + min(dragPull, 120) / 550)
+        max(pullScale, 1 + min(dragPullValue, 120) / 550)
     }
 
     /// 信息块让开的距离：封面往下长多少就让多少。
@@ -113,7 +123,7 @@ struct PopularHero: View {
                 guard coverPullGesture else { return }
                 let moved = max(abs(value.translation.height), abs(value.translation.width)) > 8
                 if moved != isCoverMoved { isCoverMoved = moved }
-                dragPull = moved ? min(120, max(0, value.translation.height * 0.55)) : 0
+                setPull(moved ? min(120, max(0, value.translation.height * 0.55)) : 0)
             }
             .onEnded { _ in
                 guard coverPullGesture else { return }
@@ -121,13 +131,22 @@ struct PopularHero: View {
                 isCoverMoved = false
                 if wasDrag {
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                        dragPull = 0
+                        setPull(0)
                     }
                 } else {
-                    dragPull = 0
+                    setPull(0)
                     openDetail(currentID ?? items.first?.id)
                 }
             }
+    }
+
+    /// 写拖动量：外提了写绑定（封面和右栏一起动），否则写内部状态。
+    private func setPull(_ value: CGFloat) {
+        if let source = dragPullSource {
+            source.wrappedValue = value
+        } else {
+            dragPull = value
+        }
     }
     /// `trailingFilled`：封面在左、整块信息（简介、标签都在）在右，跟封面顶对齐往下排，
     /// 把那一栏的高度填满（Ato 6720 第二条：iPad 竖屏右栏的信息量要跟横屏左栏一样）。
@@ -361,11 +380,22 @@ struct PopularHero: View {
 
     /// 单栏、两栏左栏：文字块压在封面下沿（现在这套，一处不动）。
     private var overlayLayout: some View {
+        // 压图结构（Ato 7186/7189）＋分开版条目排版（LP 7194/7200/7202：名称左对齐、
+        // 通栏开始观看、简介在）：直接用 infoCard 压在封面下部，不用旧 textBlock 的居中排。
+        // 块底留 textBottomInset，渐隐高度照旧量整块（含底部留白）盖下来。
         ZStack(alignment: .bottom) {
             coverLayer
             // 文字块不参与放大，只跟着手指往下移（LP 2963）。
-            textBlock(alignedLeading: false)
+            infoCard
+                // 内缩跟上一版（below）同一条：左右 24（Colo 7214）。
+                .padding(.horizontal, 24)
+                // 块底留白：原 50 是平板两栏的节奏，单栏简介下空太多（LP 7222），
+                // 收到 16 让整块下移、简介贴近封面底边。
+                .padding(.bottom, 16)
                 .offset(y: pullOffset)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { textBlockHeight = $0 }
         }
         .frame(height: coverHeight)
     }
@@ -398,9 +428,11 @@ struct PopularHero: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 20)
                 // 下拉过界封面往下长多少，信息块就跟着让多少，不许被封面盖住（Ato 6718）。
-                .offset(y: effectiveOffset)
+                // iPad 竖屏两栏走 blockPullOffset：整块跟移，信息块不再单独算曲线（Colo 7139）。
+                .offset(y: blockPullOffset ? 0 : effectiveOffset)
             Spacer(minLength: 0)
         }
+        .offset(y: blockPullOffset ? effectiveOffset : 0)
     }
 
     /// 封面在左、整块信息在右，垂直居中（Colo 6725）：右栏 963 高，六项排满 432，
@@ -440,21 +472,24 @@ struct PopularHero: View {
                     .padding(.top, 6)
             }
 
+            // 单栏（overlay 压图）不走通栏（Colo 7220）：胶囊内容宽、自带水平内距 22、最小高 40，
+            // 收藏留同一行右端；通栏只属于 below / iPad 横屏左栏（Ato 6936）。
+            // 轮播页点在按钮行上面（LP 7231）：元信息底下，先点后按钮。
+            dots
+                .padding(.top, 12)
+
             HStack(spacing: 12) {
                 playButton(expanded: textPlacement == .below || textPlacement == .trailingFilled)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: (textPlacement == .below || textPlacement == .trailingFilled) ? .infinity : nil)
+                if textPlacement == .overlay {
+                    Spacer(minLength: 0)
+                }
                 followButton
             }
-            .padding(.top, 14)
-
-            dots
-                .padding(.top, 10)
+            .padding(.top, 10)
 
             summarySlot
                 .padding(.top, 16)
-
-            tagsRow
-                .padding(.top, 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -480,27 +515,6 @@ struct PopularHero: View {
         }
         // 三行的高度先占住，数据到了原地换内容，位置不动。
         .frame(maxWidth: .infinity, minHeight: 63, alignment: .topLeading)
-    }
-
-    /// 标签行：评分和放送日期。题材这轮没有数据（Colo 6691 第一条），不放。
-    private var tagsRow: some View {
-        HStack(spacing: 8) {
-            if let rating = current?.rating, rating > 0 {
-                tagChip(String(format: "%.1f", rating))
-            }
-            if let airDate = current?.airDate, !airDate.isEmpty {
-                tagChip(airDate)
-            }
-        }
-    }
-
-    private func tagChip(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: footnoteBase * coverTextScale * 0.92))
-            .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(KazumiPalette.secondaryText(for: colorScheme).opacity(0.12)))
     }
 
     /// 封面那一层：分页图 ＋ 底边渐隐。

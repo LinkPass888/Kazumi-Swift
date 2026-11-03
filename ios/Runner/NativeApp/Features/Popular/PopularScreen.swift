@@ -17,13 +17,18 @@ struct PopularScreen: View {
     @State private var scrollY: CGFloat = 0
     /// 顶部那条模糊开没开：只有真的上滑才开，回弹和手抖不算（LP 3145 / 3147）。
     @State private var showsTopBlur = false
+    /// 滚动区顶部实际生效的 inset（含安全区）：下拉补偿归零起点用（LP 2887 的量法）。
+    @State private var topInset: CGFloat = 0
+    /// iPad 竖屏两栏：封面拖动量外提（Colo 7139）——封面块和右栏货架从同一个状态算偏移，
+    /// 同一个弹簧、零延迟；窄档不用它。
+    @State private var heroDragPull: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
             // 三档只按可用空间分（Colo 6687 §一）：A 单栏、B 宽档（再按宽高比分横式两栏／竖式英雄行）、C 矮屏。
             if size.width < Self.narrowMaxWidth {
-                narrowBody(size: size)
+                narrowBody(size: size, safeTop: proxy.safeAreaInsets.top)
             } else if size.height >= Self.wideMinHeight, size.width > size.height,
                       Self.rightColumnWidth(forWidth: size.width) >= Self.rightColumnMinWidth {
                 // 右栏 ≥ 320（Colo 6822）：不到就回落单栏，不缩左栏、不压海报。
@@ -47,6 +52,14 @@ struct PopularScreen: View {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.screen.bounds.height ?? 874
+    }
+
+    /// 状态栏高（跟 PopularHero 原版顶栏同一个数）：窄档自画标题那行的行顶用它，
+    /// 不加 8（Colo 7226：HEAD topBar .padding(.top, statusBarHeight)）。
+    private static var statusBarHeight: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.statusBarManager?.statusBarFrame.height ?? 44
     }
 
     /// 封面高：一律屏高 × 0.70（LP 6677「统一改成 70%」／Ato 6682 不分机型）。
@@ -84,12 +97,18 @@ struct PopularScreen: View {
     private func twoColumnBody(size: CGSize) -> some View {
         let coverHeight = Self.coverHeight(forWidth: size.width)
         let columnWidth = (coverHeight * 0.67).rounded()
+        // 英雄行块跟移量 = 封面往下长的那截（1:1，Colo 7139）；宽档 pullScale=1、pullOffset=0，
+        // 同 PopularHero.effectiveOffset 同一口径：coverHeight × min(dragPull,120) / 550。
+        let heroFollowOffset = coverHeight * min(max(heroDragPull, 0), 120) / 550
         return HStack(alignment: .top, spacing: 0) {
             // 下拉放大由封面自己接（Colo 6736）：只有按在封面这块 484×722 里才长，
             // 按在信息块、右栏货架、两栏缝上都不动。
-            leftColumn(coverHeight: coverHeight, columnWidth: columnWidth)
+            // 整个英雄行块跟封面 1:1 同偏移（Colo 7139：iPad 竖屏下拉时右栏也要下移），
+            // 偏移量从拖动量同一个状态算，松手同一个弹簧回去。
+            leftColumn(coverHeight: coverHeight, columnWidth: columnWidth, dragPull: $heroDragPull)
                 .frame(width: columnWidth)
                 .ignoresSafeArea(edges: .top)
+                .offset(y: heroFollowOffset)
 
             VStack(spacing: 0) {
                 // 标题 x=500（栏左缘 484 + 16）、圆钮贴右边缘 16，同一行，深色字压白底（Colo 6725）。
@@ -98,7 +117,10 @@ struct PopularScreen: View {
 
                 ScrollView {
                     // 宽档海报 132×198（Colo 6708：13 寸右栏 892 一行 6 张）。
+                    // 货架跟英雄行块同一个偏移、同一个状态（Colo 7139：右栏 1:1 同步下移，
+                    // 不能封面在拉、右栏钉着不动）。
                     shelves(tileWidth: 132)
+                        .offset(y: heroFollowOffset)
                         .padding(.top, 24)
                         .padding(.bottom, 40)
                 }
@@ -121,7 +143,8 @@ struct PopularScreen: View {
     }
 
     /// 两栏版面的左栏内容：封面纯美术在上，信息块在下面把剩下的高度填满（Colo 6691）。
-    private func leftColumn(coverHeight: CGFloat, columnWidth: CGFloat) -> some View {
+    /// dragPull：拖动量外提（Colo 7139），右栏货架跟封面同一个状态同步位移。
+    private func leftColumn(coverHeight: CGFloat, columnWidth: CGFloat, dragPull: Binding<CGFloat>) -> some View {
         PopularHero(
             items: controller.heroItems,
             zoomNamespace: zoomNamespace,
@@ -134,7 +157,10 @@ struct PopularScreen: View {
             // 标题和两颗圆钮收进右栏白底上，左栏一个字的没有（Colo 6725）。
             showsTopBar: false,
             // 封面自己接下拉手势（Colo 6736）。
-            coverPullGesture: true
+            coverPullGesture: true,
+            // 拖动量外提 + 整块跟移（Colo 7139：iPad 竖屏下拉，右栏 1:1 同偏移）。
+            dragPullSource: dragPull,
+            blockPullOffset: true
         )
     }
 
@@ -290,47 +316,65 @@ struct PopularScreen: View {
     }
 
     /// 单栏版面：竖屏和窄窗口都用这一版，一个像素不动。
-    private func narrowBody(size: CGSize) -> some View {
+    private func narrowBody(size: CGSize, safeTop: CGFloat) -> some View {
+        // §五（A 档单栏，Colo 7072 / Ato 7071；改口 Ato 7111 / Colo 7112；Ato 7141 删渐变；
+        // 结构回旧 hero：Ato 7186/7189，信息块压封面下部、封面图垫到简介下）：
+        // 封面顶到 y=0 全出血；tab 条 / 搜索·历史圆钮直接叠在封面上（白字，LP 7140 拍板
+        // 接受亮封面看不清的取舍，后续撞上看不清走系统材质，不是恢复黑渐变）；
+        // 大标题「推荐」旧版原样（Ato 7170/7181，见 narrowTopControls）；
+        // 信息块用旧 hero 默认 .overlay（textTop = 封面高 − 块高，压在封面下部，旧渐隐配套）。
+        // iPad 窄窗口隐藏系统顶栏、改画透明叠图 tab 条；iPhone 保留底部系统 tab 栏。
+        let coverWidth = size.width
+        // 封面高度 = 屏高 × 0.70（Ato 7175 / LP 7173：不再用 0.90×宽；440 宽机 ≈669，
+        // 接近 2:3 海报）；特窄窗口炤旧兜底（宽 ÷ 0.45，Colo 6683）。
         let coverHeight = Self.coverHeight(forWidth: size.width)
-        // 封面比例上限（Colo 6819）：容器宽 ÷ 封面高 > 0.85 时一张 2:3 海报要裁掉
-        // 三成以上，横屏分屏 683×1032 就是这种。这时封面宽改成高 × 0.67、水平居中，
-        // 信息块跟封面同宽，一点不裁。
-        let cappedWidth = size.width / coverHeight > 0.85
-            ? (coverHeight * 0.67).rounded()
-            : size.width
+        // 下拉补偿以「内容顶」为原点（LP 2887）：滚动区尊重顶部安全区时静止 offset = −顶部 inset，
+        // 减掉再判过界。现在滚动区忽略顶部安全区，静止 offset 归 0，这段照常兜住回弹。
+        let overPullNarrow = max(0, -(scrollY + topInset))
+        let pullScaleNarrow = 1 + min(overPullNarrow, 120) / 550
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
         return ScrollView {
             LazyVStack(spacing: 0) {
-                PopularHero(
-                    items: controller.heroItems,
-                    zoomNamespace: zoomNamespace,
-                    // 封面整块滚出屏幕就停掉自动切换（Colo 3047）。
-                    isOnScreen: scrollY < coverHeight,
-                    pullScale: pullScale,
-                    pullOffset: overPull,
-                    coverHeightOverride: coverHeight,
-                    coverWidth: cappedWidth
-                )
-                .frame(width: cappedWidth)
-                .frame(maxWidth: .infinity)
-                // 上拉过界时往回补，视觉上封面钉在屏幕顶端不动（Colo 2847 / LP 2887）；
-                // 上滑时补偿是 0，封面跟着内容一起滚走（LP 2846）。
-                .offset(y: -overPull)
+                ZStack(alignment: .top) {
+                    PopularHero(
+                        items: controller.heroItems,
+                        zoomNamespace: zoomNamespace,
+                        // 封面整块滚出屏幕就停掉自动切换（Colo 3047）。
+                        isOnScreen: scrollY < coverHeight,
+                        pullScale: pullScaleNarrow,
+                        pullOffset: overPullNarrow,
+                        coverHeightOverride: coverHeight,
+                        coverWidth: coverWidth,
+                        // 信息块走 hero 默认旧结构 textPlacement .overlay
+                        //（textTop = 封面高 − 块高，压封面下部，旧渐隐配套）——Ato 7186/7189。
+                        // 顶栏仍由 narrowTopControls 钉住画（存留改动④下拉钉住可点），
+                        // hero 内部旧 topBar 不再叠一份。
+                        showsTopBar: false
+                    )
+                    narrowTopControls(safeTop: safeTop, isPad: isPad)
+                }
+                .offset(y: -overPullNarrow)
 
-                // 封面底边下面留 24 就够：渐隐到封面底边 600 已经是页面底色，底下不用再留一层
-                // 让它化开（LP 2912 / Colo 2913：本周热门回到封面底边下 24，即 624）。
+                // 封面底边下留 8（HEAD 旧版同一条：渐隐到封面底边已是页面底色，不用再留一层）。
                 shelves()
                     .padding(.top, 8)
             }
             .padding(.bottom, 40)
         }
+        // 封面顶到 y=0 全出血（§五 叠图版）：滚动区铺进顶部安全区，
+        // 圆钮/tab 条从窗口顶画起（Ato 7141：不再压黑渐变，白字直接叠封面）。
+        .ignoresSafeArea(edges: .top)
         .scrollIndicators(.hidden)
         // 顶部那条模糊改成上滑才出现（LP 3125 / 3126 / 3132）：在顶部时没有，内容滚上来才有，
         // 跟番剧详情页同一条。顶栏照旧跟着封面滚（LP 2865），不钉住。
         .scrollEdgeEffectStyle(.soft, for: .top)
-        // 不上滑就不显示（LP 3139 / 3145）。这页的滚动区忽略了顶部安全区，内容正好压在那条边上，
-        // 系统就当成「已经滚上来了」，一进页就挂着一条模糊、往下拉才消失。
-        // 关掉之后由上面那条 style 管上滑时出现，回到顶部就没有。
+        // 不上滑就不显示（LP 3139 / 3145）。滚动区尊重顶部安全区时系统不会在页首误判，
+        // 但回弹和手抖那段仍然算「已滚上来」的边缘，这里显式接管：关掉之后由上面
+        // 那条 style 管上滑时出现，回到顶部就没有。
         .scrollEdgeEffectHidden(!showsTopBlur, for: .top)
+        // 封面顶到安全区顶、顶栏落在安全区下的背景上（§五：不铺进状态栏、
+        // 顶栏文字不压图、封面不压窗口控制点）。滚动区尊重顶部安全区，
+        // 下拉补偿用 topInset（ScrollGeometry.contentInsets.top）归零起点。
         // 下拉位移用 onScrollGeometryChange 量（LP 2887）：PreferenceKey 在橡皮筋
         // 回弹那段不更新，补偿算出来一直是 0，封面就跟着内容一起下来。
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -345,8 +389,13 @@ struct PopularScreen: View {
                 showsTopBlur = false
             }
         }
-        // 封面要铺到状态栏，所以滚动区从屏幕最上方开始算。
-        .ignoresSafeArea(edges: .top)
+        // 顶部实际生效的 inset 另挂一条量（transform 里只能拿 ScrollGeometry，
+        // action 拿不到）：下拉补偿归零起点和顶栏补差都用它。
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentInsets.top
+        } action: { _, newValue in
+            topInset = newValue
+        }
         // 一行都没拉到（缓存空 + 网络也失败）时给个能重试的页；否则就是顶层一个顶栏的空页。
         .overlay {
             if !controller.isLoading, controller.rows.isEmpty, controller.isFailed {
@@ -355,12 +404,84 @@ struct PopularScreen: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
+        // 大标题仍自画、位置照原版顶栏那一行（LP 7221）；系统大标题不采用。
+        // iPad 窄窗口：系统顶栏 tab 条隐藏，改画叠图 tab 条（Ato 7111）；
+        // iPhone 保留底部系统 tab 栏。
+        .toolbar(isPad ? .hidden : .visible, for: .tabBar)
         .onAppear {
             // 先把缓存画出来，再后台刷新（LP 2733 / Ato 2734）：
             // 冷启动不该对着空页等网。
             controller.paintFromCache()
             Task { await controller.load() }
         }
+    }
+
+    /// 顶部叠图控件（§五 叠图版 / Ato 7111 / Colo 7112；Ato 7141 删渐变；大标题按 LP 7157
+    /// 加回、样式旧版原样 Ato 7168）：iPhone 大标题「推荐」左 16、和搜索/历史圆钮同一行（行高 44）；
+    /// iPad 窄窗那行被居中 tab 条（73–109）占了，标题放 tab 条下面（行顶 117）。
+    /// iPad 窄窗口隐藏系统顶栏，这里改画透明 tab 条（白字，选中 100% / 未选 72%）直接压在封面上；
+    /// 搜索 / 历史圆钮两设备都贴封面右上、与 tab 同行（同一行右端不随封面顶推，Ato 7111）。
+    private func narrowTopControls(safeTop: CGFloat, isPad: Bool) -> some View {
+        // 大标题自画、照原版顶栏那一行（LP 7221：位置找回最初的位置）——
+        // iPhone 跟圆钮同一行、左边 16（HEAD topBar 的 .padding(.horizontal, 16)）；
+        // iPad 窄窗口在叠图 tab 条下一行。圆钮钉住可点（存留改动④）。
+        ZStack(alignment: .top) {
+            if isPad {
+                HStack(spacing: 0) {
+                    ForEach(AppDestination.allCases, id: \.self) { dest in
+                        Button {
+                            router.selectedDestination = dest
+                        } label: {
+                            Text(dest.title)
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(.white.opacity(router.selectedDestination == dest ? 1 : 0.72))
+                                .frame(height: 36)
+                                .padding(.horizontal, 16)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .frame(height: 36)
+                .padding(.top, 73)
+                // 大标题在 tab 条下一行（行顶 117 = 109+8，左 16）；样式照 HEAD topBar 原样
+                //（.largeTitle semibold、字距 −0.4、.primary、一层黑 30% 阴影）。
+                Text("推荐")
+                    .font(.largeTitle.weight(.semibold))
+                    .tracking(-0.4)
+                    .foregroundStyle(.primary)
+                    .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 16)
+                    .padding(.top, 117)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            HStack(spacing: 10) {
+                // iPhone：大标题和圆钮同一行，左边 16（HEAD topBar 原排法与样式）。
+                if !isPad {
+                    Text("推荐")
+                        .font(.largeTitle.weight(.semibold))
+                        .tracking(-0.4)
+                        .foregroundStyle(.primary)
+                        .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
+                        .frame(height: 44, alignment: .center)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Spacer()
+                PopularTopBarCircle(symbol: "magnifyingglass", label: "搜索") {
+                    router.push(.search(keyword: ""))
+                }
+                PopularTopBarCircle(symbol: "clock", label: "观看历史") {
+                    router.push(.history)
+                }
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 16)
+            .frame(height: 44, alignment: .top)
+            .padding(.top, isPad ? 69 : Self.statusBarHeight)
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .allowsHitTesting(true)
     }
 
     /// 四行全空时的错误态：跟列表页那份同一个形状（那里也是「更多」点进去的第一屏）。
