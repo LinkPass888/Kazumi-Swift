@@ -44,6 +44,8 @@ struct LibraryScreen: View {
     @State private var updateTimes: [Int: Date] = [:]
     /// 季度时刻表是否已经跑完一轮。没跑完之前先按「最近变更」排，不转圈。
     @State private var updateTimesLoaded = false
+    /// 网格封面按左到右、上到下完成一次回源后递增，让对应卡片重新查缓存。
+    @State private var coverLoadRevision = 0
 
     @FocusState private var searchFocused: Bool
 
@@ -153,7 +155,9 @@ struct LibraryScreen: View {
             // 「同步」不在工具栏：LP 2026-10-24 要它回到搜索按钮右边、两颗一起靠右。
             .task {
                 sort = CollectSort(rawValue: settings.librarySort) ?? .updateTime
-                KazumiImageLoader.shared.prefetch(library.entries.map(\.imageURL))
+            }
+            .task(id: coverLoadKey) {
+                await loadLibraryCovers()
             }
             // 追番条目变化时补齐时刻表：新加入「在看」的番也要拿到时刻。
             .task(id: library.watchingEntries.map(\.id)) {
@@ -657,6 +661,7 @@ struct LibraryScreen: View {
                             LibraryPosterCard(
                                 entry: entry,
                                 isPending: pendingID == entry.id,
+                                coverReloadToken: coverLoadRevision,
                                 zoomNamespace: zoomNamespace,
                                 onOpen: { router.push(.bangumiInfo(bangumiID: entry.id)) },
                                 onChangeType: { type in changeType(entry, to: type) }
@@ -802,6 +807,34 @@ struct LibraryScreen: View {
                 insertion: .opacity,
                 removal: .opacity.combined(with: .scale(scale: 0.92))
             )
+    }
+
+    /// 追番页的网络封面严格按当前网格顺序一张一张取；本地缓存仍由各卡片并行读取。
+    private func loadLibraryCovers() async {
+        guard libraryContainerSize.width > 0 else { return }
+        let pixelSize = libraryCoverPixelSize
+        coverLoadRevision &+= 1
+        for url in filteredEntries.map(\.imageURL) {
+            guard !Task.isCancelled else { return }
+            if KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixelSize) == nil {
+                _ = await KazumiImageLoader.shared.loadSequentially(url, pixelSize: pixelSize)
+            }
+            guard !Task.isCancelled else { return }
+            coverLoadRevision &+= 1
+        }
+    }
+
+    private var coverLoadKey: [String] {
+        ["px:\(libraryCoverPixelSize)"] + filteredEntries.map { "\($0.id)|\($0.imageURL)" }
+    }
+
+    private var libraryCoverPixelSize: Int {
+        let count = CGFloat(columnCount)
+        let available = libraryContentWidth - Self.columnSpacing * max(0, count - 1)
+        let width = available > 0 ? min(200, available / count) : 200
+        return KazumiImageLoader.pixelSize(
+            for: CGSize(width: width, height: width / BangumiPosterCard.coverAspectRatio)
+        )
     }
 }
 

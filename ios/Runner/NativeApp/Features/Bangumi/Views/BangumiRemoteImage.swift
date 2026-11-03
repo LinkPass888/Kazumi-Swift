@@ -16,15 +16,26 @@ struct BangumiRemoteImage: View {
     let url: String
     /// 与 Dart 版 BoxFit.cover 对应的 contentMode。
     var contentMode: ContentMode = .fill
+    /// 列表可按自己的队列串行回源；关掉后只读本地缓存。
+    var networkLoadEnabled = true
+    /// 外层每完成一张有序加载就 +1，让视图重新检查内存缓存。
+    var reloadToken = 0
 
     @State private var image: UIImage?
     @State private var pixelSize = KazumiImageLoader.pixelSize(for: CGSize(width: 200, height: 300))
     /// 尺寸档位变化时 +1，用来重开一次加载任务。
     @State private var attempt = 0
 
-    init(url: String, contentMode: ContentMode = .fill) {
+    init(
+        url: String,
+        contentMode: ContentMode = .fill,
+        networkLoadEnabled: Bool = true,
+        reloadToken: Int = 0
+    ) {
         self.url = url
         self.contentMode = contentMode
+        self.networkLoadEnabled = networkLoadEnabled
+        self.reloadToken = reloadToken
         // 命中内存缓存时直接出图，不经历「占位 → 图片」这一帧。
         let size = KazumiImageLoader.pixelSize(for: CGSize(width: 200, height: 300))
         _image = State(initialValue: KazumiImageLoader.shared.cachedImage(for: url, pixelSize: size))
@@ -55,7 +66,7 @@ struct BangumiRemoteImage: View {
             pixelSize = newValue
             if image == nil { attempt += 1 }
         }
-        .task(id: "\(key)#\(attempt)") {
+        .task(id: "\(key)#\(attempt)#\(reloadToken)") {
             await loadIfNeeded()
         }
     }
@@ -78,6 +89,15 @@ struct BangumiRemoteImage: View {
         guard !key.isEmpty else { return }
         if let cached = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixelSize) {
             image = cached
+            return
+        }
+        if !networkLoadEnabled {
+            if await KazumiImageLoader.shared.loadFromDisk(url, pixelSize: pixelSize),
+               let cached = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixelSize) {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    image = cached
+                }
+            }
             return
         }
         // 还在屏幕上就还有两次机会：首屏几十张一起出来时，偶发失败

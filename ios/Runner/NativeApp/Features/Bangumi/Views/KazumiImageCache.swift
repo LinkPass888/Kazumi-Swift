@@ -26,8 +26,6 @@ import UIKit
 final class KazumiImageLoader: @unchecked Sendable {
     static let shared = KazumiImageLoader()
 
-    /// 磁盘缓存保留天数，与原版 cached_network_image 的默认有效期一致。
-    private static let maxAge: TimeInterval = 14 * 24 * 60 * 60
     /// 磁盘缓存上限（字节）。
     ///
     /// LP 3442：首启就要缓存 200 多 M，原版（main）才一百多。除了这里给的额度，
@@ -64,13 +62,15 @@ final class KazumiImageLoader: @unchecked Sendable {
     }
     private var inFlight: [String: InFlight] = [:]
     private let directory: URL
+    /// 旧版本用过的目录：只读回退，避免升级后明明有缓存却全部重新下载。
+    private let legacyDirectories: [URL]
     private let sessionProvider: ProxyAwareURLSession
     /// 代理变了就重建，见 `ProxyAwareURLSession`。
     private var session: URLSession { sessionProvider.session }
     /// 同时在跑的下载上限。一屏几十张图全放出去，连接会被自己挤爆、
     /// 单张动不动失败，表现就是「总有封面加载不出来」（LP 3446）。
     private let gate = DownloadGate(limit: 6)
-    /// 写盘计数，够一批就顺手清一次过期文件（原来只在启动时清）。
+    /// 写盘计数，够一批就检查一次容量（原来只在启动时检查）。
     private let pruneCounter = Counter()
 
 
@@ -89,6 +89,7 @@ final class KazumiImageLoader: @unchecked Sendable {
         ]
         // 逐个试写，用第一个真能写的位置：Application Support 下的子目录
         // 在某些容器里建不出来（大小写不同的同名目录冲突），写盘会一直失败。
+        let candidateURLs = candidates.compactMap { $0.1 }
         var chosen: URL?
         for (_, target) in candidates {
             guard let target else { continue }
@@ -104,6 +105,11 @@ final class KazumiImageLoader: @unchecked Sendable {
             }
         }
         directory = chosen ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let chosenPath = directory.standardizedFileURL.path
+        legacyDirectories = candidateURLs.filter {
+            $0.standardizedFileURL.path != chosenPath
+                && FileManager.default.fileExists(atPath: $0.path)
+        }
 
         memory.countLimit = 600
         // 按显示尺寸解码之后，一张列表封面在内存里只有几百 KB，128 MB 足够
@@ -122,7 +128,7 @@ final class KazumiImageLoader: @unchecked Sendable {
             return configuration
         }
 
-        // 启动时清一轮过期文件；放后台，不阻塞首屏。
+        // 启动时检查一轮容量；放后台，不阻塞首屏。
         let target = directory
         Task.detached(priority: .utility) {
             KazumiImageLoader.prune(directory: target)
@@ -206,6 +212,28 @@ final class KazumiImageLoader: @unchecked Sendable {
         await load(url, pixelSize: pixelSize, highPriority: true)
     }
 
+    /// 只查本地：内存命中直接返回，否则从磁盘解码。绝不发网络请求。
+    ///
+    /// 追番页用它先把已有缓存并行铺出来；网络回源另走 `loadSequentially`。
+    @discardableResult
+    func loadFromDisk(_ url: String, pixelSize: Int = defaultPixelSize) async -> Bool {
+        let key = Self.cacheKey(for: url)
+        guard !key.isEmpty else { return false }
+        if cachedImage(for: url, pixelSize: pixelSize) != nil { return true }
+        return await loadFromDisk(key: key, bucket: Self.bucket(pixelSize))
+    }
+
+    /// 列表专用：按调用顺序一次只取一张，失败也只试一次，避免一张坏图卡住整队。
+    /// 本地缓存仍然优先，因此串行只约束真正的网络回源。
+    @discardableResult
+    func loadSequentially(_ url: String, pixelSize: Int = defaultPixelSize) async -> Bool {
+        let key = Self.cacheKey(for: url)
+        guard !key.isEmpty else { return false }
+        if cachedImage(for: url, pixelSize: pixelSize) != nil { return true }
+        await fetch(key: key, bucket: Self.bucket(pixelSize), highPriority: false)
+        return cachedImage(for: url, pixelSize: pixelSize) != nil
+    }
+
     @discardableResult
     private func load(_ url: String, pixelSize: Int, highPriority: Bool) async -> Bool {
         let key = Self.cacheKey(for: url)
@@ -268,17 +296,8 @@ final class KazumiImageLoader: @unchecked Sendable {
     }
 
     private func fetch(key: String, bucket: Int, highPriority: Bool) async {
-        let fileURL = directory.appendingPathComponent(Self.fileName(for: key))
-
         // 1. 磁盘：命中的是原图字节，再按当前显示尺寸解码。
-        if let data = try? Data(contentsOf: fileURL) {
-            if let image = await Self.decode(data, pixelSize: bucket) {
-                store(image, key: key, bucket: bucket)
-                return
-            }
-            // 文件坏了就删掉，别一直拿它解码失败。
-            try? FileManager.default.removeItem(at: fileURL)
-        }
+        if await loadFromDisk(key: key, bucket: bucket) { return }
 
         // 2. 网络
         guard let logical = URL(string: key) else { return }
@@ -304,6 +323,7 @@ final class KazumiImageLoader: @unchecked Sendable {
                 store(image, key: key, bucket: bucket)
                 do {
                     try ensureDirectory()
+                    let fileURL = directory.appendingPathComponent(Self.fileName(for: key))
                     try data.write(to: fileURL, options: .atomic)
                     schedulePruneIfNeeded()
                 } catch {
@@ -316,7 +336,26 @@ final class KazumiImageLoader: @unchecked Sendable {
         }
     }
 
-    /// 每写满一批就顺手清一次过期文件：原来只在启动时清，用起来只涨不降。
+    private func loadFromDisk(key: String, bucket: Int) async -> Bool {
+        let name = Self.fileName(for: key)
+        let canonical = directory.appendingPathComponent(name)
+        for fileURL in [canonical] + legacyDirectories.map({ $0.appendingPathComponent(name) }) {
+            guard let data = try? Data(contentsOf: fileURL) else { continue }
+            if let image = await Self.decode(data, pixelSize: bucket) {
+                store(image, key: key, bucket: bucket)
+                if fileURL != canonical {
+                    try? ensureDirectory()
+                    try? FileManager.default.copyItem(at: fileURL, to: canonical)
+                }
+                return true
+            }
+            // 文件坏了就删掉，别一直拿它解码失败。
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        return false
+    }
+
+    /// 每写满一批就检查一次容量：原来只在启动时检查，用起来只涨不降。
     private func schedulePruneIfNeeded() {
         let count = pruneCounter.increment()
         guard count % 40 == 0 else { return }
@@ -379,37 +418,41 @@ final class KazumiImageLoader: @unchecked Sendable {
     /// 清空两级缓存（设置页「清除图片缓存」用）。
     func clear() {
         memory.removeAllObjects()
-        let target = directory
+        let targets = [directory] + legacyDirectories
         Task.detached(priority: .utility) {
             let manager = FileManager.default
-            guard let files = try? manager.contentsOfDirectory(
-                at: target,
-                includingPropertiesForKeys: nil
-            ) else { return }
-            for file in files {
-                try? manager.removeItem(at: file)
+            for target in targets {
+                guard let files = try? manager.contentsOfDirectory(
+                    at: target,
+                    includingPropertiesForKeys: nil
+                ) else { continue }
+                for file in files {
+                    try? manager.removeItem(at: file)
+                }
             }
         }
     }
 
     /// 磁盘缓存占用（字节）。
     func diskSizeInBytes() async -> Int {
-        let target = directory
+        let targets = [directory] + legacyDirectories
         return await Task.detached(priority: .utility) { () -> Int in
             let manager = FileManager.default
-            guard let files = try? manager.contentsOfDirectory(
-                at: target,
-                includingPropertiesForKeys: [.fileSizeKey]
-            ) else { return 0 }
             var total = 0
-            for file in files {
-                total += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            for target in targets {
+                guard let files = try? manager.contentsOfDirectory(
+                    at: target,
+                    includingPropertiesForKeys: [.fileSizeKey]
+                ) else { continue }
+                for file in files {
+                    total += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                }
             }
             return total
         }.value
     }
 
-    /// 删掉过期文件；总量仍然超限时按修改时间从旧到新继续删。
+    /// 只按容量淘汰，不再按天数整批过期。
     private static func prune(directory: URL) {
         let manager = FileManager.default
         guard let files = try? manager.contentsOfDirectory(
@@ -417,7 +460,6 @@ final class KazumiImageLoader: @unchecked Sendable {
             includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
         ) else { return }
 
-        let deadline = Date().addingTimeInterval(-maxAge)
         var survivors: [(url: URL, date: Date, size: Int)] = []
         var total = 0
 
@@ -425,10 +467,6 @@ final class KazumiImageLoader: @unchecked Sendable {
             let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
             let date = values?.contentModificationDate ?? .distantPast
             let size = values?.fileSize ?? 0
-            if date < deadline {
-                try? manager.removeItem(at: file)
-                continue
-            }
             survivors.append((file, date, size))
             total += size
         }

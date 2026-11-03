@@ -16,6 +16,8 @@ struct LibraryPosterCard: View {
     let entry: LibraryEntry
     /// 正在改收藏状态：菜单降到 0.4 并禁用，卡片本身仍可点。
     let isPending: Bool
+    /// 页面按网格顺序完成一张网络回源后递增。
+    var coverReloadToken = 0
     /// 卡片 → 详情页缩放转场所属的命名空间（由所在导航栈提供）。
     var zoomNamespace: Namespace.ID?
     var onOpen: () -> Void
@@ -72,7 +74,11 @@ struct LibraryPosterCard: View {
             Color.clear
                 .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
                 .overlay {
-                    BangumiRemoteImage(url: entry.imageURL)
+                    BangumiRemoteImage(
+                        url: entry.imageURL,
+                        networkLoadEnabled: false,
+                        reloadToken: coverReloadToken
+                    )
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.coverCornerRadius, style: .continuous))
 
