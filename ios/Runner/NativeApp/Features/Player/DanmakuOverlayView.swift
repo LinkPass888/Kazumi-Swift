@@ -4,7 +4,7 @@
 //
 //  弹幕渲染层：叠在播放内核的画面之上，自己用 CADisplayLink 按播放时间
 //  排布弹幕，不经过 SwiftUI 的每帧刷新。ProMotion 设备按 120Hz 请求刷新，
-//  时钟经过 PLL 平滑，文字用矢量描边并光栅化后只移动 layer transform。
+//  时钟经过 PLL 平滑，文字光栅化后只移动 layer transform。
 //
 //  行为对齐原版 canvas_danmaku 的默认观感：
 //   * 滚动弹幕 8 秒横穿屏幕，固定弹幕停留 4.5 秒；
@@ -326,16 +326,18 @@ final class DanmakuOverlayView: UIView {
         let label = ItemLabel()
         let size = max(10, min(48, style.fontSize))
         // 关掉「弹幕颜色」就一律白字（main 的 danmakuColor）。
-        var attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: size, weight: Self.weight(style.fontWeight)),
-            .foregroundColor: style.useColor ? Self.color(comment.colorValue) : UIColor.white,
-        ]
-        // 矢量描边比 Gaussian shadow 锐利；负值表示同时描边和填充。
+        label.text = comment.text
+        label.font = .systemFont(ofSize: size, weight: Self.weight(style.fontWeight))
+        label.textColor = style.useColor ? Self.color(comment.colorValue) : .white
         if style.border {
-            attributes[.strokeColor] = UIColor.black.withAlphaComponent(0.9)
-            attributes[.strokeWidth] = -Double(max(0.5, min(3, style.borderSize))) * 2
+            label.layer.shadowColor = UIColor.black.cgColor
+            label.layer.shadowOpacity = 0.9
+            label.layer.shadowRadius = CGFloat(max(0.5, min(3, style.borderSize)))
+        } else {
+            label.layer.shadowOpacity = 0
+            label.layer.shadowRadius = 0
         }
-        label.attributedText = NSAttributedString(string: comment.text, attributes: attributes)
+        label.layer.shadowOffset = .zero
         label.textAlignment = .center
         label.numberOfLines = 1
         label.lineBreakMode = .byClipping

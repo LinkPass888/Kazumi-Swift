@@ -9910,6 +9910,36 @@
         }
       }
     },
+    "硬件解码模式": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "硬體解碼模式"
+          }
+        }
+      }
+    },
+    "直通": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直通"
+          }
+        }
+      }
+    },
+    "非直通": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "非直通"
+          }
+        }
+      }
+    },
     "确定": {
       "localizations": {
         "zh-Hant": {
@@ -11232,12 +11262,12 @@
         }
       }
     },
-    "解码设置重新打开播放器后生效。硬件解码使用 VideoToolbox 零拷贝输出。": {
+    "解码设置重新打开播放器后生效。直通为零拷贝；非直通会多一次内存拷贝。": {
       "localizations": {
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "解碼設定重新開啟播放器後生效。硬體解碼使用 VideoToolbox 零拷貝輸出。"
+            "value": "解碼設定重新開啟播放器後生效。直通為零拷貝；非直通會多一次記憶體拷貝。"
           }
         }
       }

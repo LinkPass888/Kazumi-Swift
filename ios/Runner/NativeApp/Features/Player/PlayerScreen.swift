@@ -2088,6 +2088,7 @@ struct PlayerScreen: View {
                     danmakuTopInset: isFullscreen ? 44 : 0,
                     lowMemoryMode: settings.lowMemoryMode,
                     hardwareDecodeEnabled: settings.hardwareDecodeEnabled,
+                    hardwareDecodeMode: settings.hardwareDecodeMode,
                     surface: surface
                 )
             } else {

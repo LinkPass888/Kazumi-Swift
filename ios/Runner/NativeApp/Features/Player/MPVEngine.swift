@@ -85,8 +85,9 @@ final class MPVEngine {
     var onFirstFrame: (() -> Void)?
     var onLog: ((String) -> Void)?
 
-    /// 解码开关由容器传入；真机统一使用零拷贝 VideoToolbox。
+    /// 解码开关与模式由容器传入，只在建内核时读取，重新打开播放器后生效。
     var hardwareDecodeEnabled = true
+    var hardwareDecodeMode: HardwareDecodeMode = .videotoolboxCopy
 
     /// 解复用缓存大小（字节）。进来之前由容器按低内存模式的档位算好；
     /// 之后档位或网络变了就调 `applyCacheSize(_:)` 立刻改，不用重建内核。
@@ -153,7 +154,7 @@ final class MPVEngine {
         setOption("gpu-context", "moltenvk")
         setOption("fbo-format", "rgba16hf")
         setOption("vd-lavc-dr", "yes")
-        setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled))
+        setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode))
         setOption("hwdec-codecs", "all")
 
         if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
@@ -284,12 +285,12 @@ final class MPVEngine {
         setFlag("pause", true)
     }
 
-    /// 模拟器固定软解；真机统一使用零拷贝 VideoToolbox。
-    static func hwdec(enabled: Bool) -> String {
+    /// 模拟器固定软解；真机按开关与所选模式初始化。
+    static func hwdec(enabled: Bool, mode: HardwareDecodeMode) -> String {
         #if targetEnvironment(simulator)
         return "no"
         #else
-        return enabled ? "videotoolbox" : "no"
+        return enabled ? mode.rawValue : "no"
         #endif
     }
 

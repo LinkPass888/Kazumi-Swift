@@ -37,6 +37,20 @@ enum KazumiThemeMode: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum HardwareDecodeMode: String, CaseIterable, Identifiable, Sendable {
+    case videotoolbox
+    case videotoolboxCopy = "videotoolbox-copy"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .videotoolbox: String(localized: "直通")
+        case .videotoolboxCopy: String(localized: "非直通")
+        }
+    }
+}
+
 /// 超分辨率档位：关 / 效率 / 质量，三档。
 ///
 /// 数值沿用原版 Anime4K 设置的存储值（1=关闭，2=效率，3=质量），
@@ -175,8 +189,9 @@ enum SettingsKey {
     static let privateMode = "privateMode"
     /// 低内存模式三档（跟随网络 / 始终开启 / 始终关闭），沿用 main 的 `lowMemoryPolicy`。
     static let lowMemoryPolicy = "lowMemoryPolicy"
-    /// 硬件解码开关。
+    /// 硬件解码开关，与解码模式独立保存。
     static let hardwareDecodeEnabled = "hardwareDecodeEnabled"
+    static let hardwareDecodeMode = "hardwareDecodeMode"
     /// AniSkip 片头片尾时间轴，沿用原版 `SettingsKeys.aniSkipLookup` 的键名，默认开启。
     static let aniSkipLookup = "aniSkipLookup"
     /// 控制栏自动隐藏前的停留时长（毫秒），沿用原版
@@ -499,9 +514,13 @@ final class SettingsStore {
         didSet { persist(privateMode, SettingsKey.privateMode) }
     }
 
-    /// 关闭时使用纯软解；开启时走零拷贝 VideoToolbox。
+    /// 关闭时使用纯软解，不改变已选的硬件解码模式。
     var hardwareDecodeEnabled: Bool {
         didSet { persist(hardwareDecodeEnabled, SettingsKey.hardwareDecodeEnabled) }
+    }
+
+    var hardwareDecodeMode: HardwareDecodeMode {
+        didSet { persist(hardwareDecodeMode.rawValue, SettingsKey.hardwareDecodeMode) }
     }
 
     /// 低内存模式：决定解复用缓存是 1500 MiB 还是 2 MiB（对齐 main，LP 5547）。
@@ -872,6 +891,9 @@ final class SettingsStore {
         brightnessVolumeGesture = Self.read(defaults, SettingsKey.brightnessVolumeGesture, true)
         privateMode = Self.read(defaults, SettingsKey.privateMode, false)
         hardwareDecodeEnabled = Self.read(defaults, SettingsKey.hardwareDecodeEnabled, true)
+        hardwareDecodeMode = HardwareDecodeMode(
+            rawValue: Self.read(defaults, SettingsKey.hardwareDecodeMode, HardwareDecodeMode.videotoolboxCopy.rawValue)
+        ) ?? .videotoolboxCopy
         // 老版本只写过 `lowMemoryMode` 那个布尔。它不是这里的三档键，读不到就回默认档，
         // 与 main「旧值留着、新键没写过就当自动」的做法一致。
         lowMemoryMode = LowMemoryMode(
@@ -983,6 +1005,7 @@ final class SettingsStore {
         brightnessVolumeGesture = true
         privateMode = false
         hardwareDecodeEnabled = true
+        hardwareDecodeMode = .videotoolboxCopy
         lowMemoryMode = .auto
         playSpeed = 1.0
         buttonSkipTime = 80
