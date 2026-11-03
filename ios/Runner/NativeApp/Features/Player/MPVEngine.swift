@@ -748,6 +748,7 @@ final class MPVEngine {
             log("命令 \(name) 失败：\(String(cString: mpv_error_string(status)))")
         }
     }
+}
 
 /// 一条异步命令的等待者。回执和超时都会来敲门，只能认一次——续两次会直接崩。
 /// 只在主线程上动。
