@@ -85,9 +85,7 @@ struct PlayerSettingsScreen: View {
 
     var body: some View {
         Form {
-            // LP 5565/5568：解码与缓存这两项提到最上面单独一组。
-            // 组名「解码与缓存」由 Camo 定：硬件解码管怎么解、低内存模式管缓存多大，
-            // 两个字各管一项；main 那组叫「解码与渲染」，但低内存模式在 main 里也不在那组。
+            // 硬件解码、超分辨率与低内存模式放在同一组。
             Section {
                 Group {
                     Toggle("硬件解码", isOn: hardwareDecodeBinding)
@@ -97,6 +95,12 @@ struct PlayerSettingsScreen: View {
                         }
                     }
                     .disabled(!settings.hardwareDecodeEnabled)
+                    // 跟播放器里「更多 → 超分辨率」是同一个值，两处改哪边都算。
+                    Picker("超分辨率", selection: superResolutionBinding) {
+                        ForEach(SuperResolutionMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
                     // main 的「低内存模式」三档（LP 5547）。开着就把解复用缓存从
                     // 1500 MiB 降到 2 MiB，省内存和流量，代价是慢速源更容易缓冲。
                     Picker("低内存模式", selection: lowMemoryModeBinding) {
@@ -107,7 +111,7 @@ struct PlayerSettingsScreen: View {
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
             } header: {
-                Text("解码与缓存")
+                Text("解码与渲染")
             } footer: {
                 Text("解码设置重新打开播放器后生效。直通为零拷贝；非直通会多一次内存拷贝。")
             }
@@ -156,14 +160,6 @@ struct PlayerSettingsScreen: View {
                         Picker("快进快退时长", selection: doubleTapSkipTimeBinding) {
                             ForEach(Self.doubleTapSkipOptions, id: \.self) { seconds in
                                 Text(String(localized: "\(String(describing: seconds)) 秒")).tag(seconds)
-                            }
-                        }
-                    }
-                    row {
-                        // 跟播放器里「更多 → 超分辨率」是同一个值，两处改哪边都算。
-                        Picker("超分辨率", selection: superResolutionBinding) {
-                            ForEach(SuperResolutionMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
                             }
                         }
                     }

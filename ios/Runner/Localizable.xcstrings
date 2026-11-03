@@ -11252,12 +11252,12 @@
         }
       }
     },
-    "解码与缓存": {
+    "解码与渲染": {
       "localizations": {
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "解碼與快取"
+            "value": "解碼與渲染"
           }
         }
       }
