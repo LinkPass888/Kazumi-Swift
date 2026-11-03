@@ -96,9 +96,7 @@ final class PopularController {
             isFailed = rows.isEmpty
             // 四行都在缓存期内时上面就返回了，这里也得补一次焦点区简介，
             // 否则第二次冷启动永远拿不到简介（缓存里那份本来就没存）。
-            if let hero = heroItems.first {
-                await enrichHero(hero.id)
-            }
+            await enrichAllHeroes()
             return
         }
 
@@ -135,9 +133,7 @@ final class PopularController {
 
         // 焦点区那一张补简介（Ato 2761 破例）：只为当前这张发一次详情请求，
         // 而且先读详情页那份 24 小时缓存，缓存里有就一次请求都不发。
-        if let hero = heroItems.first {
-            await enrichHero(hero.id)
-        }
+        await enrichAllHeroes()
     }
 
     /// 把一组条目装成一行。
@@ -149,7 +145,7 @@ final class PopularController {
         guard spec.name == "trending" else {
             return PopularRow(id: spec.name, title: spec.title, items: items, list: spec.list)
         }
-        heroItems = Array(items.prefix(Self.heroLimit))
+        setHeroItems(Array(items.prefix(Self.heroLimit)))
         let heroIDs = Set(heroItems.map(\.id))
         return PopularRow(
             id: spec.name,
@@ -157,6 +153,25 @@ final class PopularController {
             items: Array(items.filter { !heroIDs.contains($0.id) }.prefix(Self.rowSize)),
             list: spec.list
         )
+    }
+
+    /// 换焦点区那一批时，把已经补到的字段留下来（LP 6741）。
+    ///
+    /// 从详情页返回会先拿缓存重画一遍，缓存里是趋势榜那批精简条目（无简介、无话数），
+    /// 直接换上去，刚补好的集数就没了——「有 → 进详情 → 返回 → 没」就是这么来的。
+    /// 同一张海报以新到的为准，新到的缺什么就用旧的补什么。
+    private func setHeroItems(_ items: [PopularPoster]) {
+        let known = Dictionary(heroItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        heroItems = items.map { fresh in
+            guard let old = known[fresh.id] else { return fresh }
+            var merged = fresh
+            if merged.totalEpisodes == 0 { merged.totalEpisodes = old.totalEpisodes }
+            if merged.summary.isEmpty { merged.summary = old.summary }
+            if merged.airDate.isEmpty { merged.airDate = old.airDate }
+            if merged.rating == 0 { merged.rating = old.rating }
+            if merged.imageURL.isEmpty { merged.imageURL = old.imageURL }
+            return merged
+        }
     }
 
     // MARK: - 焦点区简介
@@ -170,15 +185,26 @@ final class PopularController {
     /// 顺序是：详情缓存 → 没有才发一次请求。命中缓存时冷启动零额外请求。
     func enrichHero(_ id: Int) async {
         guard !enrichedHeroIDs.contains(id) else { return }
-        enrichedHeroIDs.insert(id)
 
         // 缓存里有就直接用（详情页那份，24 小时有效）。
         if let cached = subjectCache.item(for: id), !cached.summary.isEmpty {
+            enrichedHeroIDs.insert(id)
             applyHeroDetail(cached)
             return
         }
+        // 请求失败不记账：这一轮没拿到，下次进页面还能再试（LP 6737）。
+        // 记在成功之后，而不是发请求之前——之前记在前面，一次失败就整场都不再补了。
         guard let fresh = await BangumiAPI.info(id: id) else { return }
+        enrichedHeroIDs.insert(id)
         applyHeroDetail(fresh)
+    }
+
+    /// 焦点区轮播里的每一张都补一次，不是只补第一张（LP 6737 / Ato 6738）：
+    /// 轮播会自己往后翻，翻到没补过的那几张，集数就是空的——「有时有有时没有」就是这么来的。
+    private func enrichAllHeroes() async {
+        for hero in heroItems {
+            await enrichHero(hero.id)
+        }
     }
 
     /// 把详情里的完整信息换回焦点区那一张，其他字段（封面地址）保持不动。

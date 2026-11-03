@@ -46,7 +46,7 @@ struct PopularHero: View {
         // 渐隐下沿永远贴封面底边：封面放大后底边往下长多少，它就跟多少（LP 3152）。
         // 原来这里是 `pullOffset + 补出来的那截`，下拉得深一点时它会被推到底边下面，
         // 于是「满底色」那一点落到封面底边以下，底边那一截就透出封面、收成一条硬边。
-        Self.coverHeight * (pullScale - 1)
+        coverHeight * (effectiveScale - 1)
     }
 
     @Environment(AppRouter.self) private var router
@@ -58,6 +58,71 @@ struct PopularHero: View {
     /// 封面块高度（LP 2843 / Colo 2844：400 → 480 → 500 → 550；LP 2901 / Colo 2902：550 → 600）。
     /// 加高是为了把封面底边推到「开始观看」和第一行货架中间，文字块本身不动（见 `textBottomInset`）。
     static let coverHeight: CGFloat = 600
+    /// 宽屏两栏时按栏宽算出来的封面高度（Colo 6651：栏宽 ÷ 0.67）。
+    /// 不传就是竖屏那档的 600，竖屏一个像素不动。
+    var coverHeightOverride: CGFloat? = nil
+    /// 封面实际宽度：取图档位按它算（Colo 6663），不再写死手机那档 402。
+    var coverWidth: CGFloat = 402
+    /// 文字块摆哪儿（Colo 6687 §3.2 / §4.2）：压在封面下沿（单栏、两栏），
+    /// 还是摆在封面右边（英雄行：iPad 竖屏、iPhone 横屏）。
+    var textPlacement: TextPlacement = .overlay
+    /// 顶栏要横跨多宽（Colo 6687 §2.3.1）：两栏时封面只占左栏，但「推荐」贴屏左、
+    /// 两颗圆钮贴屏右。不传就跟容器一样宽（单栏、英雄行本来就整屏）。
+    /// 宽档版面把标题和两颗圆钮收进右栏白底上（Colo 6725），左栏一个字的没有，顶栏由外面画。
+    var showsTopBar: Bool = true
+    /// 宽档左栏：封面自己接下拉手势（Colo 6730 做法二 / 6736）。只有按在封面这块矩形里才放大，
+    /// 按在信息块上、右栏货架上、两栏中间那条缝上都不动。
+    var coverPullGesture: Bool = false
+
+    /// 封面自己拖出来的位移（0…120），松手回弹到 0。
+    @State private var dragPull: CGFloat = 0
+    /// 这一下手指走过 8 点没有：走过是拖、没走过是点（Colo 6750 / 6763）。
+    @State private var isCoverMoved = false
+
+    /// 真正用的放大倍数：外面传进来的（手机那条路）和封面自己拖出来的，取大的那个。
+    private var effectiveScale: CGFloat {
+        max(pullScale, 1 + min(dragPull, 120) / 550)
+    }
+
+    /// 信息块让开的距离：封面往下长多少就让多少。
+    private var effectiveOffset: CGFloat {
+        max(pullOffset, coverHeight * (effectiveScale - 1))
+    }
+
+    /// 封面这一档（iPad 横屏左栏）唯一的手势：拖动放大、松手回弹，没走过阈值就是点按、进详情。
+    ///
+    /// 点按和拖动必须由同一个识别器判（Colo 6730 做法二 / 6750 / 6763）。之前是封面套一个
+    /// Button、外层再挂一个拖动手势，同一个抬手被两处各判一次，谁先谁后不保证——七次里会漏
+    /// 一次点按、直接跳进详情（Ato 6765）。合成一处之后没有先后可言，给那颗旗子收尾的
+    /// 0.15 秒计时器也一并删掉。
+    /// 判据是位移不是时长（Colo 6750）：任一方向走过 8 点就算拖，快甩和慢拖一视同仁；
+    /// 放大只看竖向，横向仍留给翻页。
+    private var coverGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard coverPullGesture else { return }
+                let moved = max(abs(value.translation.height), abs(value.translation.width)) > 8
+                if moved != isCoverMoved { isCoverMoved = moved }
+                dragPull = moved ? min(120, max(0, value.translation.height * 0.55)) : 0
+            }
+            .onEnded { _ in
+                guard coverPullGesture else { return }
+                let wasDrag = isCoverMoved
+                isCoverMoved = false
+                if wasDrag {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                        dragPull = 0
+                    }
+                } else {
+                    dragPull = 0
+                    openDetail(currentID ?? items.first?.id)
+                }
+            }
+    }
+    /// `trailingFilled`：封面在左、整块信息（简介、标签都在）在右，跟封面顶对齐往下排，
+    /// 把那一栏的高度填满（Ato 6720 第二条：iPad 竖屏右栏的信息量要跟横屏左栏一样）。
+    enum TextPlacement { case overlay, trailing, trailingFilled, below }
+    private var coverHeight: CGFloat { coverHeightOverride ?? Self.coverHeight }
     /// 文字块离块底的留白（LP 2901 / Colo 2902）：封面加高 50，文字块原地不动，
     /// 所以「开始观看」那排仍在原来的位置，封面底边落到它下面、货架上面。
     static let textBottomInset: CGFloat = 50
@@ -102,6 +167,15 @@ struct PopularHero: View {
     /// 文字块整块的实际高度（含块底那 50 的留白），渐隐由它推出来。
     /// 用 `onGeometryChange` 量（`PreferenceKey` 那条路在这版没吃到值）。单行标题是 164。
     @State private var textBlockHeight: CGFloat = PopularHero.textBlockDefaultHeight
+    /// 字号跟着封面宽长（Colo 6687 §3.2 / §2.3.4）：402 宽是 22，484 是 27，645 是 37。
+    /// 底数走系统文字样式，最大字号下照样跟着放大；402 以下不缩，单栏档一个像素不动。
+    @ScaledMetric(relativeTo: .title2) private var title2Base: CGFloat = 22
+    @ScaledMetric(relativeTo: .footnote) private var footnoteBase: CGFloat = 13
+    /// 英雄行里文字块占多宽：容器宽减封面宽再减两侧留白（Colo 6687 §3.2）。
+    @Environment(\.popularHeroTextWidth) private var textWidth
+    private var coverTextScale: CGFloat {
+        max(1, 1 + (coverWidth - 402) * 0.0617 / 22)
+    }
     /// 圆钮按下时弹一下：缩到 0.8 再回弹，120 毫秒（Colo 2803）。
     @State private var followScale: CGFloat = 1
     /// 轮播停在第几页（含两头的克隆页）。滚动位置绑它，绕回不往回翻（LP 3064）。
@@ -120,7 +194,7 @@ struct PopularHero: View {
     /// 封面的解码档位：和 `BangumiRemoteImage` 在封面这个尺寸上算出来的那一档一致，
     /// 不然预取的图和视图要的不是同一份，等于白取。
     private var coverPixelSize: Int {
-        KazumiImageLoader.pixelSize(for: CGSize(width: 402, height: Self.coverHeight))
+        KazumiImageLoader.pixelSize(for: CGSize(width: coverWidth, height: coverHeight))
     }
 
     /// 自动翻页的下一张（可能落在尾部那页克隆上，画的是第一张）。
@@ -267,29 +341,182 @@ struct PopularHero: View {
         return library.entry(for: id)?.collectType ?? .none
     }
 
-    var body: some View {
-    ZStack(alignment: .bottom) {
-            // 下拉时只有那张图从顶边放大（LP 2963 / Colo 2939）：横向钉死页宽 402，
+    /// 单栏、两栏左栏：文字块压在封面下沿（现在这套，一处不动）。
+    private var overlayLayout: some View {
+        ZStack(alignment: .bottom) {
+            coverLayer
+            // 文字块不参与放大，只跟着手指往下移（LP 2963）。
+            textBlock(alignedLeading: false)
+                .offset(y: pullOffset)
+        }
+        .frame(height: coverHeight)
+    }
+
+    /// 英雄行（Colo 6687 §3.2 / §4.2）：封面在左、文字在右，文字垂直居中于封面那段高度。
+    private var trailingLayout: some View {
+        HStack(alignment: .center, spacing: 32) {
+            coverLayer
+                .frame(width: coverWidth, height: coverHeight)
+            textBlock(alignedLeading: true)
+                .frame(width: textWidth, alignment: .leading)
+            Spacer(minLength: 0)
+        }
+        .frame(height: coverHeight)
+    }
+
+    /// 两栏左栏（Colo 6691）：封面在上、纯美术不放字，信息块在下面把剩下的高度填满。
+    private var belowLayout: some View {
+        VStack(spacing: 0) {
+            coverLayer
+                .frame(width: coverWidth, height: coverHeight)
+                .contentShape(Rectangle())
+                .simultaneousGesture(coverGesture)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(current?.displayName ?? "")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("打开详情")
+                .accessibilityAction { openDetail(currentID ?? items.first?.id) }
+            infoCard
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                // 下拉过界封面往下长多少，信息块就跟着让多少，不许被封面盖住（Ato 6718）。
+                .offset(y: effectiveOffset)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 封面在左、整块信息在右，垂直居中（Colo 6725）：右栏 963 高，六项排满 432，
+    /// 居中后上留 265、下留 266，读起来是留白不是洞。标题和两颗圆钮压在这一栏的顶上。
+    private var trailingFilledLayout: some View {
+        HStack(alignment: .top, spacing: 32) {
+            coverLayer
+                .frame(width: coverWidth, height: coverHeight)
+            VStack(alignment: .leading, spacing: 0) {
+                PopularWideTopBar(leadingPadding: 0)
+                    .padding(.top, Self.statusBarHeight + 12)
+                Spacer(minLength: 0)
+                infoCard
+                    .frame(width: textWidth, alignment: .leading)
+                Spacer(minLength: 0)
+            }
+            .frame(width: textWidth)
+            Spacer(minLength: 0)
+        }
+        .frame(height: coverHeight)
+    }
+
+    /// 左栏信息块：名称、元信息、开始观看、圆点、简介、标签行（Colo 6691）。
+    /// 简介是异步来的，先占住位置再替换，免得数据一到整块往下推。
+    private var infoCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(current?.displayName ?? "")
+                .font(.system(size: title2Base * coverTextScale, weight: .bold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+
+            if let meta = current?.metaLine {
+                Text(meta)
+                    .font(.system(size: footnoteBase * coverTextScale))
+                    .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                    .padding(.top, 6)
+            }
+
+            HStack(spacing: 12) {
+                playButton(expanded: textPlacement == .below || textPlacement == .trailingFilled)
+                    .frame(maxWidth: .infinity)
+                followButton
+            }
+            .padding(.top, 14)
+
+            dots
+                .padding(.top, 10)
+
+            summarySlot
+                .padding(.top, 16)
+
+            tagsRow
+                .padding(.top, 12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 简介位：有数据画三行，没有就先画三条骨架灰条占住同一块高度（Colo 6691 第二条）。
+    private var summarySlot: some View {
+        Group {
+            if let summary = current?.summary, !summary.isEmpty {
+                Text(summary)
+                    .font(.system(size: footnoteBase * coverTextScale))
+                    .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                    // 竖屏那栏给到六行（Colo 6725），横屏左栏还是三行。
+                    .lineLimit(textPlacement == .trailingFilled ? 6 : 3)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Capsule()
+                            .fill(KazumiPalette.secondaryText(for: colorScheme).opacity(0.18))
+                            .frame(height: 15)
+                    }
+                }
+            }
+        }
+        // 三行的高度先占住，数据到了原地换内容，位置不动。
+        .frame(maxWidth: .infinity, minHeight: 63, alignment: .topLeading)
+    }
+
+    /// 标签行：评分和放送日期。题材这轮没有数据（Colo 6691 第一条），不放。
+    private var tagsRow: some View {
+        HStack(spacing: 8) {
+            if let rating = current?.rating, rating > 0 {
+                tagChip(String(format: "%.1f", rating))
+            }
+            if let airDate = current?.airDate, !airDate.isEmpty {
+                tagChip(airDate)
+            }
+        }
+    }
+
+    private func tagChip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: footnoteBase * coverTextScale * 0.92))
+            .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(KazumiPalette.secondaryText(for: colorScheme).opacity(0.12)))
+    }
+
+    /// 封面那一层：分页图 ＋ 底边渐隐。
+    private var coverLayer: some View {
+        ZStack(alignment: .bottom) {
+            // 下拉时只有那张图从顶边放大（LP 2963 / Colo 2939）：横向钉死页宽，
             // 纵向往下长，多出来的露在下面。可视宽度不跟着放大，隔壁才不会挤进来（Colo 2959）。
             pager
-                .scaleEffect(pullScale, anchor: .top)
+                .scaleEffect(effectiveScale, anchor: .top)
                 .mask(alignment: .top) {
                     Rectangle()
                         .frame(maxWidth: .infinity)
-                        .frame(height: Self.coverHeight * Self.maxPullScale)
+                        .frame(height: coverHeight * Self.maxPullScale)
                 }
 
-            // 底边渐隐挂在封面这一整个 600 高的盒子上，不挂在图里（Colo 2922）：
-            // 挂在图上时，它的下沿跟着图片自己的高度走（图只有 582 高），
-            // 渐隐就提前 18 点结束，封面底边那条线就露出来了。
+            // 底边渐隐挂在封面这一整个盒子上，不挂在图里（Colo 2922）：
+            // 挂在图上时，它的下沿跟着图片自己的高度走，渐隐就提前 18 点结束，底边那条线就露出来了。
             fade
                 .offset(y: fadeOffset)
-
-            // 文字块不参与放大，只跟着手指往下移（LP 2963）。
-            textBlock
-                .offset(y: pullOffset)
         }
-        .frame(height: Self.coverHeight)
+    }
+
+    var body: some View {
+        Group {
+            if textPlacement == .trailing {
+                trailingLayout
+            } else if textPlacement == .trailingFilled {
+                trailingFilledLayout
+            } else if textPlacement == .below {
+                belowLayout
+            } else {
+                overlayLayout
+            }
+        }
         .onPreferenceChange(TopBarHeightKey.self) { topBarHeight = $0 }
         // 封面块不做缩放转场，走默认的横向翻页（LP 2976）：缩放转场返回时只飞回一张快照，
         // 渐隐和按钮要等动画结束才出现，看着就是「图先落回、底下一闪」。
@@ -384,8 +611,10 @@ struct PopularHero: View {
         // 顶栏是封面块最上面那一层（LP 2865 / Colo 2866）：压在封面顶边，
         // 跟着封面、跟着内容一起滚。LP 3132 说了照旧滚动，只把固定那条模糊改成上滑才出现。
         .overlay(alignment: .top) {
-            topBar
-                .padding(.top, Self.statusBarHeight)
+            if showsTopBar {
+                topBar
+                    .padding(.top, Self.statusBarHeight)
+            }
         }
         // 提示语摆在顶栏下沿再让 12，不然会压住状态栏的时钟和顶栏那三十四点的大标题。
         .overlay(alignment: .top) {
@@ -430,36 +659,51 @@ struct PopularHero: View {
     }
 
     /// 封面图 ＋ 底边渐隐：点击只挂在这一层（Ato 2852），整块都是命中区。
+    @ViewBuilder
     private func cover(_ poster: PopularPoster) -> some View {
-        Button {
-            // 大封面点开走系统默认的横向翻页，不做缩放转场（LP 2976 / 2985）。
-            router.push(.bangumiInfo(bangumiID: poster.id, zoom: false))
-        } label: {
-            ZStack(alignment: .bottom) {
-                // 竖图铺满整块：宽度钉在页宽上（`containerRelativeFrame`），高度超出 600 的裁掉。
-                //
-                // 宽度必须钉：横向 ScrollView 给内容的宽度提议是无穷大，光靠
-                // `frame(maxWidth: .infinity)` 撑不开，图会按自己的比例算出一个比页宽更宽的
-                // 尺寸（实测 440 对 402），左右各溢出 19 点——左右滑时隔壁那张就从这条缝里
-                // 露出来（LP 2899 / Colo 2900）。
-                BangumiRemoteImage(url: poster.imageURL)
-                    .containerRelativeFrame(.horizontal)
-                    // 高度必须钉死 600（Colo 3165）：不钉的话这一层的高度是按海报自己的
-                    // 比例算出来的（同一页宽 402，矮的 568、高的 611），底边就不在 600 上。
-                    // 渐隐的底边是按 600 算的，高海报的底边会落到渐隐下面，露出一条——
-                    // 换一张海报露的多少还不一样，这就是「一直漏」。
-                    .frame(height: Self.coverHeight)
-                    // 放大由整块那层统一做（Colo 2953）：图自己再放一次会变成 1.22 的平方。
-                    // 这里只管裁：显示尺寸永远等于页宽 402、页高 600。
-                    .clipped()
+        if coverPullGesture {
+            // 这一档（iPad 横屏左栏）整块的点按/拖动交给外层同一个手势（见 `coverGesture`）：
+            // 不再套 Button，否则一个抬手被两处各判一次，就会偶发跳详情（Ato 6765）。
+            // 无障碍标签和激活动作挂在外层那一块上（见 `belowLayout`）。
+            coverImage(poster)
+        } else {
+            // 其余各档照旧用 Button：换成点击手势之后，同层的拖动手势一次都收不到
+            // （实测拖 200 点封面逐像素零差），放大直接死掉。
+            Button {
+                openDetail(poster.id)
+            } label: {
+                coverImage(poster)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(poster.displayName)
+            .accessibilityHint("打开详情")
         }
-        .buttonStyle(.plain)
-        // 转场源登记在整块封面上，不挂在图那一层（LP 2970 / 2972）：
-        // 只挂图的话，返回时系统只把图那一张快照飞回来，渐隐和按钮要等动画结束才出现，
-        // 看着就是「图先落回、底下一闪」。
-        .accessibilityLabel(poster.displayName)
-        .accessibilityHint("打开详情")
+    }
+
+    /// 封面那一张图：竖图铺满整块，宽度钉在页宽上（`containerRelativeFrame`），高度超出 coverHeight 的裁掉。
+    private func coverImage(_ poster: PopularPoster) -> some View {
+        ZStack(alignment: .bottom) {
+            // 宽度必须钉：横向 ScrollView 给内容的宽度提议是无穷大，光靠
+            // `frame(maxWidth: .infinity)` 撑不开，图会按自己的比例算出一个比页宽更宽的
+            // 尺寸（实测 440 对 402），左右各溢出 19 点——左右滑时隔壁那张就从这条缝里
+            // 露出来（LP 2899 / Colo 2900）。
+            BangumiRemoteImage(url: poster.imageURL)
+                .containerRelativeFrame(.horizontal)
+                // 高度必须钉死 600（Colo 3165）：不钉的话这一层的高度是按海报自己的
+                // 比例算出来的（同一页宽 402，矮的 568、高的 611），底边就不在 600 上。
+                // 渐隐的底边是按 600 算的，高海报的底边会落到渐隐下面，露出一条——
+                // 换一张海报露的多少还不一样，这就是「一直漏」。
+                .frame(height: coverHeight)
+                // 放大由整块那层统一做（Colo 2953）：图自己再放一次会变成 1.22 的平方。
+                // 这里只管裁：显示尺寸永远等于页宽 402、页高 600。
+                .clipped()
+        }
+    }
+
+    /// 进详情页：大封面点开走系统默认的横向翻页，不做缩放转场（LP 2976 / 2985）。
+    private func openDetail(_ id: Int?) {
+        guard let id else { return }
+        router.push(.bangumiInfo(bangumiID: id, zoom: false))
     }
 
     /// 底边渐隐：从圆点那行底下开始往下，把封面渐成页面底色，满底色落在 560，
@@ -470,8 +714,11 @@ struct PopularHero: View {
     private var fade: some View {
         // 下沿＝封面底边（放大后也跟着走），上沿压在文字块顶上。
         // 用块高而不是量绝对位置：下拉时文字块整体位移，绝对位置会带着位移走，块高不会。
-        let coverBottom = Self.coverHeight * pullScale
-        let textTop = Self.coverHeight - textBlockHeight + pullOffset
+        let coverBottom = coverHeight * effectiveScale
+        // 英雄行的文字不在封面上，渐隐按默认文字块那一段的高度收（Colo 6687 §3）。
+        let textTop = textPlacement == .trailing
+            ? coverHeight - Self.textBlockDefaultHeight
+            : coverHeight - textBlockHeight + pullOffset
         let height = max(1, coverBottom - textTop)
         // 满底色永远落在封面底边往上 40：这样底边那一截是纯底色，
         // 封面图的下边缘不会透出来成一条硬边（LP 3152）。
@@ -505,25 +752,31 @@ struct PopularHero: View {
 
     // MARK: - 文字
 
-    private var textBlock: some View {
+    private func textBlock(alignedLeading: Bool) -> some View {
         VStack(spacing: 0) {
             // 名称、元信息不吃点击（Ato 2852）：点击只挂封面图那一层，
             // 文字压在上面也不会把按钮的点击吃掉。
             VStack(spacing: 0) {
                 Text(current?.displayName ?? "")
-                    .font(.title2.weight(.bold))
+                    // 字号跟着封面宽长（Colo 6687 §3.2）；402 宽不缩，还是 .title2 那一档。
+                    .font(coverTextScale > 1
+                          ? .system(size: title2Base * coverTextScale, weight: .bold)
+                          : .title2.weight(.bold))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
+                    .multilineTextAlignment(alignedLeading ? .leading : .center)
+                    .padding(.horizontal, alignedLeading ? 0 : 24)
 
                 if let meta = current?.metaLine {
                     Text(meta)
-                        .font(.footnote)
+                        .font(coverTextScale > 1
+                              ? .system(size: footnoteBase * coverTextScale)
+                              : .footnote)
                         .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                         .padding(.top, 6)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: alignedLeading ? .leading : .center)
             .allowsHitTesting(false)
 
             actions
@@ -537,7 +790,7 @@ struct PopularHero: View {
         // 文字块贴块底：开始观看那排压在块底上，名称落在块底往上 78（Colo 2853 / 2868）。
         // 1 行标题时正好是 78，2 行会更高——78 说的是单行那个位置。
         // 块底从 550 抬到 600 之后文字块跟着留出这 50，屏上位置一点不变（LP 2901 / Colo 2902）。
-        .padding(.bottom, Self.textBottomInset)
+        .padding(.bottom, alignedLeading ? 0 : Self.textBottomInset)
         // 量整块（含块底那 50）：渐隐的高度直接用它，块里再多一行点也不会露出封面。
         // 之前这条量在了圆点那行上，量到的是圆点胶囊的 14，渐隐就只剩十几点、
         // 看着像整条没了（Colo 2922 那一版起就一直在犯）。
@@ -548,7 +801,7 @@ struct PopularHero: View {
 
     private var actions: some View {
         ZStack {
-            playButton
+            playButton()
 
             HStack {
                 Spacer()
@@ -559,7 +812,9 @@ struct PopularHero: View {
         .frame(minHeight: 40)
     }
 
-    private var playButton: some View {
+    /// 卡片版面里胶囊要通栏：384 = 436（24…460）减掉圆钮 40 和 12 点缝（Ato 6724）。
+    /// 宽度必须撑在胶囊自己的底色里面——撑在外面时胶囊还是按字宽画、居中悬着（Fuck 6723 量到 126 宽）。
+    private func playButton(expanded: Bool = false) -> some View {
         Button {
             guard let poster = current else { return }
             openSources(poster)
@@ -572,7 +827,7 @@ struct PopularHero: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 22)
                 .padding(.vertical, 10)
-                .frame(minHeight: 40)
+                .frame(maxWidth: expanded ? .infinity : nil, minHeight: 40)
                 .background(Capsule().fill(KazumiPalette.accent(for: colorScheme)))
         }
         .buttonStyle(.plain)
@@ -597,9 +852,15 @@ struct PopularHero: View {
             Image(systemName: collectType == .none ? "plus" : collectType.statusSymbol)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(KazumiPalette.accent(for: colorScheme))
-                .frame(width: 36, height: 36)
+                // 画 40（Ato 6756：24 + 384 + 12 + 40 = 460，胶囊右边才落在 408）。
+                .frame(width: 40, height: 40)
                 .kazumiGlassCapsule(interactive: true)
                 .shadow(color: .black.opacity(0.18), radius: 4, y: 1)
+                // 热区 44（Colo 6757 / HIG），但布局仍按 40 排：
+                // 正负各 2 点，点得到的地方大一圈，占的地方不变。
+                .padding(2)
+                .contentShape(Rectangle())
+                .padding(-2)
         }
         .buttonStyle(.plain)
         .scaleEffect(followScale)
@@ -870,10 +1131,74 @@ struct PopularHero: View {
 }
 
 /// 顶栏本体的实际高度：提示语要落在它下面，所以量一下。
+/// 宽档版面的顶栏：标题在左、两颗圆钮在右，压在白底上，深色字（Colo 6725）。
+/// 不做背板——要在封面上压到 4.5:1 就得盖 70% 的黑，那是给封面加一条黑板。
+struct PopularWideTopBar: View {
+    /// 标题左边到栏左缘的距离：横屏那栏要 16（x=500），竖屏那栏是 0（x=677，跟信息块齐）。
+    var leadingPadding: CGFloat = 16
+
+    @Environment(AppRouter.self) private var router
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text("推荐")
+                .font(.largeTitle.weight(.semibold))
+                .tracking(-0.4)
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
+
+            Spacer()
+
+            PopularTopBarCircle(symbol: "magnifyingglass", label: "搜索") {
+                router.push(.search(keyword: ""))
+            }
+            PopularTopBarCircle(symbol: "clock", label: "观看历史") {
+                router.push(.history)
+            }
+        }
+        .padding(.leading, leadingPadding)
+        .padding(.trailing, 16)
+    }
+}
+
+/// 顶栏那两颗圆钮：40 正圆、图标 20、命中区 44（Colo 3061）。
+/// 手机压在封面上、iPad 压在右栏白底上，是同一副面孔。
+struct PopularTopBarCircle: View {
+    let symbol: String
+    let label: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 40, height: 40)
+                .kazumiGlassCapsule(interactive: true)
+        }
+        .buttonStyle(.plain)
+        .hitTarget44()
+        .accessibilityLabel(label)
+    }
+}
+
 private struct TopBarHeightKey: PreferenceKey {
     // 必须是 `let`：`var` 在严格并发下是非隔离的全局可变状态，编译不过。
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+
+/// 英雄行里文字块占的宽度，由推荐页按容器宽算好传进来（Colo 6687 §3.2 / §4.2）。
+private struct PopularHeroTextWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 280
+}
+
+extension EnvironmentValues {
+    var popularHeroTextWidth: CGFloat {
+        get { self[PopularHeroTextWidthKey.self] }
+        set { self[PopularHeroTextWidthKey.self] = newValue }
     }
 }

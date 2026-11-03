@@ -12812,7 +12812,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "選集回應變數 (JSON)"
+            "value": "集數回應變數 (JSON)"
           }
         }
       }
@@ -12852,7 +12852,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "選集規則"
+            "value": "集數規則"
           }
         }
       }

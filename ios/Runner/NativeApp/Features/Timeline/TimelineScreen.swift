@@ -29,6 +29,19 @@ struct TimelineScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    /// 量到的页面尺寸（§6.0：列数与限宽都按容器算，不按整屏）。
+    @State private var containerSize: CGSize = .zero
+
+    /// B 档：宽且不矮。
+    private var isWideTier: Bool {
+        containerSize.width >= 700 && containerSize.height >= 600
+    }
+
+    /// C 档：宽但矮（§六之二）。
+    private var isShortTier: Bool {
+        containerSize.width >= 700 && containerSize.height < 600
+    }
+
     /// 当前打开着详情的番剧 id（从导航栈里读）。
     @State private var detailItemID: Int?
     /// 返回后要做淡入的卡片：改了放送星期、卡片换了那一天时用。
@@ -81,6 +94,13 @@ struct TimelineScreen: View {
 
     var body: some View {
         content
+            // 量容器尺寸：宽档日列表的列数、C 档标题都按它算。
+            .onGeometryChange(for: CGSize.self) { proxy in
+                proxy.size
+            } action: { size in
+                guard size.width > 0 else { return }
+                containerSize = size
+            }
             // 头部与星期条合成一块吸附在顶部：两块都是固定块，
             // 只提 header 的话内容仍会从星期条下面硬切过去。
             // LP 2026-10-24（后一条）：顶栏不要毛玻璃了，改纯色底。
@@ -171,9 +191,14 @@ struct TimelineScreen: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
-            seasonTitleButton
+            seasonTitleButton(expands: !isWideTier)
+            // 宽档把标题与选项钮之间的空档限制在 700 以内（§6.1），整体左对齐。
             Spacer(minLength: 8)
+                .frame(maxWidth: isWideTier ? 700 : nil)
             optionsButton
+            if isWideTier {
+                Spacer(minLength: 0)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -182,7 +207,7 @@ struct TimelineScreen: View {
 
     /// 顶栏标题就是当前季度，和原版 `_buildSeasonPicker(inAppBar: true)` 一致。
     /// 点击区域覆盖整块标题，当前季度 + 箭头即可。
-    private var seasonTitleButton: some View {
+    private func seasonTitleButton(expands: Bool) -> some View {
         Button {
             isShowingSeasonPicker = true
         } label: {
@@ -196,7 +221,8 @@ struct TimelineScreen: View {
             let label = Group {
                 HStack(spacing: 4) {
                     Text("新番")
-                        .font(.largeTitle.weight(.semibold))
+                        // C 档大标题改 inline（§六之二）：34 半粗 → 20 半粗。
+                        .font(isShortTier ? Font.title3.weight(.semibold) : Font.largeTitle.weight(.semibold))
                         .tracking(-0.4)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -218,7 +244,8 @@ struct TimelineScreen: View {
                     HStack(alignment: .firstTextBaseline, spacing: 10) { label }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // 宽档标题按内容宽排，空档由 header 的 Spacer 控制（§6.1）。
+            .frame(maxWidth: expands ? .infinity : nil, alignment: .leading)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(String(localized: "新番，切换放送季度，当前 \(controller.seasonLabel)"))
@@ -516,7 +543,11 @@ struct TimelineScreen: View {
                     HStack(spacing: 0) {
                         ForEach(0..<7, id: \.self) { day in
                             dayPage(day)
-                                .frame(width: pageProxy.size.width)
+                                // 页宽 = 分页容器自己的实际宽（Colo 6820）。
+                                // 之前用 pageProxy.size.width，它量的是安全区内的宽，
+                                // 分页容器却铺满到安全区外，两者差的那些点就是
+                                // 「右边永远露着下一天」的根子。
+                                .containerRelativeFrame(.horizontal)
                                 .id(day)
                         }
                     }
@@ -535,6 +566,10 @@ struct TimelineScreen: View {
                     }
                 }
                 .scrollIndicators(.hidden)
+                // 分页容器钉到安全区内的宽（Colo 6820 的第二条允许分支）：
+                // 铺满屏时分页视口比内容宽，页宽跟着变宽，页内 12 内缩就对不上
+                // 页面其他内容的内缩了。钉住之后页宽 = 容器宽、内缩 12、卡宽 = 容器宽 − 24。
+                .frame(width: pageProxy.size.width)
                 .onScrollGeometryChange(for: CGFloat.self, of: { geo in
                     geo.contentOffset.x
                 }, action: { _, new in
@@ -564,23 +599,23 @@ struct TimelineScreen: View {
         } else {
             ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(items) { item in
-                        BangumiTimelineCard(
-                            item: item,
-                            showRating: settings.showRating,
-                            isWatching: watchingIDs.contains(item.id),
-                            updateText: controller.updateText(for: item),
-                            currentEpisode: controller.currentEpisode(for: item),
-                            zoomNamespace: zoomSuppressedIDs.contains(item.id) ? nil : zoomNamespace
-                        )
-                        .opacity(isFlashing(item.id) ? 0 : 1)
-                        .offset(y: isFlashing(item.id) ? 8 : 0)
+                // 宽档：日列表改成网格（§6.1），卡片不再被拉成 1342×160。
+                if containerSize.width > 0 {
+                    Group {
+                        if containerSize.width >= 700 {
+                            LazyVGrid(columns: wideDayColumns, spacing: 10) {
+                                dayCards(items)
+                            }
+                        } else {
+                            LazyVStack(spacing: 10) {
+                                dayCards(items)
+                            }
+                        }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-                .padding(.bottom, 24)
             }
             .scrollIndicators(.hidden)
             // 顶部渐进模糊边（.soft）：只作用于顶部一条，不叠材质、不加底色。
@@ -595,6 +630,35 @@ struct TimelineScreen: View {
                 proxy.scrollTo(new, anchor: .center)
             }
             }
+        }
+    }
+
+    /// 宽档日列表的列数：n = clamp(floor((容器宽 − 24 + 12) / 360), 1, 3)（§6.1）。
+    /// 门槛 430 → 360（Colo 6808）：430 是按竖屏卡宽定的，iPhone 横屏 750 会算出 1 列、
+    /// 一张 726 宽的卡，402 高的屏上只放得下两行；360 后 750 出 2 列，iPad 各档不变。
+    private var wideDayColumns: [GridItem] {
+        let width = containerSize.width
+        let count = min(max(Int(floor((width - 24 + 12) / 360)), 1), 3)
+        let spacing: CGFloat = 12
+        let each = max(1, (width - 24 - spacing * CGFloat(count - 1)) / CGFloat(count))
+        return Array(repeating: GridItem(.fixed(each), spacing: spacing), count: count)
+    }
+
+    @ViewBuilder
+    private func dayCards(_ items: [BangumiItem]) -> some View {
+        ForEach(items) { item in
+            BangumiTimelineCard(
+                item: item,
+                showRating: settings.showRating,
+                isWatching: watchingIDs.contains(item.id),
+                updateText: controller.updateText(for: item),
+                currentEpisode: controller.currentEpisode(for: item),
+                // 宽档卡片高 176，给两行标题留地方（§6.1）。
+                cardMinHeight: containerSize.width >= 700 ? 176 : nil,
+                zoomNamespace: zoomSuppressedIDs.contains(item.id) ? nil : zoomNamespace
+            )
+            .opacity(isFlashing(item.id) ? 0 : 1)
+            .offset(y: isFlashing(item.id) ? 8 : 0)
         }
     }
 

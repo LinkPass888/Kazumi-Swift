@@ -53,14 +53,29 @@ struct LibraryScreen: View {
     private var columnCount: Int {
         if dynamicTypeSize >= .accessibility4 { return 1 }
         if dynamicTypeSize >= .accessibility1 { return 2 }
-        return 3
+        // 按容器宽算列数（§6.2）：max(3, floor((容器宽 − 32 + 10) / 160))。
+        return max(3, Int(floor((libraryContainerSize.width - 32 + 10) / 160)))
     }
     /// 网格列间距。
     private static let columnSpacing: CGFloat = 10
 
-    /// 内容区宽度（左右各 16 之后），由网格上方的探针量出来。
-    /// 还没量到时按 0 处理，退回弹性列，量到之后立刻换成算好的定宽列。
-    @State private var libraryContentWidth: CGFloat = 0
+    /// 量到的页面尺寸（§6.0：列数与限宽都按容器算，不按整屏）。
+    @State private var libraryContainerSize: CGSize = .zero
+
+    /// B 档：宽且不矮。
+    private var isWideTier: Bool {
+        libraryContainerSize.width >= 700 && libraryContainerSize.height >= 600
+    }
+
+    /// C 档：宽但矮（§六之二）。
+    private var isShortTier: Bool {
+        libraryContainerSize.width >= 700 && libraryContainerSize.height < 600
+    }
+
+    /// 内容区宽度（左右各 16 之后）。
+    private var libraryContentWidth: CGFloat {
+        max(0, libraryContainerSize.width - 32)
+    }
 
     /// 按视口宽和当前列数算出定宽列。
     private func gridColumns(width: CGFloat) -> [GridItem] {
@@ -71,7 +86,9 @@ struct LibraryScreen: View {
         // 不取整：402 屏上每列 116.7，三列加两道间距正好铺满，右边不留缝。
         let total = width - Self.columnSpacing * CGFloat(count - 1)
         let each = max(1, total / CGFloat(count))
-        return Array(repeating: GridItem(.fixed(each), spacing: Self.columnSpacing), count: count)
+        // 宽档列宽封顶 200（§6.2）：辅助功能字号单列 / 两列时封面不再跟着整屏长。
+        let columnWidth = libraryContainerSize.width >= 700 ? min(each, 200) : each
+        return Array(repeating: GridItem(.fixed(columnWidth), spacing: Self.columnSpacing), count: count)
     }
 
     // MARK: - 数据
@@ -103,18 +120,19 @@ struct LibraryScreen: View {
 
     var body: some View {
         content
-            // 只量视口宽：网格的左右内边距各 16，减掉就是可用内容宽。
+            // 只量视口尺寸（宽档分档要用高度）：网格的左右内边距各 16，减掉就是可用内容宽。
             // 这颗探针必须在 ScrollView 外面，理由见 content 里那段注释。
             .background {
                 GeometryReader { proxy in
                     Color.clear.preference(
                         key: LibraryContentWidthKey.self,
-                        value: proxy.size.width - 32
+                        value: proxy.size
                     )
                 }
             }
-            .onPreferenceChange(LibraryContentWidthKey.self) { width in
-                libraryContentWidth = max(0, width)
+            .onPreferenceChange(LibraryContentWidthKey.self) { size in
+                guard size.width > 0 else { return }
+                libraryContainerSize = size
             }
             // LP 2026-10-24（后一条）：追番页整体上移到原来的高度——不用系统大标题了，
             // 导航栏收起，标题照旧写在内容里，顶栏只剩控制条；「同步」仍留在控制条里。
@@ -166,7 +184,8 @@ struct LibraryScreen: View {
     private var header: some View {
         HStack(alignment: .center) {
             Text("追番")
-                .font(.largeTitle.weight(.semibold))
+                // C 档大标题改 inline（§六之二）：34 半粗 → 20 半粗。
+                .font(isShortTier ? Font.title3.weight(.semibold) : Font.largeTitle.weight(.semibold))
 
             Spacer(minLength: 0)
         }
@@ -636,25 +655,27 @@ struct LibraryScreen: View {
                 // 量宽度的那颗探针在 body 上、ScrollView 外面——**不能**放在这里：
                 // 放在这里量到的是内容宽，而内容宽又按这个数撑出来，自己咬自己，
                 // 大字号时被顶到 504 就再也降不回来（Colo 2026-10-24 实测）。
-                LazyVGrid(
-                    columns: gridColumns(width: libraryContentWidth),
-                    spacing: 14
-                ) {
-                    ForEach(filteredEntries) { entry in
-                        LibraryPosterCard(
-                            entry: entry,
-                            isPending: pendingID == entry.id,
-                            zoomNamespace: zoomNamespace,
-                            onOpen: { router.push(.bangumiInfo(bangumiID: entry.id)) },
-                            onChangeType: { type in changeType(entry, to: type) }
-                        )
-                        // 取消追番时这张卡淡出并缩到 0.92，其余卡片靠同一次动画补位。
-                        .transition(cardRemovalTransition)
+                if libraryContainerSize.width > 0 {
+                    LazyVGrid(
+                        columns: gridColumns(width: libraryContentWidth),
+                        spacing: 14
+                    ) {
+                        ForEach(filteredEntries) { entry in
+                            LibraryPosterCard(
+                                entry: entry,
+                                isPending: pendingID == entry.id,
+                                zoomNamespace: zoomNamespace,
+                                onOpen: { router.push(.bangumiInfo(bangumiID: entry.id)) },
+                                onChangeType: { type in changeType(entry, to: type) }
+                            )
+                            // 取消追番时这张卡淡出并缩到 0.92，其余卡片靠同一次动画补位。
+                            .transition(cardRemovalTransition)
+                        }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 24)
             }
             // 点空白处取消搜索的手势挪到 content 外层了（三个分支一起接）。
             .scrollIndicators(.hidden)
@@ -879,12 +900,15 @@ private struct LibraryEntryCard: View {
 }
 
 
-/// 量网格可用内容宽用的一次性 preference（追番页网格列宽按它算）。
+/// 量网格可用容器尺寸用的一次性 preference（追番页列宽与限宽按它算）。
 private struct LibraryContentWidthKey: PreferenceKey {
     // 必须是 `let`：`var` 在严格并发下是非隔离的全局可变状态，编译不过
     // （仓库里 InfoTabPanels.swift 的 IntroHeightKey 就是这个写法）。
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = CGSize(
+            width: max(value.width, nextValue().width),
+            height: max(value.height, nextValue().height)
+        )
     }
 }

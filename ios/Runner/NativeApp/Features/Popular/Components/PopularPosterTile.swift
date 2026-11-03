@@ -14,6 +14,9 @@ import SwiftUI
 struct PopularPosterTile: View {
     let poster: PopularPoster
     var zoomNamespace: Namespace.ID?
+    /// 宽屏两栏时货架里的卡片宽度（Ato 验收第 3 条：卡片名不截）。
+    /// 不传就是规格里那档 96，竖屏一个像素不动。
+    var widthOverride: CGFloat? = nil
 
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
@@ -23,6 +26,7 @@ struct PopularPosterTile: View {
     /// 标题区不再写死 34 高。默认字号仍然是 96×144 两行，规格不动。
     private var isAccessibilitySize: Bool { dynamicTypeSize.isAccessibilitySize }
     private var tileWidth: CGFloat {
+        if let widthOverride { return widthOverride }
         guard isAccessibilitySize else { return Self.width }
         let screenWidth = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }

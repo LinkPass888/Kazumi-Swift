@@ -20,6 +20,12 @@ struct PopularShelf: View {
     /// 行标题上挂的标签菜单：只有第一行「热门番组」有（LP 3044，从封面大标题挪下来）。
     var tagOptions: [String] = []
     var onPickTag: ((String) -> Void)?
+    /// 宽屏两栏时一行要露多少张：卡片跟着栏宽长，名字才装得下（Ato 验收第 3 条）。
+    /// 不传就是手机那档 96。
+    var tileWidth: CGFloat? = nil
+    /// iPad 那两档的行标题贴行顶排（Colo 6747：货架首行墨迹落在 182）。
+    /// 「更多」那颗 44 的点击区往下挂，不把标题往下挤——手机那七屏有基线锁着，不动。
+    var compactHeader: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -30,7 +36,7 @@ struct PopularShelf: View {
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 12) {
                     ForEach(row.items) { poster in
-                        PopularPosterTile(poster: poster, zoomNamespace: zoomNamespace)
+                        PopularPosterTile(poster: poster, zoomNamespace: zoomNamespace, widthOverride: tileWidth)
                     }
                 }
                 .scrollTargetLayout()
@@ -57,7 +63,7 @@ struct PopularShelf: View {
                         .foregroundStyle(KazumiPalette.accent(for: colorScheme))
                 }
                 .buttonStyle(.plain)
-                .hitTarget44()
+                .hitTarget44(alignment: compactHeader ? .top : .center)
                 .accessibilityLabel(String(localized: "更多\(String(describing: row.title))"))
             }
         }

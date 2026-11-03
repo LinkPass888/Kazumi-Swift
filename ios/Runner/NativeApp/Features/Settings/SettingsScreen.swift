@@ -171,51 +171,76 @@ struct SettingsScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppRouter.self) private var router
 
+    /// 量到的页面尺寸（§6.0：限宽按容器算，不按整屏）。
+    @State private var containerSize: CGSize = .zero
+
+    private var isWideTier: Bool {
+        containerSize.width >= 700 && containerSize.height >= 600
+    }
+
+    /// C 档：宽但矮（§六之二）。
+    private var isShortTier: Bool {
+        containerSize.width >= 700 && containerSize.height < 600
+    }
+
     var body: some View {
         List {
             ForEach(SettingsGroup.all) { group in
-                Section {
-                    ForEach(group.categories) { category in
-                        categoryRow(category)
-                            // Colo 3481：每行显式给底色。上面把
-                            // `scrollContentBackground(.hidden)` 关掉了，靠 List 默认
-                            // 不一定是白（深色下也不一定是 #1C1C1E）。
-                            .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
-                    }
-                } header: {
-                    Text(group.title)
-                }
-            }
-            #if DEBUG
-            Section("开发验证") {
-                NavigationLink {
-                    KazumiIntentDebugView()
-                } label: {
-                    // Ato 6591：这行原来用 Label，字换行时行高只按一行算，
-                    // 第二行落到卡片外、被圆角切开。改成跟本屏其他行一样的
-                    // 「定宽图标＋可伸缩文字」，量出来的高度就跟着换行走。
-                    HStack(spacing: 12) {
-                        Image(systemName: "command")
-                            // 图标字号跟本屏其他行一样钉在 18：不钉的话它跟着字号长，
-                            // 撑出 30 点的图标槽，看着跟标题粘在一起。
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(KazumiPalette.accent(for: colorScheme))
-                            .frame(width: 30)
-                        Text("快捷指令验证")
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
+                    Section {
+                        ForEach(group.categories) { category in
+                            categoryRow(category)
+                                // Colo 3481：每行显式给底色。上面把
+                                // `scrollContentBackground(.hidden)` 关掉了，靠 List 默认
+                                // 不一定是白（深色下也不一定是 #1C1C1E）。
+                                .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
+                        }
+                    } header: {
+                        Text(group.title)
                     }
                 }
-                .accessibilityIdentifier("debug-intents")
-            }
-            #endif
+                #if DEBUG
+                Section("开发验证") {
+                    NavigationLink {
+                        KazumiIntentDebugView()
+                    } label: {
+                        // Ato 6591：这行原来用 Label，字换行时行高只按一行算，
+                        // 第二行落到卡片外、被圆角切开。改成跟本屏其他行一样的
+                        // 「定宽图标＋可伸缩文字」，量出来的高度就跟着换行走。
+                        HStack(spacing: 12) {
+                            Image(systemName: "command")
+                                // 图标字号跟本屏其他行一样钉在 18：不钉的话它跟着字号长，
+                                // 撑出 30 点的图标槽，看着跟标题粘在一起。
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+                                .frame(width: 30)
+                            Text("快捷指令验证")
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .accessibilityIdentifier("debug-intents")
+                }
+                #endif
         }
+        // 宽档行列表内容限宽 700 居中（§6.4）。maxWidth 只封顶不撑宽，窄屏自然满宽，
+        // 所以不必等探针量到宽——量不到就整页空白，那是比满宽难看得多的毛病。
+        .frame(maxWidth: 700)
+        .frame(maxWidth: .infinity)
+        // 行内缩对齐「我的」（Ato 6815）：先按 List 默认 8（行 684）。
+        .contentMargins(.horizontal, 8, for: .scrollContent)
         // 顶部滚动边缘：列表顶部用渐进模糊（.soft）。
         .navigationTitle("设置")
-        .navigationBarTitleDisplayMode(.large)
+        // C 档大标题改 inline（§六之二）。
+        .navigationBarTitleDisplayMode(isShortTier ? .inline : .large)
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
         .kazumiSettingsNavBacking()
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { size in
+            guard size.width > 0 else { return }
+            containerSize = size
+        }
     }
 
     // MARK: - 分类行

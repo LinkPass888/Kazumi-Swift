@@ -17,6 +17,8 @@ struct BangumiTimelineCard: View {
     var compact: Bool = false
     var updateText: String?
     var currentEpisode: Int?
+    /// 卡片最小高。宽档日列表要 176（§6.1），nil 走原来的 144 / 160。
+    var cardMinHeight: CGFloat?
     var onTap: (() -> Void)?
     /// 卡片 → 详情页缩放转场所属的命名空间（由所在导航栈提供）。
     /// 传 nil 或开启「减弱动态效果」时不登记转场源，退回系统默认推入。
@@ -45,7 +47,11 @@ struct BangumiTimelineCard: View {
                 details
             }
             .padding(Self.contentPadding)
-            .frame(maxWidth: .infinity, minHeight: compact ? 144 : 160, alignment: .top)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: cardMinHeight ?? (compact ? 144 : 160),
+                alignment: .top
+            )
             // Colo 3501 §一：卡片多、每张里装着海报＋标题＋胶囊，需要「一块面」把它们
             // 框住——给实的浅灰底，不描边（白卡加发丝线看着像个空框）。
             .background(

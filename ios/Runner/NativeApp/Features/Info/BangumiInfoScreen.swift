@@ -37,6 +37,18 @@ struct BangumiInfoScreen: View {
     /// 推播放页之前的栈深，用来判断已经退回详情页了。
     @State private var depthBeforePlayer = 0
     @State private var sourceNavigationRevision: UInt = 0
+    /// 量到的页面尺寸（§6.0：列数与封面宽都按容器算，不按整屏）。
+    @State private var containerSize: CGSize = .zero
+
+    /// B 档：宽且不矮。
+    private var isWideTier: Bool {
+        containerSize.width >= 700 && containerSize.height >= 600
+    }
+
+    /// C 档：宽但矮（§六之二）。
+    private var isShortTier: Bool {
+        containerSize.width >= 700 && containerSize.height < 600
+    }
 
     /// 当前所在 Tab 的导航栈深度。四个 Tab 都算上，页面不关心自己在哪个 Tab。
     private var navigationDepth: Int {
@@ -126,34 +138,27 @@ struct BangumiInfoScreen: View {
     // MARK: - 内容
 
     private func content(_ controller: InfoController) -> some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: isWideTier ? .bottomLeading : .bottomTrailing) {
             // ScrollViewReader 包在外面：展开评论的回复时要喊这个列表滚一滚（Colo 3366）。
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        // 标题与 hero 是一个紧凑的整体：两者间距 12，与下方分隔用 18。
-                        VStack(alignment: .leading, spacing: 12) {
-                            // 展开态 28pt bold。不再主动淡出：让它随内容滚进顶部模糊里，
-                            // 只在最后一小段行程里收掉，顶栏那份同一时间接上（见 titleRevealProgress），
-                            // 避开两份标题同时半透明重叠的那几帧。
-                            Text(controller.item.displayName)
-                                .font(.title.weight(.bold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .opacity(1 - titleRevealProgress)
-
-                            hero(controller)
-                        }
-
-                        tabStrip(controller)
-                        tabContent(controller, onExpandComment: { id in
-                            // 在上半部往下展开、在下半部往上展开：都把这条滚到中间，
-                            // 展开出来的回复就不会跑出屏幕外。
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo(id, anchor: .center)
+                        if isWideTier {
+                            // 宽档两栏（§6.5）：左栏封面＋信息，右栏简介 / 标签 / 评论。
+                            title(controller)
+                            HStack(alignment: .top, spacing: 24) {
+                                hero(controller)
+                                    .frame(width: wideLeftColumnWidth, alignment: .topLeading)
+                                tabColumn(controller, proxy: proxy)
                             }
-                        })
+                        } else {
+                            // 标题与 hero 是一个紧凑的整体：两者间距 12，与下方分隔用 18。
+                            VStack(alignment: .leading, spacing: 12) {
+                                title(controller)
+                                hero(controller)
+                            }
+                            tabColumn(controller, proxy: proxy)
+                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, contentBottomPadding)
@@ -176,6 +181,12 @@ struct BangumiInfoScreen: View {
             startPlayingButton
         }
         .overlay(alignment: .top) { toastView }
+        // 量容器尺寸：宽档两栏、矮屏封面封顶都按它算。
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { size in
+            containerSize = size
+        }
         // 出入场由值驱动：状态变化本身不在动画事务里，只有结果被动画化。
         .animation(.easeOut(duration: 0.2), value: toastMessage)
         // 导航标题给无障碍与系统用；页面内的 inline 那份因此不再重复朗读。
@@ -252,6 +263,36 @@ struct BangumiInfoScreen: View {
     }
 
     // MARK: - 顶栏
+
+    /// 展开态标题（28pt bold）。不再主动淡出：让它随内容滚进顶部模糊里，
+    /// 只在最后一小段行程里收掉，顶栏那份同一时间接上（见 titleRevealProgress），
+    /// 避开两份标题同时半透明重叠的那几帧。
+    private func title(_ controller: InfoController) -> some View {
+        Text(controller.item.displayName)
+            .font(.title.weight(.bold))
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(1 - titleRevealProgress)
+    }
+
+    /// 标签条 + 标签面板。宽档放进右栏（§6.5），窄档接在 hero 下面。
+    private func tabColumn(
+        _ controller: InfoController,
+        proxy: ScrollViewProxy
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            tabStrip(controller)
+            tabContent(controller, onExpandComment: { id in
+                // 在上半部往下展开、在下半部往上展开：都把这条滚到中间，
+                // 展开出来的回复就不会跑出屏幕外。
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            })
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
 
     /// 返回键 + 居中的折叠标题 + 更多菜单。
     ///
@@ -373,6 +414,10 @@ extension BangumiInfoScreen {
     private func hero(_ controller: InfoController) -> some View {
         let stacked = dynamicTypeSize.isAccessibilitySize
         let height = heroCoverHeight
+        let wide = isWideTier
+        let short = isShortTier
+        // 矮屏封面高封顶 260（§6.5）。
+        let shortHeight = min(height, 260)
         return Group {
             if stacked {
                 // Colo 6527：辅助功能字号下横向并排会把标签挤成一个字一行，
@@ -382,21 +427,40 @@ extension BangumiInfoScreen {
                     BangumiRemoteImage(url: controller.item.largeImage)
                         .frame(
                             width: width,
-                            height: min(width / BangumiPosterCard.coverAspectRatio, heroStackedMaxCoverHeight)
+                            height: min(width / Self.bigCoverAspectRatio, heroStackedMaxCoverHeight)
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     infoColumn(controller, coverHeight: 0)
                 }
+            } else if wide {
+                // 宽档（§6.5）：封面占满左栏（宽 = 左栏 − 24），信息列在封面下方。
+                VStack(alignment: .leading, spacing: 16) {
+                    let width = wideCoverWidth
+                    BangumiRemoteImage(url: controller.item.largeImage)
+                        .frame(width: width, height: width / Self.bigCoverAspectRatio)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    infoColumn(controller, coverHeight: 0)
+                }
+            } else if short {
+                // 矮屏（§6.5）：封面高封顶 260，信息列在右。
+                HStack(alignment: .top, spacing: 16) {
+                    cover(
+                        controller.item,
+                        width: shortHeight * Self.bigCoverAspectRatio,
+                        height: shortHeight
+                    )
+                    infoColumn(controller, coverHeight: shortHeight)
+                }
             } else {
                 HStack(alignment: .top, spacing: 16) {
-                    cover(controller.item)
+                    cover(controller.item, width: heroCoverWidth, height: height)
                     infoColumn(controller, coverHeight: height)
                 }
             }
         }
         .padding(12)
         // 同上：封面高是下限，不是上限；信息列长高了整块跟着长。
-        .frame(minHeight: stacked ? 0 : height + 24, alignment: .top)
+        .frame(minHeight: (stacked || wide) ? 0 : (short ? shortHeight + 24 : height + 24), alignment: .top)
         .background { backdrop(controller) }
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .contain)
@@ -404,7 +468,7 @@ extension BangumiInfoScreen {
 
     /// 纵向排列时封面的宽度：卡片内整宽（行宽减去左右各 12 的内边距）。
     private var heroStackedCoverWidth: CGFloat {
-        heroCoverWidth * 2 + 16
+        max(84, infoRowWidth - 24)
     }
 
     /// 纵向排列时封面的高度上限：屏高的 30%。
@@ -426,25 +490,39 @@ extension BangumiInfoScreen {
             }
     }
 
-    private func cover(_ item: BangumiItem) -> some View {
+    private func cover(_ item: BangumiItem, width: CGFloat, height: CGFloat) -> some View {
         BangumiRemoteImage(url: item.largeImage)
-            .frame(width: heroCoverWidth, height: heroCoverHeight)
+            .frame(width: width, height: height)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// 大封面的宽高比：详情页封面一律 0.67（简报定的；网格小卡另算，不走这个）。
+    private static let bigCoverAspectRatio: CGFloat = 0.67
+
+    /// 内容行宽：容器宽减左右各 16，最宽 950（§6.0：量容器，不量整屏）。
+    private var infoRowWidth: CGFloat {
+        min(max(0, containerSize.width - 32), 950)
+    }
+
+    /// 宽档左栏宽：min(容器宽 × 0.38, 520)（§6.5）。
+    private var wideLeftColumnWidth: CGFloat {
+        min(containerSize.width * 0.38, 520)
+    }
+
+    /// 宽档封面宽：左栏减左右各 12 的内边距（§6.5）。
+    private var wideCoverWidth: CGFloat {
+        max(84, wideLeftColumnWidth - 24)
     }
 
     /// 封面宽度：`(行宽 - 16) / 2`。
     ///
     /// 原生详情页信息列是纯竖排、没有 main 的评分透视图，iPhone 上永远是 /2。
     private var heroCoverWidth: CGFloat {
-        let screenWidth = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.screen.bounds.width ?? 390
-        let rowWidth = min(screenWidth - 32, 950)
-        return max(84, (rowWidth - 16) / 2)
+        max(84, (infoRowWidth - 16) / 2)
     }
 
     private var heroCoverHeight: CGFloat {
-        heroCoverWidth / BangumiPosterCard.coverAspectRatio
+        heroCoverWidth / Self.bigCoverAspectRatio
     }
 
     /// 条目信息列：高度钉死为封面高，文字区在上、追番按钮贴底（对应 main 的
@@ -751,7 +829,9 @@ extension BangumiInfoScreen {
         } action: { height in
             startPlayingButtonHeight = height
         }
-        .padding(.trailing, 18)
+        // 宽档「开始观看」跟着左栏靠左（§6.5），不横跨整屏。
+        .padding(.leading, isWideTier ? 18 : 0)
+        .padding(.trailing, isWideTier ? 0 : 18)
         .padding(.bottom, 22)
         .accessibilityLabel("开始观看")
     }

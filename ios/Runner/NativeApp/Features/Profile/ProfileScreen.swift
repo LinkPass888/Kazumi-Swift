@@ -19,24 +19,45 @@ struct ProfileScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    /// 量到的页面尺寸（§6.0：列数与限宽都按容器算，不按整屏）。
+    @State private var containerSize: CGSize = .zero
+
+    private var isWideTier: Bool {
+        containerSize.width >= 700 && containerSize.height >= 600
+    }
+
+    /// C 档：宽但矮（§六之二）。
+    private var isShortTier: Bool {
+        containerSize.width >= 700 && containerSize.height < 600
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                watchStats
-                // 「规则管理」只保留这一处入口：原先这里还有一张异形强调卡直达同一页，
-                // 同屏两个入口反而让人怀疑是两个不同的功能。
-                // LP 3522：通知设置／播放设置／弹幕设置在「全部设置」里都有，这一页不再重复；
-                // 观看历史和离线下载从原来并排的两张工具卡收进这一组。
-                contentSection
-                section("数据与应用", rows: [
-                    Row(symbol: "icloud", title: "同步设置", route: .syncBackup),
-                    Row(symbol: "externaldrive", title: "存储与日志", route: .storage),
-                    Row(symbol: "info.circle", title: "关于 Kazumi", route: .about),
-                ])
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
+                    watchStats
+                    // 「规则管理」只保留这一处入口：原先这里还有一张异形强调卡直达同一页，
+                    // 同屏两个入口反而让人怀疑是两个不同的功能。
+                    // LP 3522：通知设置／播放设置／弹幕设置在「全部设置」里都有，这一页不再重复；
+                    // 观看历史和离线下载从原来并排的两张工具卡收进这一组。
+                    contentSection
+                    section("数据与应用", rows: [
+                        Row(symbol: "icloud", title: "同步设置", route: .syncBackup),
+                        Row(symbol: "externaldrive", title: "存储与日志", route: .storage),
+                        Row(symbol: "info.circle", title: "关于 Kazumi", route: .about),
+                    ])
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 28)
+                // 宽档内容限宽 700 居中（§6.4）。maxWidth 只封顶不撑宽，窄屏自然满宽。
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity)
+        }
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { size in
+            guard size.width > 0 else { return }
+            containerSize = size
         }
         // 顶部滚动边缘：渐进模糊（.soft），不额外叠材质或底色。
         .scrollEdgeEffectStyle(.soft, for: .top)
@@ -49,7 +70,8 @@ struct ProfileScreen: View {
             WatchRecordMetaBackfill.fill(recentRecords, in: library)
         }
         .navigationTitle("我的")
-        .navigationBarTitleDisplayMode(.large)
+        // C 档大标题改 inline（§六之二）。
+        .navigationBarTitleDisplayMode(isShortTier ? .inline : .large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

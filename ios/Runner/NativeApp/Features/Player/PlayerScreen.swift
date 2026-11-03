@@ -1766,9 +1766,24 @@ struct PlayerScreen: View {
         guard isFullscreen else { return }
         isFullscreen = false
         sawLandscape = false
-        requestOrientation(.portrait)
+        releaseOrientation()
         showControls()
         syncHistoryWithWebDAV()
+    }
+
+    /// 退出全屏时交还方向，不再硬请求竖屏。
+    ///
+    /// App 现在允许横屏浏览（iPad 适配那一轮），硬掰回竖屏会把整个界面拽成竖的。
+    /// 恢复默认方向集合，系统按设备姿态自己转回去。
+    private func releaseOrientation() {
+        orientationRequestTask?.cancel()
+        orientationGeneration += 1
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        OrientationLock.release(scene: scene)
+        if let scene { notifyOrientationChange(in: scene) }
     }
 
     /// 原版 player_item.dart:374 / 458：退出全屏时把观看记录并一轮云盘。
@@ -1845,7 +1860,7 @@ struct PlayerScreen: View {
                 isFullscreen = false
                 sawLandscape = false
             }
-            OrientationLock.mask = .portrait
+            OrientationLock.mask = OrientationLock.appDefault
         }
     }
 

@@ -19,23 +19,208 @@ struct PopularScreen: View {
     @State private var showsTopBlur = false
 
     var body: some View {
-        ScrollView {
+        GeometryReader { proxy in
+            let size = proxy.size
+            // 三档只按可用空间分（Colo 6687 §一）：A 单栏、B 宽档（再按宽高比分横式两栏／竖式英雄行）、C 矮屏。
+            if size.width < Self.narrowMaxWidth {
+                narrowBody(size: size)
+            } else if size.height >= Self.wideMinHeight, size.width > size.height,
+                      Self.rightColumnWidth(forWidth: size.width) >= Self.rightColumnMinWidth {
+                // 右栏 ≥ 320（Colo 6822）：不到就回落单栏，不缩左栏、不压海报。
+                twoColumnBody(size: size)
+            } else {
+                heroRowBody(size: size)
+            }
+        }
+    }
+
+    /// 设备屏高：封面高一律取屏高 × 0.70（LP 6677 / 6679，Ato 6680 定案）。
+    ///
+    /// 不按栏宽换算比例了：18 Pro 也一起改，402×874 上封面 600 → 612，
+    /// 推荐页竖屏不再跟旧图比，八屏基线摘掉推荐页、其余七屏照旧。
+    /// 也不用容器高度——容器扣掉了安全区和 tab 栏，那不是「屏高」。
+    private static var deviceScreenHeight: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.screen.bounds.height ?? 874
+    }
+
+    /// 封面高：一律屏高 × 0.70（LP 6677「统一改成 70%」／Ato 6682 不分机型）。
+    ///
+    /// 只有特别窄的窗口（Slide Over 320 那种）再兜一条底：高不超过容器宽 ÷ 0.45，
+    /// 否则封面会被裁掉一半（Colo 6683 的兜底）。
+    private static func coverHeight(forWidth width: CGFloat) -> CGFloat {
+        min(deviceScreenHeight * 0.70, width / 0.45)
+    }
+
+    /// 分档门槛（Colo 6687 §一）：窄于 700 是单栏；宽档再要求高 ≥ 600，
+    /// 否则 iPhone 横屏那种 874×402 宽度够、高度放不下封面，要落到矮屏档。
+    private static let narrowMaxWidth: CGFloat = 700
+    private static let wideMinHeight: CGFloat = 600
+
+    /// 两栏的左栏宽 = 封面高 × 0.67，右栏是剩下的（Colo 6683 / 6822）。
+    private static func rightColumnWidth(forWidth width: CGFloat) -> CGFloat {
+        width - (coverHeight(forWidth: width) * 0.67).rounded()
+    }
+
+    /// 两栏右栏的下限（Colo 6822）：低于这个数一行只放得下 1 张海报，货架就没意义了。
+    private static let rightColumnMinWidth: CGFloat = 320
+
+    /// 宽屏两栏：左边 1/3 大封面，右边 2/3 分组（LP 6644 / 简报）。
+    ///
+    /// 有侧栏的版面：封面宽由高反推，宽 = 高 × 0.67，比例恒为 2:3 一点不裁，
+    /// 侧栏吃掉剩下的宽度（Colo 6683 第一条）。这一栏不跟着页面上下滚，分组那一栏自己滚。
+    private func twoColumnBody(size: CGSize) -> some View {
+        let coverHeight = Self.coverHeight(forWidth: size.width)
+        let columnWidth = (coverHeight * 0.67).rounded()
+        return HStack(alignment: .top, spacing: 0) {
+            // 下拉放大由封面自己接（Colo 6736）：只有按在封面这块 484×722 里才长，
+            // 按在信息块、右栏货架、两栏缝上都不动。
+            leftColumn(coverHeight: coverHeight, columnWidth: columnWidth)
+                .frame(width: columnWidth)
+                .ignoresSafeArea(edges: .top)
+
+            VStack(spacing: 0) {
+                // 标题 x=500（栏左缘 484 + 16）、圆钮贴右边缘 16，同一行，深色字压白底（Colo 6725）。
+                PopularWideTopBar()
+                    .padding(.top, 12)
+
+                ScrollView {
+                    // 宽档海报 132×198（Colo 6708：13 寸右栏 892 一行 6 张）。
+                    shelves(tileWidth: 132)
+                        .padding(.top, 24)
+                        .padding(.bottom, 40)
+                }
+                .scrollIndicators(.hidden)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        // 只有封面那一栏铺到状态栏；右栏得待在顶上那排 tab 底下（现在浮在内容上，会压住第一行标题）。
+        .overlay {
+            if !controller.isLoading, controller.rows.isEmpty, controller.isFailed {
+                failureView
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            controller.paintFromCache()
+            Task { await controller.load() }
+        }
+    }
+
+    /// 两栏版面的左栏内容：封面纯美术在上，信息块在下面把剩下的高度填满（Colo 6691）。
+    private func leftColumn(coverHeight: CGFloat, columnWidth: CGFloat) -> some View {
+        PopularHero(
+            items: controller.heroItems,
+            zoomNamespace: zoomNamespace,
+            // 固定在一栏里，不存在滚出屏幕这回事。
+            isOnScreen: true,
+            coverHeightOverride: coverHeight,
+            coverWidth: columnWidth,
+            // 左栏做成一张英雄卡：封面纯美术在上，信息块在下面把剩下的高度填满（Colo 6691）。
+            textPlacement: .below,
+            // 标题和两颗圆钮收进右栏白底上，左栏一个字的没有（Colo 6725）。
+            showsTopBar: false,
+            // 封面自己接下拉手势（Colo 6736）。
+            coverPullGesture: true
+        )
+    }
+
+
+    /// 英雄行（Colo 6687 §3 / §4）：iPad 竖屏和 iPhone 横屏都走这一档。
+    /// 封面在左、比例恒 2:3 不裁，文字块在右垂直居中；货架整宽接在下面，跟着页面一起滚。
+    private func heroRowBody(size: CGSize) -> some View {
+        let coverHeight = Self.coverHeight(forWidth: size.width)
+        // 封面宽上限（Colo 6826 / Ato 6832）：min(高 × 0.70 × 0.67, 容器宽 − 368)。
+        // 第二个项就是「文字块正好 320」，11 寸 553→452、mini 531→376，13 寸恒等。
+        // 字号本来就跟着封面宽走（coverTextScale），不用另外改。
+        let coverWidth = min((coverHeight * 0.67).rounded(), size.width - 368)
+        let isWide = size.height >= Self.wideMinHeight
+        // 文字块最宽 420（Colo 6687 §4.2，HIG 限制行宽）；iPad 竖屏那档按容器宽算，339 左右。
+        let textWidth = isWide
+            ? max(120, size.width - coverWidth - 48)
+            : max(120, min(420, size.width - coverWidth - 48))
+
+        let growth = coverHeight * (pullScale - 1)
+
+        return ScrollView {
+            LazyVStack(spacing: 0) {
+                PopularHero(
+                    items: controller.heroItems,
+                    zoomNamespace: zoomNamespace,
+                    isOnScreen: scrollY < coverHeight,
+                    pullScale: pullScale,
+                    pullOffset: overPull,
+                    coverHeightOverride: coverHeight,
+                    coverWidth: coverWidth,
+                    // 竖屏那档右栏要把简介和标签也带上（Ato 6720），iPhone 横屏那档还是原来那块。
+                    textPlacement: isWide ? .trailingFilled : .trailing,
+                    // 竖屏那档标题进右栏；手机那档照旧压在封面上，那七屏有基线锁着。
+                    showsTopBar: !isWide
+                )
+                .environment(\.popularHeroTextWidth, textWidth)
+                // 上拉过界时往回补，封面钉在屏幕顶端不动，跟单栏那条同一个规矩。
+                .offset(y: -overPull)
+
+                shelves(tileWidth: isWide ? 132 : nil)
+                    // 封面放大后底边往下长多少，货架就让多少，不被盖住（Ato 6718 第一条）。
+                    .offset(y: growth - overPull)
+                    .padding(.top, 24)
+                    .padding(.bottom, 40)
+            }
+        }
+        .scrollIndicators(.hidden)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { _, newValue in
+            scrollY = newValue
+        }
+        // 封面铺到屏幕最顶（Colo 6687 §3.1 / §4.2）：跟单栏那条一样忽略顶部安全区。
+        .ignoresSafeArea(edges: .top)
+        .overlay {
+            if !controller.isLoading, controller.rows.isEmpty, controller.isFailed {
+                failureView
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            controller.paintFromCache()
+            Task { await controller.load() }
+        }
+    }
+
+    /// 单栏版面：竖屏和窄窗口都用这一版，一个像素不动。
+    private func narrowBody(size: CGSize) -> some View {
+        let coverHeight = Self.coverHeight(forWidth: size.width)
+        // 封面比例上限（Colo 6819）：容器宽 ÷ 封面高 > 0.85 时一张 2:3 海报要裁掉
+        // 三成以上，横屏分屏 683×1032 就是这种。这时封面宽改成高 × 0.67、水平居中，
+        // 信息块跟封面同宽，一点不裁。
+        let cappedWidth = size.width / coverHeight > 0.85
+            ? (coverHeight * 0.67).rounded()
+            : size.width
+        return ScrollView {
             LazyVStack(spacing: 0) {
                 PopularHero(
                     items: controller.heroItems,
                     zoomNamespace: zoomNamespace,
                     // 封面整块滚出屏幕就停掉自动切换（Colo 3047）。
-                    isOnScreen: scrollY < PopularHero.coverHeight,
+                    isOnScreen: scrollY < coverHeight,
                     pullScale: pullScale,
-                    pullOffset: overPull
+                    pullOffset: overPull,
+                    coverHeightOverride: coverHeight,
+                    coverWidth: cappedWidth
                 )
+                .frame(width: cappedWidth)
+                .frame(maxWidth: .infinity)
                 // 上拉过界时往回补，视觉上封面钉在屏幕顶端不动（Colo 2847 / LP 2887）；
                 // 上滑时补偿是 0，封面跟着内容一起滚走（LP 2846）。
                 .offset(y: -overPull)
 
                 // 封面底边下面留 24 就够：渐隐到封面底边 600 已经是页面底色，底下不用再留一层
                 // 让它化开（LP 2912 / Colo 2913：本周热门回到封面底边下 24，即 624）。
-                shelves
+                shelves()
                     .padding(.top, 8)
             }
             .padding(.bottom, 40)
@@ -115,7 +300,7 @@ struct PopularScreen: View {
 
 
     /// 下面那几行横向海报架。
-    private var shelves: some View {
+    private func shelves(tileWidth: CGFloat? = nil) -> some View {
         LazyVStack(spacing: 24) {
             ForEach(controller.rows) { row in
                 PopularShelf(
@@ -124,9 +309,12 @@ struct PopularScreen: View {
                     onMore: { router.push(.popularList($0)) },
                     // 第一行「热门番组」标题点开选标签（LP 3044：菜单从封面大标题挪到这儿）。
                     tagOptions: row.list == .trending ? heroTags : [],
-                    onPickTag: row.list == .trending ? { router.push(.popularList(.tag($0))) } : nil
+                    onPickTag: row.list == .trending ? { router.push(.popularList(.tag($0))) } : nil,
+                    tileWidth: tileWidth,
+                    compactHeader: tileWidth != nil
                 )
-                .padding(.top, 8)
+                // 行距就是规格那 24（Colo 6747）：手机那档多给的 8 留着不动。
+                .padding(.top, tileWidth == nil ? 8 : 0)
             }
         }
     }

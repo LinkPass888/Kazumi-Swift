@@ -80,14 +80,39 @@ extension Notification.Name {
     static let kazumiDanmakuRulesChanged = Notification.Name("com.example.kazumi.danmakuRulesChanged")
 }
 
-/// 全屏播放的临时方向锁。
+/// 没有页面自己锁方向时允许的方向。
 ///
-/// `requestGeometryUpdate` 只有在 `supportedInterfaceOrientations` 也允许那个方向时才会生效，
-/// 本工程由应用代理返回这个值。播放器进全屏时把 `mask` 改成横屏，
-/// 退出时改回竖屏；其它页面一律 `portrait`，与 Info.plist 声明一致（竖横都支持，只改运行时锁）。
+/// iPad 四向全开；iPhone 三向，不倒置。竖屏版面和以前一样（不写尺寸判断就没人转它），
+/// 横屏由各页面按宽度档位自己排。
 @MainActor
 enum OrientationLock {
-    static var mask: UIInterfaceOrientationMask = .portrait
+    static let appDefault: UIInterfaceOrientationMask =
+        UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
+    static var mask: UIInterfaceOrientationMask = appDefault
+
+    /// 交还方向：把锁恢复成默认，并让系统重新算支持的方向。
+    /// 不在这里请求某个具体方向——多方向时「请求转到横/竖」没有意义，交给设备姿态。
+    static func release(scene: UIWindowScene?) {
+        mask = appDefault
+        guard let scene else { return }
+        for window in scene.windows {
+            markDirty(window.rootViewController)
+        }
+    }
+
+    private static func markDirty(_ controller: UIViewController?) {
+        guard let controller else { return }
+        controller.setNeedsUpdateOfSupportedInterfaceOrientations()
+        if let presented = controller.presentedViewController {
+            markDirty(presented)
+        }
+        if let nav = controller as? UINavigationController {
+            markDirty(nav.visibleViewController)
+        }
+        if let tab = controller as? UITabBarController {
+            markDirty(tab.selectedViewController)
+        }
+    }
 }
 
 extension KazumiAppDelegate {

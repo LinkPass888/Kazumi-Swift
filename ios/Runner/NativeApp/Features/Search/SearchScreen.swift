@@ -27,41 +27,98 @@ struct SearchScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(AppRouter.self) private var router
+    @Environment(\.dismiss) private var dismiss
     @Environment(LibraryStore.self) private var library
     /// 最近搜索每颗胶囊的最小宽度跟着字号长：写死 96 点时最大字号下
     /// 「轻小说改」被挤成一列，只能截成「轻…」（Ato 6571）。
     @ScaledMetric(relativeTo: .footnote) private var recentChipMinWidth: CGFloat = 96
+    /// 量到的页面尺寸（§6.0：列数与限宽都按容器算，不按整屏）。
+    @State private var containerSize: CGSize = .zero
+
+    private var isWideTier: Bool {
+        containerSize.width >= 700 && containerSize.height >= 600
+    }
 
     private var hasSearched: Bool { submittedQuery != nil }
+
+    /// C 档：宽但矮（§六之二）。
+    private var isShortTier: Bool {
+        containerSize.width >= 700 && containerSize.height < 600
+    }
+
+    /// 搜索框宽（§6.3）：宽档 700；矮档 min(700, 容器宽 − 32 − 返回 44 − 12 − 末位 44 − 12)。
+    private var searchRowWidth: CGFloat? {
+        guard containerSize.width >= 700 else { return nil }
+        guard isShortTier else { return 700 }
+        // 矮档：返回 44 + 12 + 框 + 12 + 末位 44（两态共用，宽度不变）。
+        return min(700, max(0, containerSize.width - 32 - 44 - 12 - 44 - 12))
+    }
+
+    /// 取消：清空并退出搜索——矮档没有导航栏，这一颗就是返回。
+    private func cancelSearch() {
+        input = ""
+        submittedQuery = nil
+        controller.clear()
+        isInputFocused = false
+        dismiss()
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 8) {
-                    searchField
-                    // 以图搜番：直径 44、图标 20 半粗、无底，跟返回按钮同一档；
-                    // 贴右 16，跟搜索框同一行垂直居中（Colo 3098）。
-                    Button {
-                        openImageSearch()
-                    } label: {
-                        Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: 20, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("以图搜番")
-                }
-                .padding(.top, hasSearched ? 8 : 20)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                // 量到 0 不排版（N4）：首帧没量到容器宽之前不画、也不按满宽排。
+                if containerSize.width > 0 {
+                    HStack(spacing: 12) {
+                        // 矮档：返回就在这一行里，两个状态都在，它就是出口（§6.3）。
+                        if isShortTier {
+                            Button { dismiss() } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("返回")
+                        }
 
-                if hasSearched {
-                    results
-                } else {
-                    discovery
+                        HStack(spacing: 8) {
+                            searchField
+                            // 宽档：以图搜番并排在框右；矮档它去末位那一格。
+                            if !isShortTier {
+                                imageSearchButton
+                            }
+                        }
+                        .frame(maxWidth: searchRowWidth)
+
+                        // 矮档末位 44 两态共用：入口态以图搜番，激活态（点进框、键盘起来）换成取消。
+                        if isShortTier {
+                            if isInputFocused || hasSearched {
+                                Button("取消") { cancelSearch() }
+                                    .frame(width: 44)
+                                    .accessibilityLabel("取消搜索")
+                            } else {
+                                imageSearchButton
+                            }
+                        }
+                    }
+                    .padding(.top, isShortTier ? 6 : (hasSearched ? 8 : 20))
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, isShortTier ? 8 : 16)
+                    .frame(maxWidth: .infinity, alignment: isShortTier ? .leading : .center)
+
+                    if hasSearched {
+                        results
+                    } else {
+                        discovery
+                    }
                 }
             }
+        }
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { size in
+            // 量到 0 不覆盖上一帧（N4）。
+            if size.width > 0 { containerSize = size }
         }
         // 顶部滚动边缘：渐进模糊（.soft）。
         .scrollEdgeEffectStyle(.soft, for: .top)
@@ -69,6 +126,16 @@ struct SearchScreen: View {
         .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
+        // 宽档：取消住导航栏右端，只在激活态出现，清空并退出搜索（Colo 6801）。
+        .toolbar {
+            if !isShortTier && (isInputFocused || hasSearched) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("取消") { cancelSearch() }
+                }
+            }
+        }
+        // 矮档两个状态都收成一行 44：返回在这一行里，导航栏让位（§6.3）。
+        .toolbar(isShortTier ? .hidden : .visible, for: .navigationBar)
         .sheet(isPresented: $isShowingFilters) {
             SearchFilterSheet(
                 initial: SearchParser(input).toFilterState(),
@@ -103,6 +170,20 @@ struct SearchScreen: View {
 
     // MARK: - 搜索框
 
+    /// 以图搜番：直径 44、图标 20 半粗、无底，跟返回按钮同一档（Colo 3098）。
+    private var imageSearchButton: some View {
+        Button {
+            openImageSearch()
+        } label: {
+            Image(systemName: "photo.on.rectangle")
+                .font(.system(size: 20, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("以图搜番")
+    }
+
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -134,7 +215,7 @@ struct SearchScreen: View {
 
         }
         .padding(.horizontal, 14)
-        .frame(minHeight: 52)
+        .frame(minHeight: isShortTier ? 44 : 52)
         .background(
             KazumiPalette.cardShape(cornerRadius: 16, scheme: colorScheme)
         )
@@ -178,6 +259,9 @@ struct SearchScreen: View {
 
             recentSearches
         }
+        // 入口宽档限宽 700 居中（§6.3）。
+        .frame(maxWidth: isWideTier ? 700 : .infinity)
+        .frame(maxWidth: .infinity)
     }
 
     /// 最近搜索：与原版一致，最多 10 条，点击即搜。
@@ -406,24 +490,28 @@ struct SearchScreen: View {
         }
     }
 
-    /// 列数按可用宽算（Colo 3053）：max(2, floor(可用宽 / 180))，402 屏是 2 列。
+    /// 列数按容器宽算（§6.0 / §6.3）：max(2, floor(可用宽 / 180))，宽档再封顶 6 列。
     /// 列间距 12、行间距 20；卡宽 =(可用宽 −(列数−1)×12)/列数，402 屏是 179。
     /// Ato 6561：辅助功能字号下两列装不下评分和年份（「3.1 202 5」就是这么断的），
     /// 改成一列。
     private var availableWidth: CGFloat {
-        let width = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.screen.bounds.width ?? 390
-        return width - 32
+        max(0, containerSize.width - 32)
     }
 
     private var columnCount: Int {
         if dynamicTypeSize.isAccessibilitySize { return 1 }
-        return max(2, Int(floor(availableWidth / 180)))
+        let count = max(2, Int(floor(availableWidth / 180)))
+        return isWideTier ? min(count, 6) : count
     }
 
     private var cardWidth: CGFloat {
-        (availableWidth - CGFloat(columnCount - 1) * 12) / CGFloat(columnCount)
+        guard availableWidth > 0 else { return 0 }
+        let width = (availableWidth - CGFloat(columnCount - 1) * 12) / CGFloat(columnCount)
+        // 辅助功能字号单列时卡片不跟着整屏长（§6.3）：封顶到宽档 6 列的列宽。
+        if isWideTier && dynamicTypeSize.isAccessibilitySize {
+            return min(width, 218)
+        }
+        return width
     }
 
     private var columns: [GridItem] {
