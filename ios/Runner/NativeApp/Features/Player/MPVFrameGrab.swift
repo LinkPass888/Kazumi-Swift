@@ -5,7 +5,7 @@
 //  截图取帧（LP 5012，参考 main）：走 mpv 的 `screenshot-raw`，拿的是**解码后的原始帧**，
 //  跟窗口、跟播放区大小、跟横竖屏、跟 fit/crop/stretch 都没有关系。
 //
-//  为什么不是 `screenshot-to-file … video`：那条走的是渲染层（我们的 VO 是 `libmpv`），
+//  为什么不是 `screenshot-to-file … video`：那条依赖窗口渲染层（我们的 VO 是 `gpu-next`），
 //  真机上一直回失败，失败后我们退到「读屏幕那一帧」，于是截出来只有播放区那么大、
 //  还跟着屏幕比例被裁过（LP 5002 的 402×226 / 716×402 就是播放区的点尺寸）。
 //
@@ -15,8 +15,9 @@
 //
 
 import CoreGraphics
+import CoreVideo
 import Foundation
-import Mpv
+import Libmpv
 
 /// 一块从 mpv 取回来的原始帧。
 struct MPVRawFrame: Sendable {
@@ -139,6 +140,54 @@ struct MPVRawFrame: Sendable {
             shouldInterpolate: false,
             intent: .defaultIntent
         )
+    }
+
+    /// 转成画中画可直接消费的 32BGRA `CVPixelBuffer`。
+    func makePixelBuffer() -> CVPixelBuffer? {
+        guard let layout = Self.layout(of: format) else { return nil }
+        let bytesPerPixel = layout.bytesPerPixel
+        let channels = layout.map
+        let rowStride = stride > 0 && stride >= width * bytesPerPixel
+            ? stride
+            : width * bytesPerPixel
+        guard pixels.count >= rowStride * height else { return nil }
+
+        var buffer: CVPixelBuffer?
+        let attributes = [
+            kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
+            kCVPixelBufferMetalCompatibilityKey: true,
+        ] as CFDictionary
+        guard CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attributes,
+            &buffer
+        ) == kCVReturnSuccess, let buffer else { return nil }
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let destination = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let destinationStride = CVPixelBufferGetBytesPerRow(buffer)
+
+        pixels.withUnsafeBufferPointer { source in
+            guard let base = source.baseAddress else { return }
+            let output = destination.assumingMemoryBound(to: UInt8.self)
+            for y in 0..<height {
+                let sourceRow = base.advanced(by: y * rowStride)
+                let destinationRow = output.advanced(by: y * destinationStride)
+                for x in 0..<width {
+                    let pixel = sourceRow.advanced(by: x * bytesPerPixel)
+                    let target = destinationRow.advanced(by: x * 4)
+                    target[0] = pixel[channels[2]]
+                    target[1] = pixel[channels[1]]
+                    target[2] = pixel[channels[0]]
+                    target[3] = channels[3] >= 0 ? pixel[channels[3]] : 255
+                }
+            }
+        }
+        return buffer
     }
 
     /// 一种打包像素格式的读法。

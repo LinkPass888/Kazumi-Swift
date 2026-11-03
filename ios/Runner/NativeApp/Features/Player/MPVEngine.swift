@@ -2,25 +2,12 @@
 //  MPVEngine.swift
 //  Kazumi
 //
-//  mpv 内核 + Anime4K。
-//
-//  libmpv 的 C 接口，这一层是给它套的 Swift 壳：
-//   * 建 mpv 句柄、设选项、按集 loadfile；
-//   * 建 OpenGL ES 渲染上下文（GLSL 着色器只认这条渲染路径，Metal 那条不认，
-//     而且 mpv 的 Metal 是补丁版）；
-//   * 把 time-pos / duration / pause / eof 这些属性推给上层；
-//   * 命令封装：seek、倍速、挂/摘 Anime4K 着色器、截图。
-//
-//  参考实现：MPVKit 自带 demo 的 MPVViewController，以及 Kazumi 现在 iOS 上
-//  真在跑的那份 media_kit_video（TextureHW.swift，同样是 OPENGL + EAGLContext）。
+//  mpv 内核 + gpu-next / MoltenVK + Anime4K。
 //
 
-import CoreVideo
 import Foundation
-import GLKit
 import ImageIO
-import Mpv
-import OpenGLES
+import Libmpv
 import UIKit
 
 /// 上层的播放时钟接口：弹幕层只关心「现在播到哪」「在不在播」。
@@ -33,7 +20,6 @@ protocol PlayerClockProvider: AnyObject {
     /// 加载阶段也为 true，用它放行会提前放 0 秒那批弹幕。
     var hasStartedPlayback: Bool { get }
 }
-
 /// 当前文件的编码规格，给「播放信息」半屏页用。
 /// 每一项都是「拿得到才有值」，页面拿不到的补「—」。
 struct PlaybackInfo: Sendable, Equatable {
@@ -50,17 +36,17 @@ struct PlaybackInfo: Sendable, Equatable {
 /// 一次属性快照，从 mpv 的事件线程递回主线程。
 /// 一次加载走到哪一步。由 mpv 事件推，不由计时器推（LP 4818）。
 ///
-/// `FILE_LOADED` 只说明文件打开了，不代表首帧已经画上屏；真正的判据是本进程
-/// 渲染回调里那一帧（见 `MPVEngine.render(in:)`）。所以中间要有
+/// `FILE_LOADED` 只说明文件打开了，不代表首帧已经画上屏；真正的判据是
+/// gpu-next 输出后拿到的第一份视频参数快照。所以中间要有
 /// `awaitingFirstFrame` 这一档，别把两件事合成一件。
 enum MPVLoadPhase: Sendable {
     /// 没有文件在加载（播放器刚建好，或者这一集已经结束）。
     case idle
     /// 收到 START_FILE：正在打开 / 连源。
     case opening
-    /// FILE_LOADED / PLAYBACK_RESTART 之后：等第一帧真的画上屏。
+    /// FILE_LOADED / PLAYBACK_RESTART 之后：等首份视频参数快照。
     case awaitingFirstFrame
-    /// 第一帧已经在本进程的渲染回调里画过。
+    /// 已经拿到第一份视频参数快照。
     case playing
 }
 
@@ -90,36 +76,17 @@ struct MPVSnapshot: Sendable {
 @MainActor
 final class MPVEngine {
     private(set) var handle: OpaquePointer?
-    private var renderContext: OpaquePointer?
-    /// 画面和渲染上下文必须共用这一个：两个上下文各画各的，屏幕上什么都出不来。
-    let glContext: EAGLContext
     private var pump: MPVEventPump?
-
-    // main 的 TextureHW 路径实验：mpv 的目标是 CVPixelBuffer 纹理 FBO，
-    // GLKView 只接收最后一次 GPU blit。不改变解码器、色彩参数或截图路径。
-    private var outputTextureCache: CVOpenGLESTextureCache?
-    private var outputPixelBuffer: CVPixelBuffer?
-    private var outputTexture: CVOpenGLESTexture?
-    private var outputFramebuffer: GLuint = 0
-    private var outputSize = CGSize.zero
-    private var failedOutputSize: CGSize?
-    private var didLogOutputPath = false
-    private var outputFailureSignatures = Set<String>()
-
-    /// 渲染视图（GL 那一层），由容器在 makeUIView 里塞进来。
-    weak var glView: MPVGLView?
+    private weak var metalView: MPVMetalView?
 
     var onSnapshot: ((MPVSnapshot) -> Void)?
-    /// 这一集**第一帧真的画上屏了**（不是「拿到 video-params」）。
+    /// 这一集已经拿到首份视频参数快照。
     /// 加载符号要靠它才能一直转到画面出来为止（LP 2026-10-28 第 4 条）。
     var onFirstFrame: (() -> Void)?
-    /// 本次加载是否已经报过首帧。
-    private var reportedFirstFrame = false
     var onLog: ((String) -> Void)?
 
-    /// 解码开关与模式由容器传入，只在建内核时读取，重新打开播放器后生效。
+    /// 解码开关由容器传入；真机统一使用零拷贝 VideoToolbox。
     var hardwareDecodeEnabled = true
-    var hardwareDecodeMode: HardwareDecodeMode = .videotoolboxCopy
 
     /// 解复用缓存大小（字节）。进来之前由容器按低内存模式的档位算好；
     /// 之后档位或网络变了就调 `applyCacheSize(_:)` 立刻改，不用重建内核。
@@ -137,16 +104,11 @@ final class MPVEngine {
         mpv_set_property_string(mpv, "demuxer-max-back-bytes", value)
     }
 
-    /// 内联画面刚画完时同步回调（主线程、GL 上下文 current）。
-    /// 画中画拿这一帧去 `glBlitFramebuffer` 到 CVPixelBuffer，不需要第二个 mpv 上下文。
-    var onFrameRendered: (@MainActor (GLint, Int, Int, Double, Double) -> Void)?
-
     private var lastSnapshot = MPVSnapshot(
         time: 0, duration: 0, isPaused: true, isIdle: true, hasVideo: false, ended: false
     )
-
-    /// 上一次记过的画面几何，变了才写日志（每帧写会把日志冲爆）。
-    private var lastGeometry = ""
+    /// 本次加载是否已经报过首帧。
+    private var reportedFirstFrame = false
 
     /// 已下发、还没回执的异步命令。
     private var pendingCommands: [UInt64: CommandRequest] = [:]
@@ -161,17 +123,13 @@ final class MPVEngine {
     /// 回执到了才算，不用像原来那样两条路各等一轮，也不用给到几十秒。
     private static let screenshotTimeoutSeconds: Double = 10
 
-    init() {
-        glContext = EAGLContext(api: .openGLES3) ?? EAGLContext(api: .openGLES2)!
-    }
-
     // MARK: - 生命周期
 
-    /// 建 mpv 与渲染上下文。只做一次，换集走 `load(url:)`。
-    func start() {
+    /// 建 mpv 并把 gpu-next 的 MoltenVK swapchain 绑定到 CAMetalLayer。
+    func start(in view: MPVMetalView) {
         guard handle == nil else { return }
-        EAGLContext.setCurrent(glContext)
-        defer { EAGLContext.setCurrent(nil) }
+        metalView = view
+        view.updateDrawableSize()
 
         guard let mpv = mpv_create() else {
             log("mpv_create 失败")
@@ -179,8 +137,35 @@ final class MPVEngine {
         }
         handle = mpv
 
+        var wid = Int64(Int(bitPattern: Unmanaged.passUnretained(view.metalLayer).toOpaque()))
+        let widStatus = mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid)
+        guard widStatus >= 0 else {
+            log("绑定 CAMetalLayer 失败：\(String(cString: mpv_error_string(widStatus)))")
+            mpv_terminate_destroy(mpv)
+            handle = nil
+            metalView = nil
+            return
+        }
+
+        // gpu-next 经 MoltenVK 直接提交到 CAMetalLayer，不再建立 mpv_render_context。
+        setOption("vo", "gpu-next")
+        setOption("gpu-api", "vulkan")
+        setOption("gpu-context", "moltenvk")
+        setOption("fbo-format", "rgba16hf")
+        setOption("vd-lavc-dr", "yes")
+        setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled))
+        setOption("hwdec-codecs", "all")
+
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            let shaderCache = caches.appendingPathComponent("mpv-shader-cache", isDirectory: true)
+            try? FileManager.default.createDirectory(
+                at: shaderCache,
+                withIntermediateDirectories: true
+            )
+            setOption("gpu-shader-cache-dir", shaderCache.path)
+        }
+
         // 只留我们自己的控件：mpv 自带的 OSC、输入绑定、终端输出全关掉。
-        setOption("vo", "libmpv")
         setOption("input-default-bindings", "no")
         setOption("input-vo-keyboard", "no")
         setOption("terminal", "no")
@@ -192,24 +177,14 @@ final class MPVEngine {
         // 而它默认加的是 `mixWithOthers`——混音的会话不会被 iOS 当成「正在播放」，
         // 控制中心 / 锁屏那张卡就永远不出来。开了这个，它不再加 mixWithOthers。
         setOption("audio-exclusive", "yes")
-        // 模拟器固定软解；真机按开关与所选模式初始化。
-        setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode))
-        // 逐帧交给我们的 GL 视图，不走独立窗口。渲染 API 在
-        // `mpv_render_context_create` 里指定，不用再设 gpu-api（设了会被拒）。
-        // 不用 gpu-hq：它的 ewa_lanczos + 去色带很吃 GPU，会掉帧；
-        // 真要画质靠 Anime4K 着色器，基础缩放用双线性就够。
-        // spline36：动漫放大到 2x 时比双线性明显清楚，1080p 在手机上开销扛得住
-        // （Colo 3701；真机还卡再退回双线性）。
         setOption("scale", "spline36")
         setOption("cscale", "spline36")
+        setOption("dscale", "mitchell")
+        setOption("subs-fallback", "yes")
         setOption("deband", "no")
         setOption("dither-depth", "no")
-        // 截图一律走 mpv 的软件那条路（LP 5002）。
-        //
-        // 我们的 VO 是 `libmpv`（渲染 API），真机上 `screenshot-to-file … video`
-        // 那条走 VO 的路一直回失败，于是每次都退到「读屏幕那一帧」：只有屏幕分辨率、
-        // 还被我们按画面矩形裁过一刀，存下来根本不是完整视频帧。软件那条直接拿解码后的
-        // 整帧，尺寸是片源分辨率，也不受 fit/crop/stretch 这些填充方式影响。
+        // 截图走 mpv 的软件取帧路径（LP 5002）：直接拿解码后的整帧，
+        // 尺寸是片源分辨率，也不受 gpu-next 窗口输出和 fit/crop/stretch 影响。
         setOption("screenshot-sw", "yes")
         // 解复用缓存对齐 main（`playback_cache_policy.dart`）：常规 1500 MiB，
         // 低内存模式降到 2 MiB（LP 5547）。取多少由 `PlaybackCachePolicy` 按档位和
@@ -220,6 +195,9 @@ final class MPVEngine {
         let initStatus = mpv_initialize(mpv)
         guard initStatus >= 0 else {
             log("mpv_initialize 失败：\(String(cString: mpv_error_string(initStatus)))")
+            mpv_terminate_destroy(mpv)
+            handle = nil
+            metalView = nil
             return
         }
 
@@ -234,43 +212,7 @@ final class MPVEngine {
         let clientVersion = mpv_client_api_version()
         log("内核版本 \(stringProperty("mpv-version") ?? "未知") / 客户端 API \(clientVersion >> 16).\(clientVersion & 0xffff)")
 
-        setupRenderContext(mpv)
         setupEvents(mpv)
-    }
-
-    private func setupRenderContext(_ mpv: OpaquePointer) {
-        let api = UnsafeMutableRawPointer(
-            mutating: (MPV_RENDER_API_TYPE_OPENGL as NSString).utf8String
-        )
-        var initParams = mpv_opengl_init_params(
-            get_proc_address: { _, name in MPVEngine.procAddress(name) },
-            get_proc_address_ctx: nil
-        )
-        let created: Int32 = withUnsafeMutablePointer(to: &initParams) { paramsPtr in
-            var params = [
-                mpv_render_param(
-                    type: MPV_RENDER_PARAM_API_TYPE,
-                    data: api
-                ),
-                mpv_render_param(
-                    type: MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
-                    data: UnsafeMutableRawPointer(paramsPtr)
-                ),
-                mpv_render_param()
-            ]
-            return mpv_render_context_create(&renderContext, mpv, &params)
-        }
-        guard created >= 0, let renderContext else {
-            log("mpv 渲染上下文建不起来：\(String(cString: mpv_error_string(created)))")
-            return
-        }
-        log("GL \(glString(GL_RENDERER)) / \(glString(GL_VERSION))")
-        self.renderContext = renderContext
-        mpv_render_context_set_update_callback(
-            renderContext,
-            kazumiMPVRenderUpdate,
-            Unmanaged.passUnretained(self).toOpaque()
-        )
     }
 
     private func setupEvents(_ mpv: OpaquePointer) {
@@ -292,6 +234,11 @@ final class MPVEngine {
     private func apply(_ snapshot: MPVSnapshot) {
         lastSnapshot = snapshot
         onSnapshot?(snapshot)
+        if snapshot.hasVideo, !reportedFirstFrame {
+            reportedFirstFrame = true
+            pump?.markFirstFrameRendered()
+            onFirstFrame?()
+        }
     }
 
     // MARK: - 播放
@@ -322,7 +269,6 @@ final class MPVEngine {
         // 换集 / 重试都按「接着看」处理：内核里 pause 可能还是上一集留下的 true，
         // 不显式放开，加载完了就停在那儿黑着（LP 2026-10-28 第 4 条「不会自动播放」）。
         reportedFirstFrame = false
-        failedOutputSize = nil
         // 换集 / 重新加载 / 换源：从这一刻起就是「在加载」，别等 mpv 的 START_FILE
         // 事件（那要等它自己排到），界面上的圈要立刻转起来。
         pump?.beginLoad()
@@ -338,94 +284,33 @@ final class MPVEngine {
         setFlag("pause", true)
     }
 
-    /// 关闭硬解或运行在模拟器时始终使用 `no`。
-    static func hwdec(enabled: Bool, mode: HardwareDecodeMode) -> String {
+    /// 模拟器固定软解；真机统一使用零拷贝 VideoToolbox。
+    static func hwdec(enabled: Bool) -> String {
         #if targetEnvironment(simulator)
         return "no"
         #else
-        return enabled ? mode.rawValue : "no"
+        return enabled ? "videotoolbox" : "no"
         #endif
     }
 
-    /// 后台渲染锁：iOS 在后台不许碰 OpenGL ES，切后台后真机日志里一直在报
-    /// `libmpv_render: OpenGL error INVALID_ENUM`（LP 4978 第 2 条）。
-    ///
-    /// 锁上以后一律不叫 mpv 画、也不排重绘；回前台解开时补一次重绘，画面
-    /// 当场接上。画中画在跑的时候不上锁——它的帧正是靠这条渲染路径出的。
+    /// 兼容播放页的前后台回调。gpu-next 由 mpv 自己的渲染线程提交 Metal，
+    /// 不依赖 UIKit 重绘，所以这里只记录状态并在回前台时刷新 drawable 尺寸。
     private(set) var renderingLocked = false
 
     func setRenderingLocked(_ locked: Bool) {
         guard locked != renderingLocked else { return }
         renderingLocked = locked
-        log(locked ? "画面：后台渲染锁已上" : "画面：后台渲染锁已解")
+        log(locked ? "画面：进入后台" : "画面：回到前台")
         if !locked {
-            failedOutputSize = nil
-            // 回前台这一刻是偏色/报错最爱复发的时机，重新武装一轮排空。
-            armGLErrorDrain()
-            glView?.setNeedsDisplay()
+            metalView?.updateDrawableSize()
         }
     }
 
-    // MARK: - GL 错误定位（诊断）
-
-    /// 排空 GL 错误的预算（帧数）。只在前几帧和回前台那几帧做，
-    /// 不长期挂在一帧一次的 glGetError 同步上。
-    private var glErrorDrainFrames = 0
-
-    /// 重新武装一轮排空。起播、尺寸变化、回前台时各叫一次。
-    func armGLErrorDrain(_ frames: Int = 90) {
-        glErrorDrainFrames = max(glErrorDrainFrames, frames)
-    }
-
-    /// 把当前挂着的 GL 错误读出来并清掉，同时说清是在哪一步读到的。
-    ///
-    /// 为什么要分步：GL 错误是粘性的，没被读走就一直挂着。内核那句
-    /// `error after creating texture: OpenGL error INVALID_ENUM` 是它的通用检查点，
-    /// 只能说明「内核在这一步读到了一次错」，不能说明错是它自己犯的。
-    /// 在「帧首」「我们 glClear 之后」各读一次，就能把这个错分成三种：
-    ///   帧首就有 → 上一帧内核抛出、但它后面没有检查点；
-    ///   glClear 之后才有 → 我们自己（或 GLKView）的调用；
-    ///   两处都干净、内核还报 → 错就在内核这一帧的渲染里。
-    func drainStaleGLErrors(_ stage: String) {
-        guard glErrorDrainFrames > 0 else { return }
-        var drained = 0
-        while drained < 8 {
-            let error = glGetError()
-            if error == GLenum(GL_NO_ERROR) { break }
-            drained += 1
-            log("GL 排空：\(stage)读到错误 0x\(String(error, radix: 16))，已清")
-        }
-    }
-
-    /// 叫 GL 视图重画一帧；锁着的时候直接丢掉（别在后台碰 GL）。
-    fileprivate func requestDisplay() {
-        guard !renderingLocked else { return }
-        glView?.setNeedsDisplay()
-    }
-
-    /// 让 GLKView 立刻重画当前帧（回前台接回内联画面时用）。
+    /// 回前台时刷新一次 drawable 尺寸，让 MoltenVK 按当前 bounds 重新出图。
     func requestRender() {
-        requestDisplay()
-    }
-
-    /// 画中画需要自己驱动出帧时调（后台 UIKit 不会自动给 GLKView 发 draw）。
-    /// 直接绑 GLKView 的 drawable 走正常渲染 + 首帧钩子；不 present，
-    /// 因为这一帧的消费者是 PiP 的 sample buffer，不是屏幕。
-    func renderFrameForPictureInPicture() {
-        guard !renderingLocked, let glView, renderContext != nil else { return }
-        let width = glView.drawableWidth
-        let height = glView.drawableHeight
-        guard width > 0, height > 0 else { return }
-        let previousContext = EAGLContext.current()
-        guard EAGLContext.setCurrent(glContext) else { return }
-        defer { EAGLContext.setCurrent(previousContext) }
-        glView.bindDrawable()
-        drainStaleGLErrors("画中画驱动帧首 / bindDrawable 后")
-        glViewport(0, 0, GLsizei(width), GLsizei(height))
-        glClearColor(0, 0, 0, 1)
-        glClear(GLbitfield(GL_COLOR_BUFFER_BIT))
-        drainStaleGLErrors("画中画驱动 glClear 后")
-        render(in: glView)
+        guard !renderingLocked else { return }
+        metalView?.setNeedsLayout()
+        metalView?.updateDrawableSize()
     }
 
     func setSpeed(_ rate: Float) {
@@ -650,6 +535,21 @@ final class MPVEngine {
         }
     }
 
+    /// 画中画取帧：直接读解码后的原始帧，不依赖窗口或 Metal drawable。
+    func captureRawFrameForPictureInPicture() async -> MPVRawFrame? {
+        await rawScreenshot()
+    }
+
+    /// 画中画时间轴：直接读内核当前时间与暂停状态。
+    func pictureInPictureTiming() -> (time: Double, paused: Bool) {
+        guard let handle else { return (0, true) }
+        var time = Double(0)
+        mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &time)
+        var paused: Int32 = 0
+        mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &paused)
+        return (time.isFinite ? max(0, time) : 0, paused > 0)
+    }
+
     /// 第二选择：让 VO 出图（`screenshot-to-file … video`）。
     private func captureFrameViaVO() async -> (url: URL?, note: String) {
         let started = Date()
@@ -712,28 +612,15 @@ final class MPVEngine {
     // MARK: - 收尾
 
     func stop() {
-        // 先把出帧钩子摘掉，再销毁内核：钩子那头的画中画取帧器会去读 mpv 句柄，
-        // 留着它，销毁之后补画的一帧就会读一块已经还回去的内存（真机 SIGSEGV）。
-        onFrameRendered = nil
         pump?.stop()
         pump = nil
         // 引擎要没了，还等着的命令不能继续挂着。
         failPendingCommands(-1)
-        // mpv free 和 CV/GL 资源回收也必须使用创建它们的上下文。
-        let previousContext = EAGLContext.current()
-        EAGLContext.setCurrent(glContext)
-        defer { EAGLContext.setCurrent(previousContext) }
-        if let renderContext {
-            mpv_render_context_set_update_callback(renderContext, nil, nil)
-            mpv_render_context_free(renderContext)
-        }
-        renderContext = nil
-        releaseOutputTarget()
-        failedOutputSize = nil
         if let handle {
             mpv_terminate_destroy(handle)
         }
         handle = nil
+        metalView = nil
     }
 
     // MARK: - 小工具
@@ -862,368 +749,6 @@ final class MPVEngine {
         }
     }
 
-    /// mpv → CVPixelBuffer 纹理 FBO → GPU blit → GLKView drawable。
-    func render(in view: GLKView) {
-        guard let renderContext, !renderingLocked else { return }
-        // ES 2 上下文里没有 blit，走旧直绘路径（能看，但不是本路径）。
-        guard glContext.api == .openGLES3 else {
-            renderDirectFallback(in: view, renderContext: renderContext, reason: "需要 OpenGL ES 3")
-            return
-        }
-        let previousContext = EAGLContext.current()
-        guard view.context === glContext, EAGLContext.setCurrent(glContext) else {
-            logOutputFailureOnce("GLKView / EAGLContext 不匹配或无法 current")
-            return
-        }
-        defer { EAGLContext.setCurrent(previousContext) }
-        // 在任何 CoreVideo 调用之前保存状态，包含第一次建 cache 的隐式 GL 操作。
-        let bindings = MPVOutputGLBindings()
-        defer {
-            bindings.restore()
-            drainStaleGLErrors("CV 输出恢复 GL 状态后")
-            if glErrorDrainFrames > 0 { glErrorDrainFrames -= 1 }
-        }
-        let viewport = bindings.viewport
-        guard viewport[2] > 0, viewport[3] > 0 else { return }
-        logGeometryOnce(view: view, viewport: viewport)
-        guard ensureOutputTarget(width: viewport[2], height: viewport[3]) else {
-            // 建不出 CV 目标（模拟器的软件 GL 渲染器就不支持 CVOpenGLESTextureCache）
-            // 时回到旧直绘路径：宁可画面还是旧的颜色，不能是一块黑屏。
-            // 真机上这条只在 CV 真出问题时才会走到，日志里会留下“直绘回退”。
-            renderDirectFallback(
-                in: view, renderContext: renderContext,
-                reason: "CV 目标未建立", bindings: bindings
-            )
-            return
-        }
-
-        glBindFramebuffer(GLenum(GL_FRAMEBUFFER), outputFramebuffer)
-        glDisable(GLenum(GL_SCISSOR_TEST))
-        glViewport(0, 0, viewport[2], viewport[3])
-        drainStaleGLErrors("CV 目标绑定后 / mpv render 前")
-        var data = mpv_opengl_fbo(
-            fbo: Int32(outputFramebuffer),
-            w: viewport[2],
-            h: viewport[3],
-            // 与 main TextureHW 一样：CV 的 RGBA/BGRA 纹理附件，格式提示为 0。
-            internal_format: 0
-        )
-        // 与 main 一样不传 FLIP_Y（默认 0）：CV 第 0 行是画面顶部。
-        // GLKView 需要相反的 Y 方向；翻转放在下面的 blit，而不是 mpv 内部。
-        let status = withUnsafeMutablePointer(to: &data) { dataPtr in
-            var params = [
-                mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: dataPtr),
-                mpv_render_param()
-            ]
-            return mpv_render_context_render(renderContext, &params)
-        }
-        drainStaleGLErrors("mpv render 到 CV 纹理后")
-        guard status >= 0 else {
-            logOutputFailureOnce("mpv_render_context_render rc=\(status)")
-            return
-        }
-
-        // mpv 不保证留下哪个 read/draw FBO 或 viewport，必须显式重绑。
-        // blit 只受 scissor 裁剪，不受 shader、混合或颜色写掩码影响。
-        glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), outputFramebuffer)
-        glReadBuffer(GLenum(GL_COLOR_ATTACHMENT0))
-        glBindFramebuffer(GLenum(GL_DRAW_FRAMEBUFFER), GLuint(bindings.drawFramebuffer))
-        glDisable(GLenum(GL_SCISSOR_TEST))
-        glBlitFramebuffer(
-            0, 0, viewport[2], viewport[3],
-            viewport[0], viewport[1] + viewport[3],
-            viewport[0] + viewport[2], viewport[1],
-            GLbitfield(GL_COLOR_BUFFER_BIT), GLenum(GL_NEAREST)
-        )
-        glFlush()
-        drainStaleGLErrors("CV 纹理 → GLKView 翻转 blit / flush 后")
-        if !didLogOutputPath {
-            didLogOutputPath = true
-            log("输出路径：mpv→CVPixelBuffer(BGRA/Metal兼容)纹理FBO=\(outputFramebuffer)→GLKView FBO=\(bindings.drawFramebuffer) GPU blit；\(viewport[2])×\(viewport[3]) internal_format=0 flip_y=0 blit_y=翻转 CV=0 FBO=complete")
-        }
-
-        // 保持现有钩子的契约：给 PiP 的仍是屏幕方向的 GLKView FBO。
-        // PiP 自己会再翻成 CV 的方向；不能把上面的未翻转 CV FBO 直接交给它。
-        bindings.restore()
-        // PiP 的 blit 同样受 scissor 影响；钩子完成后由外层 defer 恢复原状态。
-        glDisable(GLenum(GL_SCISSOR_TEST))
-        mpv_render_context_report_swap(renderContext)
-        onFrameRendered?(
-            bindings.drawFramebuffer,
-            Int(viewport[2]),
-            Int(viewport[3]),
-            lastSnapshot.videoWidth,
-            lastSnapshot.videoHeight
-        )
-        if !reportedFirstFrame {
-            reportedFirstFrame = true
-            pump?.markFirstFrameRendered()
-            let callback = onFirstFrame
-            Task { @MainActor in callback?() }
-        }
-    }
-
-    /// r11 之前的直绘路径：mpv 直接画进 GLKView 的 renderbuffer，带 FLIP_Y。
-    /// 只在 CV 目标建不出来时用；画面观感与 r10 一致（绿红偏色那条未解）。
-    private func renderDirectFallback(
-        in view: GLKView,
-        renderContext: OpaquePointer,
-        reason: String,
-        bindings: MPVOutputGLBindings? = nil
-    ) {
-        let previousContext = EAGLContext.current()
-        guard view.context === glContext, EAGLContext.setCurrent(glContext) else {
-            logOutputFailureOnce("直绘回退失败：GLKView / EAGLContext 不匹配")
-            return
-        }
-        let saved = bindings ?? MPVOutputGLBindings()
-        defer {
-            saved.restore()
-            drainStaleGLErrors("直绘回退恢复 GL 状态后")
-            if bindings == nil { EAGLContext.setCurrent(previousContext) }
-        }
-        let viewport = saved.viewport
-        guard viewport[2] > 0, viewport[3] > 0 else { return }
-        logOutputFallbackOnce(reason: reason)
-        glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(saved.drawFramebuffer))
-        glDisable(GLenum(GL_SCISSOR_TEST))
-        glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
-        var data = mpv_opengl_fbo(
-            fbo: Int32(saved.drawFramebuffer),
-            w: viewport[2],
-            h: viewport[3],
-            // 直绘的目标是我们自己定的 8 位 RGBA renderbuffer（Fuck 5618）。
-            internal_format: Int32(GL_RGBA8)
-        )
-        var flip: CInt = 1
-        let status = withUnsafeMutablePointer(to: &data) { dataPtr in
-            withUnsafeMutablePointer(to: &flip) { flipPtr in
-                var params = [
-                    mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: dataPtr),
-                    mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: flipPtr),
-                    mpv_render_param()
-                ]
-                return mpv_render_context_render(renderContext, &params)
-            }
-        }
-        guard status >= 0 else {
-            logOutputFailureOnce("直绘回退 mpv_render_context_render rc=\(status)")
-            return
-        }
-        mpv_render_context_report_swap(renderContext)
-        onFrameRendered?(
-            saved.drawFramebuffer,
-            Int(viewport[2]),
-            Int(viewport[3]),
-            lastSnapshot.videoWidth,
-            lastSnapshot.videoHeight
-        )
-        if !reportedFirstFrame {
-            reportedFirstFrame = true
-            pump?.markFirstFrameRendered()
-            let callback = onFirstFrame
-            Task { @MainActor in callback?() }
-        }
-    }
-
-    /// 回退只记一次：逐帧刷日志会把真机日志冲爆。
-    private func logOutputFallbackOnce(reason: String) {
-        guard outputFailureSignatures.insert("fallback:\(reason)").inserted else { return }
-        log("输出路径：直绘回退（\(reason)），本机不走 CV 像素缓冲")
-    }
-
-    /// 一个目标就够：没有 Flutter 的异步 copyPixelBuffer 消费者；同一上下文的
-    /// render → blit → 下一帧 render 严格按 GPU 命令顺序运行。PiP 仍持有自己的副本。
-    private func ensureOutputTarget(width: GLsizei, height: GLsizei) -> Bool {
-        let size = CGSize(width: Int(width), height: Int(height))
-        if outputFramebuffer != 0, outputSize == size { return true }
-        // 分配失败后不要逐帧重建；尺寸变化、换集或回前台才重试。
-        guard failedOutputSize != size else { return false }
-        let bindings = MPVOutputGLBindings()
-        defer {
-            if outputFramebuffer == 0 { releaseOutputTarget() }
-            bindings.restore()
-        }
-        releaseOutputTarget()
-        failedOutputSize = size
-        // CoreVideo 的临时纹理绑定限定在 0 号单元，返回前恢复原有绑定。
-        glActiveTexture(GLenum(GL_TEXTURE0))
-        drainStaleGLErrors("CV 输出分配前（上游残留）")
-
-        var cache: CVOpenGLESTextureCache?
-        let cacheStatus = CVOpenGLESTextureCacheCreate(
-            kCFAllocatorDefault, nil, glContext, nil, &cache
-        )
-        drainStaleGLErrors("CV 输出 CVOpenGLESTextureCacheCreate 后")
-        guard cacheStatus == kCVReturnSuccess, let cache else {
-            logOutputFailureOnce("CVOpenGLESTextureCacheCreate rc=\(cacheStatus)")
-            return false
-        }
-        outputTextureCache = cache
-        // 两档像素缓冲属性，都是 32BGRA、不设颜色空间或转换矩阵：
-        //
-        // 1. main 的写法（Metal 兼容）。真机 GPU 上 CVOpenGLESTextureCache 接受它，
-        //    和 media_kit_video 的 TextureHW 一模一样。
-        // 2. 模拟器的 Apple Software Renderer 拒收 Metal 兼容缓冲做 GLES 纹理
-        //    （CreateTextureFromImage 报 -6683 = 像素缓冲不兼容 OpenGL），退回
-        //    IOSurface 属性。这一档只在第一档失败时用，真机走不到。
-        let variants: [(name: String, attributes: CFDictionary)] = [
-            ("metal", [kCVPixelBufferMetalCompatibilityKey: true] as CFDictionary),
-            ("iosurface", [kCVPixelBufferIOSurfacePropertiesKey: [String: Any]()] as CFDictionary)
-        ]
-        for variant in variants {
-            // main 的 TextureGLESContext 也重试，处理偶发 incomplete attachment。
-            for attempt in 1...2 {
-                var pixelBuffer: CVPixelBuffer?
-                let bufferStatus = CVPixelBufferCreate(
-                    kCFAllocatorDefault, Int(width), Int(height), kCVPixelFormatType_32BGRA,
-                    variant.attributes, &pixelBuffer
-                )
-                guard bufferStatus == kCVReturnSuccess, let pixelBuffer else {
-                    logOutputFailureOnce(
-                        "CVPixelBufferCreate rc=\(bufferStatus) size=\(width)×\(height) attrs=\(variant.name)"
-                    )
-                    return false
-                }
-                var texture: CVOpenGLESTexture?
-                let textureStatus = CVOpenGLESTextureCacheCreateTextureFromImage(
-                    kCFAllocatorDefault, cache, pixelBuffer, nil,
-                    GLenum(GL_TEXTURE_2D), GLint(GL_RGBA), width, height,
-                    GLenum(GL_BGRA_EXT), GLenum(GL_UNSIGNED_BYTE), 0, &texture
-                )
-                drainStaleGLErrors("CV 输出 CreateTextureFromImage 后")
-                guard textureStatus == kCVReturnSuccess, let texture else {
-                    logOutputFailureOnce(
-                        "CreateTextureFromImage rc=\(textureStatus) attrs=\(variant.name)"
-                    )
-                    break
-                }
-                let target = CVOpenGLESTextureGetTarget(texture)
-                glBindTexture(target, CVOpenGLESTextureGetName(texture))
-                var framebuffer: GLuint = 0
-                glGenFramebuffers(1, &framebuffer)
-                glBindFramebuffer(GLenum(GL_FRAMEBUFFER), framebuffer)
-                glFramebufferTexture2D(
-                    GLenum(GL_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0), target,
-                    CVOpenGLESTextureGetName(texture), 0
-                )
-                let framebufferStatus = glCheckFramebufferStatus(GLenum(GL_FRAMEBUFFER))
-                drainStaleGLErrors("CV 输出纹理附件 / FBO 检查后")
-                if framebuffer != 0, framebufferStatus == GLenum(GL_FRAMEBUFFER_COMPLETE) {
-                    outputPixelBuffer = pixelBuffer
-                    outputTexture = texture
-                    outputFramebuffer = framebuffer
-                    outputSize = size
-                    failedOutputSize = nil
-                    didLogOutputPath = false
-                    if variant.name != "metal" {
-                        logOutputFailureOnce("像素缓冲退回 \(variant.name) 属性（模拟器兼容）")
-                    }
-                    return true
-                }
-                glDeleteFramebuffers(1, &framebuffer)
-                glBindTexture(target, 0)
-                logOutputFailureOnce(
-                    "FBO=0x\(String(framebufferStatus, radix: 16)) attrs=\(variant.name) attempt=\(attempt)/2"
-                )
-            }
-        }
-        return false
-    }
-
-    /// resize / stop 才释放；不能在每帧 blit 后提前丢掉 IOSurface 的拥有者。
-    /// 必须在 glContext current 时调用。只在允许渲染时等待 GPU，不在后台锁内发工作。
-    private func releaseOutputTarget() {
-        if outputFramebuffer != 0 {
-            if !renderingLocked { glFinish() }
-            glDeleteFramebuffers(1, &outputFramebuffer)
-            outputFramebuffer = 0
-        }
-        // 纹理由 CoreVideo 拥有，不对 CVOpenGLESTextureGetName 再 glDeleteTextures。
-        outputTexture = nil
-        outputPixelBuffer = nil
-        if let outputTextureCache, !renderingLocked {
-            CVOpenGLESTextureCacheFlush(outputTextureCache, 0)
-        }
-        outputTextureCache = nil
-        outputSize = .zero
-        didLogOutputPath = false
-    }
-
-    private func logOutputFailureOnce(_ detail: String) {
-        guard outputFailureSignatures.count < 8,
-              outputFailureSignatures.insert(detail).inserted else { return }
-        log("CV 输出路径失败：\(detail)")
-    }
-
-    /// 花屏、错位、色偏时先对这四个数：报给 mpv 的 FBO 尺寸必须等于真实的
-    /// 可绘制尺寸。差一半是缩放错，宽高互换就是整块画面被当竖的贴上去，
-    /// 色度跟着错位还会发绿发紫。
-    private func logGeometryOnce(view: GLKView, viewport: [GLint]) {
-        let geometry = "fbo \(viewport[2])×\(viewport[3]) drawable \(view.drawableWidth)×\(view.drawableHeight) bounds \(Int(view.bounds.width))×\(Int(view.bounds.height))@\(view.contentScaleFactor)"
-        guard geometry != lastGeometry else { return }
-        lastGeometry = geometry
-        log("画面尺寸 \(geometry)")
-        // 尺寸变了＝重新配了一次渲染目标（起播、转屏、回前台），这几帧最容易复发。
-        armGLErrorDrain()
-    }
-
-    private func glString(_ name: Int32) -> String {
-        guard let raw = glGetString(GLenum(name)) else { return "?" }
-        return String(cString: UnsafeRawPointer(raw).assumingMemoryBound(to: CChar.self))
-    }
-
-    static func procAddress(_ name: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
-        let symbol = CFStringCreateWithCString(
-            kCFAllocatorDefault, name, CFStringBuiltInEncodings.ASCII.rawValue
-        )
-        let bundle = CFBundleGetBundleWithIdentifier("com.apple.opengles" as CFString)
-        return CFBundleGetFunctionPointerForName(bundle, symbol)
-    }
-}
-
-/// 保存新增 CV 分配 / blit / PiP 后处理会触及的绑定；只在 ES 3 current 时使用。
-/// 必须在第一次 CVOpenGLESTextureCacheCreate 之前取快照，而不是分配之后。
-private struct MPVOutputGLBindings {
-    private(set) var drawFramebuffer: GLint = 0
-    private var readFramebuffer: GLint = 0
-    private var renderbuffer: GLint = 0
-    private var activeTexture: GLint = 0
-    private var activeTextureBinding: GLint = 0
-    private var textureZeroBinding: GLint = 0
-    private var scissorEnabled: GLboolean = 0
-    private var scissorBox = [GLint](repeating: 0, count: 4)
-    private(set) var viewport = [GLint](repeating: 0, count: 4)
-
-    init() {
-        glGetIntegerv(GLenum(GL_DRAW_FRAMEBUFFER_BINDING), &drawFramebuffer)
-        glGetIntegerv(GLenum(GL_READ_FRAMEBUFFER_BINDING), &readFramebuffer)
-        glGetIntegerv(GLenum(GL_RENDERBUFFER_BINDING), &renderbuffer)
-        glGetIntegerv(GLenum(GL_VIEWPORT), &viewport)
-        glGetIntegerv(GLenum(GL_ACTIVE_TEXTURE), &activeTexture)
-        glGetIntegerv(GLenum(GL_TEXTURE_BINDING_2D), &activeTextureBinding)
-        glActiveTexture(GLenum(GL_TEXTURE0))
-        glGetIntegerv(GLenum(GL_TEXTURE_BINDING_2D), &textureZeroBinding)
-        glActiveTexture(GLenum(activeTexture))
-        scissorEnabled = glIsEnabled(GLenum(GL_SCISSOR_TEST))
-        glGetIntegerv(GLenum(GL_SCISSOR_BOX), &scissorBox)
-    }
-
-    func restore() {
-        glBindFramebuffer(GLenum(GL_DRAW_FRAMEBUFFER), GLuint(drawFramebuffer))
-        glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), GLuint(readFramebuffer))
-        glBindRenderbuffer(GLenum(GL_RENDERBUFFER), GLuint(renderbuffer))
-        glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
-        glActiveTexture(GLenum(GL_TEXTURE0))
-        glBindTexture(GLenum(GL_TEXTURE_2D), GLuint(textureZeroBinding))
-        glActiveTexture(GLenum(activeTexture))
-        glBindTexture(GLenum(GL_TEXTURE_2D), GLuint(activeTextureBinding))
-        glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3])
-        if scissorEnabled != 0 { glEnable(GLenum(GL_SCISSOR_TEST)) }
-        else { glDisable(GLenum(GL_SCISSOR_TEST)) }
-    }
-}
-
 /// 一条异步命令的等待者。回执和超时都会来敲门，只能认一次——续两次会直接崩。
 /// 只在主线程上动。
 private final class CommandWaiter {
@@ -1267,7 +792,7 @@ final class MPVEventPump: @unchecked Sendable {
     private var loggedVideoInfo = false
     /// 这次加载走到哪一步（LP 4818）。只在事件泵自己的队列上读写。
     private var loadPhase: MPVLoadPhase = .idle
-    /// 这次加载里，第一帧有没有真的在渲染回调里画过。
+    /// 这次加载里，第一份视频参数快照有没有到。
     private var firstFrameRendered = false
 
     init(
@@ -1338,7 +863,7 @@ final class MPVEventPump: @unchecked Sendable {
         }
     }
 
-    /// 第一帧已经在渲染回调里画过（由引擎在主线程调）。
+    /// 第一份视频参数快照已经拿到（由引擎在主线程调）。
     func markFirstFrameRendered() {
         queue.async { [weak self] in
             guard let self else { return }
@@ -1424,7 +949,7 @@ final class MPVEventPump: @unchecked Sendable {
         }
         var snap = snapshot()
         // 「自动播放真的起来了」的两个判据，满足一个就算（LP 4820）：
-        // 一是第一帧已经在渲染回调里画过，二是时间轴真的在推进（没暂停、time-pos 走起来了）。
+        // 一是第一份视频参数快照已经到了，二是时间轴真的在推进（没暂停、time-pos 走起来了）。
         // 后者兜住「帧画出来了但首帧回调没轮到」这种情况。
         if loadPhase == .awaitingFirstFrame {
             if firstFrameRendered || (!snap.isPaused && snap.time > 0.1) {
@@ -1523,14 +1048,5 @@ final class MPVEventPump: @unchecked Sendable {
         defer { mpv_free(raw) }
         let value = Double(String(cString: raw)) ?? 0
         return value.isFinite && value > 0 ? value : 0
-    }
-}
-
-/// mpv 有新帧时的回调。必须是文件级函数：`@convention(c)` 的函数指针不能捕获上下文。
-private func kazumiMPVRenderUpdate(_ ctx: UnsafeMutableRawPointer?) {
-    guard let ctx else { return }
-    let engine = Unmanaged<MPVEngine>.fromOpaque(ctx).takeUnretainedValue()
-    Task { @MainActor in
-        engine.requestDisplay()
     }
 }

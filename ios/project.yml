@@ -26,26 +26,6 @@ options:
   generateEmptyDirectories: false
   groupSortPosition: top
   xcodeVersion: "26.0"
-  preGenCommand: |
-    set -euo pipefail
-    cache=".build/media-kit-v0.7.3"
-    if [ ! -f "$cache/.complete" ]; then
-      mkdir -p .build
-      temp=$(mktemp -d .build/media-kit-v0.7.3.XXXXXX)
-      trap 'rm -rf "$temp"' EXIT
-      archive="libmpv-xcframeworks_v0.7.3_ios-universal-video-default"
-      curl --fail --location --retry 3 \
-        "https://github.com/media-kit/libmpv-darwin-build/releases/download/v0.7.3/$archive.tar.gz" \
-        --output "$temp/archive.tar.gz"
-      echo "28b528c872ca0886f1a29e8c82eb25a89c0ba86c094f2bd013b4416ad3fceba8  $temp/archive.tar.gz" | shasum -a 256 -c -
-      tar -xzf "$temp/archive.tar.gz" -C "$temp"
-      for framework in Ass Avcodec Avfilter Avformat Avutil Dav1d Freetype Fribidi Harfbuzz Mbedcrypto Mbedtls Mbedx509 Mpv Png16 Swresample Swscale Uchardet Xml2; do
-        test -f "$temp/$archive/$framework.xcframework/Info.plist"
-      done
-      touch "$temp/$archive/.complete"
-      rm -rf "$cache"
-      mv "$temp/$archive" "$cache"
-    fi
 
 settings:
   base:
@@ -68,6 +48,9 @@ packages:
   Fuzi:
     url: https://github.com/cezheng/Fuzi.git
     from: 3.1.3
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit.git
+    exactVersion: 1.1.0-n9.0.2
 
 targets:
   Runner:
@@ -220,24 +203,8 @@ targets:
     dependencies:
       # XHTML / XPath 解析（libxml2），对应原项目 xpath_selector 的职责。
       - package: Fuzi
-      - { framework: .build/media-kit-v0.7.3/Mpv.xcframework, link: true, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Ass.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Avcodec.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Avfilter.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Avformat.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Avutil.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Dav1d.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Freetype.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Fribidi.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Harfbuzz.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Mbedcrypto.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Mbedtls.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Mbedx509.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Png16.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Swresample.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Swscale.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Uchardet.xcframework, link: false, embed: true, codeSign: true }
-      - { framework: .build/media-kit-v0.7.3/Xml2.xcframework, link: false, embed: true, codeSign: true }
+      # gpu-next / Vulkan / MoltenVK 与 libplacebo 由 MPVKit 一并提供。
+      - package: MPVKit
       # iOS 27 才有的 NowPlaying 框架（MediaSession / requestToBecomeApplicationPrimary）。
       # **必须弱链接**：强链接的话 iOS 26 的设备在 dyld 阶段就找不到符号、App 直接起不来。
       # 所有用法都包在 `if #available(iOS 27.0, *)` 里，见 Features/Player/NowPlayingSession27.swift。
@@ -253,12 +220,14 @@ targets:
         excludes:
           - Fixtures
           - Fixtures/**
+          # 旧测试直接驱动 GLKView / mpv_render_context，与 Metal 窗口输出管线不兼容。
+          - MPVRendererTests.swift
       - path: RunnerTests/Fixtures
         type: folder
         buildPhase: resources
     dependencies:
       - target: Runner
-      - { framework: .build/media-kit-v0.7.3/Mpv.xcframework, embed: false }
+      - package: MPVKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi.RunnerTests

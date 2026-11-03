@@ -91,12 +91,6 @@ struct PlayerSettingsScreen: View {
             Section {
                 Group {
                     Toggle("硬件解码", isOn: hardwareDecodeBinding)
-                    Picker("硬件解码模式", selection: hardwareDecodeModeBinding) {
-                        ForEach(HardwareDecodeMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .disabled(!settings.hardwareDecodeEnabled)
                     // main 的「低内存模式」三档（LP 5547）。开着就把解复用缓存从
                     // 1500 MiB 降到 2 MiB，省内存和流量，代价是慢速源更容易缓冲。
                     Picker("低内存模式", selection: lowMemoryModeBinding) {
@@ -109,7 +103,7 @@ struct PlayerSettingsScreen: View {
             } header: {
                 Text("解码与缓存")
             } footer: {
-                Text("解码设置重新打开播放器后生效。直通目前可能发绿；非直通多一次内存拷贝。")
+                Text("解码设置重新打开播放器后生效。硬件解码使用 VideoToolbox 零拷贝输出。")
             }
             // `Section("标题") { } footer: { }` 这个重载不存在，带页脚就得改成 header 写法。
             Section {
@@ -300,13 +294,6 @@ struct PlayerSettingsScreen: View {
         Binding(
             get: { settings.hardwareDecodeEnabled },
             set: { settings.hardwareDecodeEnabled = $0 }
-        )
-    }
-
-    private var hardwareDecodeModeBinding: Binding<HardwareDecodeMode> {
-        Binding(
-            get: { settings.hardwareDecodeMode },
-            set: { settings.hardwareDecodeMode = $0 }
         )
     }
 

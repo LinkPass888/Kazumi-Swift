@@ -3,7 +3,8 @@
 //  Kazumi
 //
 //  弹幕渲染层：叠在播放内核的画面之上，自己用 CADisplayLink 按播放时间
-//  排布弹幕，不经过 SwiftUI 的每帧刷新。
+//  排布弹幕，不经过 SwiftUI 的每帧刷新。ProMotion 设备按 120Hz 请求刷新，
+//  时钟经过 PLL 平滑，文字用矢量描边并光栅化后只移动 layer transform。
 //
 //  行为对齐原版 canvas_danmaku 的默认观感：
 //   * 滚动弹幕 8 秒横穿屏幕，固定弹幕停留 4.5 秒；
@@ -22,6 +23,7 @@ final class DanmakuOverlayView: UIView {
         var duration: Double = 8
         var lane: Int = 0
         var mode: Int = 1
+        var baseY: CGFloat = .nan
     }
 
     private var comments: [DanmakuComment] = []
@@ -98,12 +100,12 @@ final class DanmakuOverlayView: UIView {
     private var playbackRate: Double = 1
 
     private var lastNow: Double = 0
-    /// 内核时间上一次采样的值和拿到的时刻（本机时钟，秒）。
-    /// 内核的播放时间每 250 ms 才更新一次（`MPVEngine` 的属性泵），
-    /// 弹幕位置却是每帧按它算的——直接用采样值，弹幕一秒只挪四下，
-    /// 看上去就是一顿一顿、带拖影（LP 5546）。两次采样之间用本机时钟补上。
+    /// PLL 平滑时钟。内核每 250ms 才送来一个播放时间采样；新采样只更新锚点，
+    /// 输出时间用本机时钟推进并小幅收敛，避免每次采样到达时回跳 1~2px。
     private var sampleTime: Double = 0
     private var sampleStamp: CFTimeInterval = 0
+    private var smoothTime: Double = 0
+    private var lastFrameStamp: CFTimeInterval = 0
     private var sampleFilled = false
 
 
@@ -134,14 +136,19 @@ final class DanmakuOverlayView: UIView {
         if newSignature != signature || filtersChanged {
             signature = newSignature
             let allowed = newComments.filter { newStyle.allows($0.source) }
-            comments = newStyle.deduplication ? Self.merged(allowed) : allowed
+            let ordered = allowed.sorted { $0.time < $1.time }
+            comments = newStyle.deduplication ? Self.merged(ordered) : ordered
             clearLabels()
             // 过滤类设置改了：从现在这一刻接着放，不把已经过去的那段重播一遍。
             nextIndex = filtersChanged ? lowerBound(clockNow()) : 0
         }
         style = newStyle
         lastFilterSignature = newStyle.filterSignature
-        playbackRate = max(0.1, rate)
+        let newRate = max(0.1, rate)
+        if abs(newRate - playbackRate) > 0.0001 {
+            sampleFilled = false
+        }
+        playbackRate = newRate
         if !newStyle.enabled {
             clearLabels()
         }
@@ -186,22 +193,38 @@ final class DanmakuOverlayView: UIView {
 
     // MARK: - 时钟
 
-    /// 直接读播放时钟：内核的进度回调只有每秒几次，靠插值仍然会抖。
+    /// PLL 锁相：把内核的低频绝对时间作为锚点，逐帧用本机时钟推进平滑时间。
     private func clockNow() -> Double {
         guard let clock else { return lastNow }
         let sample = max(0, clock.currentPlaybackTime)
         let stamp = CACurrentMediaTime()
-        // 采样变了、第一次、或者没在播：重新锚定，别在暂停/拖进度时自己往前跑。
-        if !sampleFilled || sample != sampleTime || !clock.isPlayingNow {
+        // 首次采样、暂停或换内核：直接对齐绝对时间，暂停时不让弹幕自己前进。
+        if !sampleFilled || !clock.isPlayingNow {
             sampleTime = sample
             sampleStamp = stamp
+            smoothTime = sample
+            lastFrameStamp = stamp
             sampleFilled = true
             return sample
         }
-        // 两次采样之间按本机时间补；超过 0.5 秒说明内核那边没在动（缓冲、卡住），
-        // 就别再往外推，等下一个采样把它拽回来。
+
+        if abs(sample - sampleTime) > 0.0001 {
+            sampleTime = sample
+            sampleStamp = stamp
+        }
+
+        let delta = min(max(0, stamp - lastFrameStamp), 0.1)
+        lastFrameStamp = stamp
         let elapsed = min(max(0, stamp - sampleStamp), 0.5)
-        return sample + elapsed * playbackRate
+        let target = sampleTime + elapsed * playbackRate
+        let drift = target - smoothTime
+        if abs(drift) > 0.25 {
+            smoothTime = target
+        } else {
+            let correction = max(-0.15, min(0.15, drift * 2.5))
+            smoothTime += delta * playbackRate * (1 + correction)
+        }
+        return smoothTime
     }
 
     private func lowerBound(_ time: Double) -> Int {
@@ -232,6 +255,11 @@ final class DanmakuOverlayView: UIView {
     private func startDisplayLink() {
         guard displayLink == nil else { return }
         let link = CADisplayLink(target: self, selector: #selector(step))
+        link.preferredFrameRateRange = CAFrameRateRange(
+            minimum: 80,
+            maximum: 120,
+            preferred: 120
+        )
         link.add(to: .main, forMode: .common)
         displayLink = link
     }
@@ -296,27 +324,40 @@ final class DanmakuOverlayView: UIView {
         }
 
         let label = ItemLabel()
-        label.text = comment.text
         let size = max(10, min(48, style.fontSize))
-        label.font = .systemFont(ofSize: size, weight: Self.weight(style.fontWeight))
         // 关掉「弹幕颜色」就一律白字（main 的 danmakuColor）。
-        label.textColor = style.useColor ? Self.color(comment.colorValue) : .white
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: size, weight: Self.weight(style.fontWeight)),
+            .foregroundColor: style.useColor ? Self.color(comment.colorValue) : UIColor.white,
+        ]
+        // 矢量描边比 Gaussian shadow 锐利；负值表示同时描边和填充。
         if style.border {
-            label.layer.shadowColor = UIColor.black.cgColor
-            label.layer.shadowOpacity = 0.8
-            label.layer.shadowRadius = CGFloat(max(0.1, min(3, style.borderSize)))
-        } else {
-            label.layer.shadowOpacity = 0
-            label.layer.shadowRadius = 0
+            attributes[.strokeColor] = UIColor.black.withAlphaComponent(0.9)
+            attributes[.strokeWidth] = -Double(max(0.5, min(3, style.borderSize))) * 2
         }
-        label.layer.shadowOffset = .zero
+        label.attributedText = NSAttributedString(string: comment.text, attributes: attributes)
+        label.textAlignment = .center
+        label.numberOfLines = 1
+        label.lineBreakMode = .byClipping
+        label.backgroundColor = .clear
+        label.isOpaque = false
         label.alpha = CGFloat(max(0.1, min(1, style.opacity)))
         label.mode = mode
         label.startTime = now
         label.duration = duration(for: mode)
-        label.sizeToFit()
+
+        let fitted = label.sizeThatFits(
+            CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let width = ceil(fitted.width) + 4
+        let height = ceil(fitted.height) + 2
+        label.bounds = CGRect(origin: .zero, size: CGSize(width: width, height: height))
+        label.layer.shouldRasterize = true
+        label.layer.rasterizationScale = currentScreenScale
+        label.layer.allowsEdgeAntialiasing = true
+
         // 轨道满了：海量弹幕叠着画，否则这条就不画了。
-        guard let lane = laneIndex(mode: mode, width: label.bounds.width, now: now) else { return }
+        guard let lane = laneIndex(mode: mode, width: width, now: now) else { return }
         label.lane = lane
         addSubview(label)
         labels.append(label)
@@ -365,30 +406,31 @@ final class DanmakuOverlayView: UIView {
         let height = label.bounds.height
         let laneHeight = self.laneHeight
         let topInset: CGFloat = 6
+        let scale = currentScreenScale
+        let x: CGFloat
+        let y: CGFloat
 
         if label.mode == 1 {
             let progress = max(0, min(1, (now - label.startTime) / label.duration))
-            let x = bounds.width - CGFloat(progress) * (bounds.width + width)
-            label.frame = CGRect(
-                x: x,
-                y: topInset + CGFloat(label.lane) * laneHeight,
-                width: width,
-                height: height
-            )
+            x = bounds.width - CGFloat(progress) * (bounds.width + width)
+            y = topInset + CGFloat(label.lane) * laneHeight
+        } else if label.mode == 5 {
+            x = (bounds.width - width) / 2
+            y = topInset + CGFloat(label.lane) * laneHeight
         } else {
-            let y: CGFloat
-            if label.mode == 5 {
-                y = topInset + CGFloat(label.lane) * laneHeight
-            } else {
-                y = bounds.height - CGFloat(label.lane + 1) * laneHeight
-            }
-            label.frame = CGRect(
-                x: (bounds.width - width) / 2,
-                y: y,
-                width: width,
-                height: height
-            )
+            x = (bounds.width - width) / 2
+            y = bounds.height - CGFloat(label.lane + 1) * laneHeight
         }
+
+        let snappedY = snapToPixel(y, scale: scale)
+        if label.baseY.isNaN || label.baseY != snappedY {
+            // 改 frame 前先清掉 transform；否则 frame 是 transform 后的包围盒。
+            label.transform = .identity
+            label.frame = CGRect(x: 0, y: snappedY, width: width, height: height)
+            label.baseY = snappedY
+        }
+        let snappedX = snapToPixel(x, scale: scale)
+        label.transform = CGAffineTransform(translationX: snappedX, y: 0)
     }
 
     // MARK: - 轨道
@@ -434,9 +476,20 @@ final class DanmakuOverlayView: UIView {
             label.removeFromSuperview()
         }
         labels.removeAll()
+        sampleFilled = false
     }
 
     // MARK: - 颜色
+
+    private var currentScreenScale: CGFloat {
+        let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        return scale > 0 ? scale : 1
+    }
+
+    @inline(__always)
+    private func snapToPixel(_ value: CGFloat, scale: CGFloat) -> CGFloat {
+        (value * scale).rounded() / scale
+    }
 
     private static func color(_ value: Int) -> UIColor {
         let rgb = max(0, min(0xFFFFFF, value))

@@ -726,8 +726,8 @@ struct PlayerScreen: View {
             // 带着全屏状态离开会把整个 App 锁在横屏，退出时一定回竖屏。
             exitFullscreen()
             if let controller { persistProgress(controller) }
-            // 画中画先拆：它的取帧钩子挂在引擎上，
-            // 必须赶在 `surface.stop()` 之前摘掉，否则会拿着已销毁的 GL 上下文做 blit。
+            // 画中画先拆：它的取帧任务绑定当前 mpv 引擎，
+            // 必须赶在 `surface.stop()` 之前取消。
             pictureInPicture?.teardown()
             pictureInPicture = nil
             surface.stop()
@@ -919,7 +919,7 @@ struct PlayerScreen: View {
             guard let surface else { return }
             KazumiLogBuffer.player("画中画: 启动失败，按后台播放设置收尾")
             if settingsStore.backgroundPlayback {
-                // 开着后台播放：渲染锁上，别在后台碰 GL（硬解不压，见 handleBackground）。
+                // 开着后台播放：锁住 drawable 刷新（硬解不压，见 handleBackground）。
                 surface.setRenderingLocked(true)
             } else if surface.isPlaying {
                 backgroundPaused.wrappedValue = true
@@ -964,14 +964,11 @@ struct PlayerScreen: View {
         }
         guard !pipStarted else { return }
 
-        // 小窗没起来：后台就把渲染锁上（LP 4978 第 2 条）。iOS 在后台不给
-        // OpenGL ES 用，真机日志里切后台后一直在报
-        // `libmpv_render: OpenGL error INVALID_ENUM`。锁上以后 mpv 不再被叫去画、
-        // 重绘请求全部丢掉，VideoToolbox 就不会被渲染拉帧，也就不会被系统作废
-        // （这正是当初压 `hwdec` 的原因）。
+        // 小窗没起来：后台就把渲染锁上（LP 4978 第 2 条）。锁上以后不再刷新
+        // MoltenVK drawable，VideoToolbox 就不会被窗口输出持续拉帧。
         //
         // **不再在后台切 `hwdec`（LP 4984 第 1 条）**：上一版切后台压 `hwdec=no`、
-        // 回前台切回 `videotoolbox-copy`，每次都让 FFmpeg 销毁重建 H.264 解码器，
+        // 回前台切回硬件解码，每次都让 FFmpeg 销毁重建 H.264 解码器，
         // 在新 IDR 帧之前缺参考帧（真机日志：`co located POCs unavailable`、
         // `mmco: unref short failure`），mpv 那一秒进 `空闲=是` 等音画同步——就是
         // LP 报的「切后台/回前台像在加载一秒」。现在只靠渲染锁，解码器全程不重建。
@@ -1003,7 +1000,7 @@ struct PlayerScreen: View {
 
     /// 回前台：收回画中画、解开渲染锁、按设置自动续播。
     private func handleForeground() {
-        // 先收回画中画：内联 GL 在同一时间点接管，不 seek、不重启。
+        // 先收回画中画：Metal 画面在同一时间点接管，不 seek、不重启。
         pictureInPicture?.stop()
         // 只解渲染锁（解锁会立刻补一次重绘）。硬解全程没动过，没有要接回来的东西
         // （LP 4984 第 1 条：不再在后台压 `hwdec`）。
@@ -2091,7 +2088,6 @@ struct PlayerScreen: View {
                     danmakuTopInset: isFullscreen ? 44 : 0,
                     lowMemoryMode: settings.lowMemoryMode,
                     hardwareDecodeEnabled: settings.hardwareDecodeEnabled,
-                    hardwareDecodeMode: settings.hardwareDecodeMode,
                     surface: surface
                 )
             } else {

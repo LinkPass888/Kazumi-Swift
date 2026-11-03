@@ -59,7 +59,7 @@ struct MPVDiagnostics {
             return event
         }
 
-        // 逐帧统计不采样；每类留配额，避免 GL 初始化挤掉 vd 的解码信息。
+        // 逐帧统计不采样；每类留配额，避免 GPU 初始化挤掉 vd 的解码信息。
         guard !Self.matches(Self.frameNoise, text), !seenLines.contains(line) else { return event }
         let family = source ?? "other"
         guard nonErrorCount < nonErrorLimit, sourceCounts[family, default: 0] < perSourceLimit else {

@@ -8,9 +8,6 @@
 //  接口（`PlayerSurfaceModel`）保持原样，页面那边一行不用改。
 //
 
-import AVFoundation
-import GLKit
-import OpenGLES
 import SwiftUI
 import UIKit
 
@@ -76,7 +73,7 @@ final class PlayerSurfaceModel {
     /// 首帧还没出来 / 刚换集：加载圈该转。
     ///
     /// 判据只看引擎一路推过来的相位，不看「首帧到了」那个标记：那个通知是一次性的
-    /// （渲染回调里发一次就不发了），而换集时界面这边会把标记清掉，两件事谁先谁后不定
+    /// （首份视频参数快照只发一次），而换集时界面这边会把标记清掉，两件事谁先谁后不定
     /// ——清理落在通知之后就再也回不来，画面在放也照样转圈（Ato 4867，模拟器上切集
     /// 复现过）。相位由 `MPV_EVENT_START_FILE / FILE_LOADED / PLAYBACK_RESTART` 和
     /// 时间轴推进一起推，不依赖一次性回调。
@@ -153,48 +150,13 @@ final class PlayerSurfaceModel {
         engine?.setRenderingLocked(locked)
     }
 
-    /// 屏幕这块视图。mpv 自己出图失败时，从它兜底。
-    weak var hostView: MPVHostView?
-
-    /// 抓当前这一帧（截图）。mpv 自己出 PNG 写临时文件。
-    ///
-    /// mpv 那条会失败（真机上 1080p 要从关键帧重解，也可能直接被拒），
-    /// 那时不能让用户拿到空的：屏幕上已经有画了，直接读它。读到的整块视口
-    /// 带黑边、是屏幕的比例，所以按同一套 `videoRect` 裁成画面本身（LP 要的是
-    /// 画面比例，不是屏幕比例）。
-    ///
-    /// 这是**退路**，不是主路：它只有屏幕分辨率的像素，永远不是「片源那一帧」。
-    /// mpv 自己出图失败时，失败原因会拼进提示里，不再默默降级（LP 5002）。
+    /// 抓当前这一帧（截图）。mpv 的 `screenshot-raw` 直接给解码后的原始帧，
+    /// 再退一步才让 VO 出 PNG；`CAMetalLayer` 的 drawable 不能被 CPU 截取。
     ///
     /// 返回 `(文件, 给用户看的那句话)`：文件在就交给相册那条路存。
     func captureFrame() async -> (url: URL?, note: String) {
-        // 先让 mpv 自己出图（片源分辨率、完整一帧）；它失败时才退到下面那条，
-        // 那条只有屏幕分辨率，所以失败原因要一路带进提示里，不能默默降级（LP 5002）。
-        var mpvFailure = ""
-        if let engine {
-            let result = await engine.captureFrameToFile()
-            if let url = result.url { return (url, result.note) }
-            mpvFailure = result.note
-        }
-        guard let image = hostView?.snapshotOfVideo(),
-              let data = image.pngData()
-        else {
-            return (nil, "截图失败：没抓到画面")
-        }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kazumi-shot-\(UUID().uuidString).png")
-        do {
-            try data.write(to: url)
-        } catch {
-            return (nil, "截图失败：临时文件写不出去")
-        }
-        // 像素尺寸，不是点尺寸：以前这里报的是 `image.size`（点），跟真实存下来的
-        // 图对不上，排查时白绕一圈（LP 5002）。
-        let pixels = image.cgImage.map { "\($0.width)×\($0.height)" } ?? "尺寸读不到"
-        let reason = mpvFailure.isEmpty ? "" : "（\(mpvFailure)）"
-        let note = "截图：mpv 没出图\(reason)，改用屏幕那一帧 \(pixels) 像素"
-        KazumiLogBuffer.player(note)
-        return (url, note)
+        guard let engine else { return (nil, "截图失败：播放器还没准备好") }
+        return await engine.captureFrameToFile()
     }
 
     func togglePlay() {
@@ -433,27 +395,9 @@ extension PlayerSurfaceModel: PlayerClockProvider {
 
 // MARK: - 画面
 
-/// mpv 的 OpenGL 画面。mpv 每次有新帧会叫 `setNeedsDisplay`，这里画进自己的 FBO。
-final class MPVGLView: GLKView {
-    weak var engine: MPVEngine?
-
-    override func draw(_ rect: CGRect) {
-        // 后台锁着就什么都不画：连 glClear 也不做——iOS 在后台不给 OpenGL ES 用
-        // （LP 4978 第 2 条）。
-        guard let engine, !engine.renderingLocked else { return }
-        // 分两步排空，把「谁抛的错」分开（见 MPVEngine.drainStaleGLErrors）。
-        // mpv render 后还会同步跑 PiP 拷贝，所以帧首残留不能直接归因于内核。
-        engine.drainStaleGLErrors("帧首，上帧渲染后处理（含画中画）的残留")
-        glClearColor(0, 0, 0, 1)
-        glClear(UInt32(GL_COLOR_BUFFER_BIT))
-        engine.drainStaleGLErrors("我们 glClear 之后")
-        engine.render(in: self)
-    }
-}
-
 /// 画面 + 弹幕叠在一起的那块 UIView。
 final class MPVHostView: UIView {
-    let glView = MPVGLView()
+    let metalView = MPVMetalView()
     let overlay = DanmakuOverlayView()
 
     /// 视频尺寸、填充方式与弹幕顶部留白，由容器在 updateUIView 里推进来。
@@ -471,20 +415,20 @@ final class MPVHostView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
-        glView.translatesAutoresizingMaskIntoConstraints = false
+        metalView.translatesAutoresizingMaskIntoConstraints = false
         overlay.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(glView)
+        addSubview(metalView)
         addSubview(overlay)
         overlayLeading = overlay.leadingAnchor.constraint(equalTo: leadingAnchor)
         overlayTop = overlay.topAnchor.constraint(equalTo: topAnchor)
         overlayWidth = overlay.widthAnchor.constraint(equalToConstant: 0)
         overlayHeight = overlay.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            // GL 画面仍然铺满整块：mpv 自己在里面按 fit/crop/stretch 出画面。
-            glView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            glView.topAnchor.constraint(equalTo: topAnchor),
-            glView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Metal 画面仍然铺满整块：mpv 自己在里面按 fit/crop/stretch 出画面。
+            metalView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            metalView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            metalView.topAnchor.constraint(equalTo: topAnchor),
+            metalView.bottomAnchor.constraint(equalTo: bottomAnchor),
             // 弹幕只贴在「视频矩形」里，不再铺到黑边上（DEFECT 1）。
             overlayLeading,
             overlayTop,
@@ -496,82 +440,35 @@ final class MPVHostView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// 屏幕上真正的画面那一块（不含黑边），points。layoutSubviews 里算好。
-    private var currentVideoRect: CGRect = .zero
-
-    /// 兜底截图：读屏幕上那块画面，按画面比例把黑边裁掉再返回。
-    ///
-    /// 只有 mpv 自己出图失败时才走到这里，所以宁可是屏幕分辨率的一张，
-    /// 也不要给用户一张带黑边的整屏图。
-    func snapshotOfVideo() -> UIImage? {
-        let snapshot = glView.snapshot
-        let boundsSize = glView.bounds.size
-        guard boundsSize.width >= 1, boundsSize.height >= 1,
-              snapshot.size.width >= 1, snapshot.size.height >= 1
-        else { return nil }
-
-        // 视频还没报尺寸（或布局还没跑过）时按整块来，至少不是空的。
-        let rect = currentVideoRect.width >= 1 && currentVideoRect.height >= 1
-            ? currentVideoRect
-            : fillMode.videoRect(in: glView.bounds, videoSize: videoSize)
-
-        // 缩放拿 `cgImage` 的像素宽高算，不能用 `snapshot.size`（点是点尺寸）。
-        //
-        // 这里踩过：`GLKView.snapshot` 返回的 UIImage 带屏幕缩放倍率，`size` 是点、
-        // 只有 `cgImage` 才是像素。以前用 `snapshot.size / bounds` 算比例，3 倍屏上
-        // 得出来是 1，于是把一块点尺寸的矩形裁到像素缓冲上——存下来只有 402×226 像素
-        // （整帧是 1206×678），看着就是「裁过的一块」；横屏更明显：矩形从 x=79 开始，
-        // 左边的黑边被一起切进图里（LP 5002）。
-        guard let cgImage = snapshot.cgImage else { return snapshot }
-        let sx = CGFloat(cgImage.width) / boundsSize.width
-        let sy = CGFloat(cgImage.height) / boundsSize.height
-        let crop = CGRect(
-            x: rect.minX * sx,
-            y: rect.minY * sy,
-            width: rect.width * sx,
-            height: rect.height * sy
-        ).integral.intersection(CGRect(origin: .zero, size: CGSize(width: cgImage.width, height: cgImage.height)))
-
-        guard crop.width >= 1, crop.height >= 1,
-              let cropped = cgImage.cropping(to: crop)
-        else { return snapshot }
-        return UIImage(cgImage: cropped, scale: snapshot.scale, orientation: .up)
-    }
-
     /// 更新视频矩形所需的三样东西；真正的尺寸在 layoutSubviews 里按当前 bounds 算。
     func updateVideoLayout(
         videoSize: CGSize,
         fillMode: MPVPlayerContainer.MPVFillMode,
         danmakuTopInset: CGFloat
     ) {
-        // 画面尺寸 / 填充方式变了也要主动讨一帧：暂停时 mpv 不报新帧，
-        // 屏幕上会留着旧尺寸画的那张图（同下面的 layoutSubviews）。
+        // 画面尺寸 / 填充方式变了也要同步 drawable：暂停时没有新帧，
+        // 旧尺寸的 swapchain 会被系统拉伸（同下面的 layoutSubviews）。
         let geometryChanged = videoSize != self.videoSize || fillMode != self.fillMode
         self.videoSize = videoSize
         self.fillMode = fillMode
         self.danmakuTopInset = danmakuTopInset
         setNeedsLayout()
         if geometryChanged {
-            glView.setNeedsDisplay()
+            metalView.setNeedsLayout()
+            metalView.updateDrawableSize()
         }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // 尺寸一变就主动要一帧（LP 2026-10-28 第 5 条）。
-        //
-        // GL 视图开了 `enableSetNeedsDisplay`，只在 mpv 报新帧时才重画。暂停时
-        // 一帧都不来，进全屏只是把这块视图撑大，屏幕上还是**旧尺寸画的那张图**
-        // 被系统拉大——看着就是「画面被拉伸」（@developer3 2026-10-28 4349 的读法；
-        // Colo 那条 `videoSize` 为零的解释对不上：暂停并不清 `videoSize`，
-        // 清它的是 `prepareForNewEpisode`，所以补 16:9 兜底治不了这一条）。
-        // 尺寸对不上就自己讨一帧：mpv 按新的 FBO 尺寸重画，它自己按 keepaspect 留边。
+        // 尺寸一变就同步 CAMetalLayer.drawableSize（LP 2026-10-28 第 5 条）。
+        // 暂停时没有新帧，如果不更新 swapchain，进全屏后旧画面会被系统拉伸。
         if bounds.size != lastLayoutSize {
             lastLayoutSize = bounds.size
-            glView.setNeedsDisplay()
+            metalView.setNeedsLayout()
+            metalView.updateDrawableSize()
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
-        currentVideoRect = rect
         // 顶部让出控制栏（横屏 44pt），底部仍留 20% 给字幕：
         // 弹幕区 = 视频上方 80% 再往上收掉顶部留白。
         let inset = max(0, danmakuTopInset)
@@ -608,7 +505,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
     let lowMemoryMode: LowMemoryMode
     /// 硬件解码开关（LP 5549）。
     let hardwareDecodeEnabled: Bool
-    let hardwareDecodeMode: HardwareDecodeMode
     let surface: PlayerSurfaceModel
 
     /// 按档位和当前网络算出这一集该给的缓存字节数。
@@ -637,7 +533,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
         // 本地文件不按流量算（main 的 `isLocalPlayback`），所以文件播放永远走完整缓存。
         engine.applyCacheSize(cacheSizeForPolicy())
         engine.hardwareDecodeEnabled = hardwareDecodeEnabled
-        engine.hardwareDecodeMode = hardwareDecodeMode
         // 播到一半 Wi-Fi 换成移动数据（或反过来）时，缓存档位要跟着换，不用重开这一集。
         // 「跟随网络」这一档在两种网络下取的值不一样，靠这个回调补上。
         MeteredNetworkMonitor.shared.onChange = { [engine, mode = lowMemoryMode, isLocal = url.isFileURL] in
@@ -649,16 +544,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
                 )
             )
         }
-        surface.hostView = host
-        engine.glView = host.glView
-        host.glView.engine = engine
-        host.glView.enableSetNeedsDisplay = true
-        host.glView.isOpaque = true
-        // blit 到 CVPixelBuffer 纹理要求两边格式兼容；显式固定成 RGBA8，
-        // 不依赖 GLKView 的默认值。
-        host.glView.drawableColorFormat = .RGBA8888
-        host.glView.context = engine.glContext
-
         engine.onSnapshot = { [weak surface] snapshot in
             surface?.handle(snapshot: snapshot)
             surface?.refreshBufferedTime()
@@ -669,7 +554,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
         engine.onFirstFrame = { [weak surface] in
             surface?.hasFirstFrame = true
         }
-        engine.start()
+        engine.start(in: host.metalView)
 
         context.coordinator.engine = engine
         context.coordinator.surface = surface
@@ -729,7 +614,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
         coordinator.overlay = nil
         uiView.overlay.clock = nil
         coordinator.surface?.engine = nil
-        uiView.glView.engine = nil
         coordinator.engine?.stop()
         coordinator.engine = nil
         // 播放器没了就别再把回调挂在单例上。
