@@ -458,9 +458,12 @@ extension BangumiInfoScreen {
                 }
             }
         }
-        .padding(12)
+        // 矮屏上下内缩 12 → 9（Colo 6848）：整块原本 408 比屏 402 多 6 点，
+        // 从内缩里扣，封面仍 260 × 174 不动。Ato 6849：9 是卡满，不再往下压。
+        .padding(.vertical, short ? 9 : 12)
+        .padding(.horizontal, 12)
         // 同上：封面高是下限，不是上限；信息列长高了整块跟着长。
-        .frame(minHeight: (stacked || wide) ? 0 : (short ? shortHeight + 24 : height + 24), alignment: .top)
+        .frame(minHeight: (stacked || wide) ? 0 : (short ? shortHeight + 18 : height + 24), alignment: .top)
         .background { backdrop(controller) }
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .contain)

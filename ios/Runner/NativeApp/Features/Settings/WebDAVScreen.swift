@@ -71,6 +71,7 @@ struct WebDAVScreen: View {
             }
         }
         .animation(.snappy, value: banner != nil)
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("多设备同步")
         .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)

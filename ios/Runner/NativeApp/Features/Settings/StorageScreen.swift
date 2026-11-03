@@ -128,6 +128,7 @@ struct StorageScreen: View {
                 }
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("存储与日志")
         .navigationBarTitleDisplayMode(.large)
         .scrollContentBackground(.hidden)

@@ -226,9 +226,12 @@ struct SettingsScreen: View {
         // 所以不必等探针量到宽——量不到就整页空白，那是比满宽难看得多的毛病。
         .frame(maxWidth: 700)
         .frame(maxWidth: .infinity)
-        // 行内缩对齐「我的」（Ato 6815）：先按 List 默认 8（行 684）。
-        .contentMargins(.horizontal, 8, for: .scrollContent)
+        // 行内缩对齐「我的」（Ato 6815）：两屏来回切行宽差 16 看得出来，
+        // 统一成左右各 16、行 668。List 自带的 8 是 contentMargins 默认值，
+        // 写 8 等于没写，要写到 16 才换成 16。
+        .contentMargins(.horizontal, 16, for: .scrollContent)
         // 顶部滚动边缘：列表顶部用渐进模糊（.soft）。
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("设置")
         // C 档大标题改 inline（§六之二）。
         .navigationBarTitleDisplayMode(isShortTier ? .inline : .large)

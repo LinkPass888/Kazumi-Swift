@@ -28,6 +28,10 @@ struct PopularScreen: View {
                       Self.rightColumnWidth(forWidth: size.width) >= Self.rightColumnMinWidth {
                 // 右栏 ≥ 320（Colo 6822）：不到就回落单栏，不缩左栏、不压海报。
                 twoColumnBody(size: size)
+            } else if size.height < Self.wideMinHeight, size.width > size.height {
+                // C 档：宽但矮（iPhone 横屏 750×402）。货架整宽接在封面下面会被浮动
+                // tab 条压住，改成封面钉左、货架收进右栏自己滚（Colo 6886）。
+                compactTwoColumnBody(size: size, insets: proxy.safeAreaInsets)
             } else {
                 heroRowBody(size: size)
             }
@@ -65,6 +69,13 @@ struct PopularScreen: View {
 
     /// 两栏右栏的下限（Colo 6822）：低于这个数一行只放得下 1 张海报，货架就没意义了。
     private static let rightColumnMinWidth: CGFloat = 320
+
+    /// C 档左栏封面：210×315，正好 2:3（Colo 6886）。
+    /// 315 是避开浮动 tab 条的上限——tab 条从屏顶 342 起，封面从 0 排到 315。
+    private static let compactCoverWidth: CGFloat = 210
+    private static let compactCoverHeight: CGFloat = 315
+    /// C 档左栏封面与右栏之间的缝（Colo 6886：750 − 210 − 24 = 516）。
+    private static let compactColumnGap: CGFloat = 24
 
     /// 宽屏两栏：左边 1/3 大封面，右边 2/3 分组（LP 6644 / 简报）。
     ///
@@ -127,6 +138,93 @@ struct PopularScreen: View {
         )
     }
 
+
+    /// 浮动 tab 条（药丸）左缘，屏幕 x。UITabBar 自己整屏宽，药丸是它里面的
+    /// `_UITabBarItemPlatterView`（实测 x 278、宽 318）；系统改名就找不到，返回 nil 回落。
+    private static func tabBarLeadingEdge() -> CGFloat? {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first?.keyWindow,
+              let bar = Self.findTabBar(in: window) else { return nil }
+        var queue: [UIView] = bar.subviews
+        while !queue.isEmpty {
+            let v = queue.removeFirst()
+            if String(describing: type(of: v)) == "_UITabBarItemPlatterView" {
+                return v.convert(v.bounds, to: window).minX.rounded()
+            }
+            queue.append(contentsOf: v.subviews)
+        }
+        return nil
+    }
+
+    private static func findTabBar(in view: UIView) -> UITabBar? {
+        if let bar = view as? UITabBar { return bar }
+        for sub in view.subviews { if let b = findTabBar(in: sub) { return b } }
+        return nil
+    }
+
+    /// C 档两栏（Colo 6886）：封面钉在左栏，货架收进右栏自己竖向滚。
+    ///
+    /// 旧的英雄行把货架整宽接在封面下面：封面 281 高，货架首行落点在 y≈368，
+    /// 而浮动 tab 条占 y 342…385——一屏只剩 17 点，等于没有货架。
+    private func compactTwoColumnBody(size: CGSize, insets: EdgeInsets) -> some View {
+        // 封面右缘 = 浮动 tab 条左缘 − 1（Colo 6947）；量不到回落 272。
+        let slotWidth = Self.tabBarLeadingEdge().map { max(200, $0 - 1 - insets.leading) } ?? Self.compactCoverWidth
+        // 封面框 x 0..272、y 0..402（Ato 6939 / Colo 6940）：向左铺进安全区、向下铺到屏底。
+        let bleed = insets.leading
+        // 底安全区只取 home 条那一段（横屏 21）：proxy 里的底内边距把浮动 tab 条也算进去了（实测 64），
+        // 块底会被顶高 43 点（Colo 6940：402 − 21 − 16 = 365）。
+        let homeBar = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.keyWindow?.safeAreaInsets.bottom ?? 21
+        let fullHeight = size.height + insets.top + insets.bottom
+        return HStack(alignment: .top, spacing: Self.compactColumnGap) {
+            Color.clear
+                .frame(width: slotWidth, height: size.height)
+                .overlay(alignment: .topLeading) {
+                    PopularHero(
+                        items: controller.heroItems,
+                        zoomNamespace: zoomNamespace,
+                        // 固定在一栏里，不存在滚出屏幕这回事。
+                        isOnScreen: true,
+                        coverHeightOverride: fullHeight,
+                        coverWidth: slotWidth + bleed,
+                        textPlacement: .overlay,
+                        // 两颗圆钮跟着标题去右栏顶上，左栏一个字的没有。
+                        showsTopBar: false,
+                        compactColumn: true,
+                        compactLeadingBleed: bleed,
+                        compactBottomInset: homeBar + PopularHero.compactTextBottomInset
+                    )
+                    .frame(width: slotWidth + bleed, height: fullHeight)
+                    .offset(x: -bleed, y: -insets.top)
+                }
+
+            VStack(spacing: 0) {
+                PopularWideTopBar()
+                    .padding(.top, 12)
+
+                ScrollView {
+                    shelves(tileWidth: 96)
+                        .padding(.top, 24)
+                        // 右栏底部留 60 给浮动 tab 条（6886/6888 规格 v2 定稿：玻璃顶 342，402 − 342 = 60）。
+                        .padding(.bottom, 60)
+                }
+                .scrollIndicators(.hidden)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .overlay {
+            if !controller.isLoading, controller.rows.isEmpty, controller.isFailed {
+                failureView
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            controller.paintFromCache()
+            Task { await controller.load() }
+        }
+    }
 
     /// 英雄行（Colo 6687 §3 / §4）：iPad 竖屏和 iPhone 横屏都走这一档。
     /// 封面在左、比例恒 2:3 不裁，文字块在右垂直居中；货架整宽接在下面，跟着页面一起滚。

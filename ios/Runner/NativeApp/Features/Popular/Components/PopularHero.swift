@@ -74,6 +74,16 @@ struct PopularHero: View {
     /// 按在信息块上、右栏货架上、两栏中间那条缝上都不动。
     var coverPullGesture: Bool = false
 
+    /// C 档左栏（6888 规格）：iPhone 横屏那一栏只有 210 宽，文字块压封面下沿渐变。
+    /// 栏窄，两处跟单栏那套不一样——块底只留 16（不是单栏那条 50），
+    /// 按钮排也按栏宽排开：继续观看通栏、收藏贴右缘 16，两个框不许叠
+    /// （LP 6901：原来「胶囊居中＋收藏浮右缘」在 210 宽里正好压在一起）。
+    var compactColumn: Bool = false
+    /// C 档封面向左铺进安全区的那一段（Ato 6936 / Colo 6940）：图从屏左缘起，信息块仍从内缩线起。
+    var compactLeadingBleed: CGFloat = 0
+    /// C 档块底留白：底安全区 + 16（Colo 6940：402 − 21 − 16 = 365）。
+    var compactBottomInset: CGFloat = PopularHero.compactTextBottomInset
+
     /// 封面自己拖出来的位移（0…120），松手回弹到 0。
     @State private var dragPull: CGFloat = 0
     /// 这一下手指走过 8 点没有：走过是拖、没走过是点（Colo 6750 / 6763）。
@@ -126,6 +136,9 @@ struct PopularHero: View {
     /// 文字块离块底的留白（LP 2901 / Colo 2902）：封面加高 50，文字块原地不动，
     /// 所以「开始观看」那排仍在原来的位置，封面底边落到它下面、货架上面。
     static let textBottomInset: CGFloat = 50
+    /// C 档左栏那条块底留白（6888 规格：「底 16」）。单栏那条 50 是给 600 高封面留的，
+    /// 210×315 的左栏装不下，文字块会被顶到封面中段（LP 6901 那版块底 265、规格 299）。
+    static let compactTextBottomInset: CGFloat = 16
     /// 文字块（名称、元信息、按钮、滚动点，含块底那 50）的高度：标题行数一变它就变，
     /// 所以整块量出来（`textBlockHeight`）。1 行标题时是 164，块顶落在 436。
     static let textBlockDefaultHeight: CGFloat = 164
@@ -184,11 +197,16 @@ struct PopularHero: View {
     @State private var isPageVisible = true
     /// 手指正按着／还在滑：这时候不切，松手后重新起算（Colo 3067）。
     @State private var isScrolling = false
-    @Environment(\.scenePhase) private var scenePhase
+    /// 应用在不在前台。不用 `scenePhase`：实测这页读到的一直是非 active（模拟器上 act=0），
+    /// 自动翻页的前提永远不满足，封面就不会自己翻了（LP 6967）。直接读 UIApplication 的状态。
+    @State private var isAppActive = UIApplication.shared.applicationState == .active
+    /// 上一次换页的时刻。5 秒的倒计时从这里算起：原来是从「转场停稳」才开始数，
+    /// 转场那 0.55 秒额外加了进去，实测成了 5.75–6 秒一次（LP 6967 后定 5 秒一次）。
+    @State private var lastPageChangeAt = Date()
 
     /// 自动切换的三个前提：不止一张、这一页在前台、封面没被滚出屏幕。
     private var canAutoAdvance: Bool {
-        items.count > 1 && isPageVisible && isOnScreen && !isScrolling && scenePhase == .active
+        items.count > 1 && isPageVisible && isOnScreen && !isScrolling && isAppActive
     }
 
     /// 封面的解码档位：和 `BangumiRemoteImage` 在封面这个尺寸上算出来的那一档一致，
@@ -232,7 +250,7 @@ struct PopularHero: View {
 
     /// 计时任务的身份：任何一个前提变了，或者换了一张，旧计时就作废重来。
     private var autoAdvanceKey: String {
-        "\(pageIndex ?? -1)|\(isPageVisible)|\(isOnScreen)|\(isScrolling)|\(scenePhase == .active)"
+        "\(pageIndex ?? -1)|\(isPageVisible)|\(isOnScreen)|\(isScrolling)|\(isAppActive)"
     }
 
     /// 换到下一张：永远往右翻一页。翻到最后一张时下一页就是尾部那页克隆，
@@ -571,6 +589,7 @@ struct PopularHero: View {
         .onChange(of: pageIndex) { _, newValue in
             guard let newValue, pages.indices.contains(newValue) else { return }
             currentID = pages[newValue].poster.id
+            lastPageChangeAt = Date()
             recenterIfNeeded(landed: newValue)
             // 每换一页就把后面两张补取进来（Colo 3076）：只在进页时取一次的话，
             // 隔一张就没图了。
@@ -583,17 +602,22 @@ struct PopularHero: View {
             // 等 5 秒；到点了下一张封面还没解码好就先不翻——旧封面留在原地，
             // 再过 5 秒看一次（Colo 3067：宁可晚一点，也不许翻出一片白）。
             while canAutoAdvance, !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
+                // 从上一次换页算起还差多少到 5 秒（至少留 0.3 秒，别空转）。
+                let remaining = max(0.3, 5 - Date().timeIntervalSince(lastPageChangeAt))
+                try? await Task.sleep(for: .seconds(remaining))
                 if Task.isCancelled || !canAutoAdvance { return }
                 if isNextCoverReady {
                     advanceCover()
                     return
                 }
+                // 下一张还没解码好：补取，再过一小会儿再看，宁可晚一点也不翻出一片白。
                 prefetchNextCover()
             }
         }
         .onAppear { isPageVisible = true }
         .onDisappear { isPageVisible = false }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in isAppActive = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in isAppActive = false }
         // 条目换成 5 张以内时把圆点状态收敛回第一张。
         .onAppear {
             if currentID == nil { currentID = items.first?.id }
@@ -719,13 +743,17 @@ struct PopularHero: View {
         let textTop = textPlacement == .trailing
             ? coverHeight - Self.textBlockDefaultHeight
             : coverHeight - textBlockHeight + pullOffset
-        let height = max(1, coverBottom - textTop)
+        // C 档渐隐高 = 块高 + 16（Colo 6940）。
+        let height = max(1, coverBottom - textTop + (compactColumn ? 16 : 0))
         // 满底色永远落在封面底边往上 40：这样底边那一截是纯底色，
         // 封面图的下边缘不会透出来成一条硬边（LP 3152）。
         let full = min(1, max(0.01, (height - Self.fadeFullInset) / height))
         // 七档等分在渐隐的顶…560 上（Colo 2930），第一档是 0——
         // 顶部那一档要是直接给 20%，圆点那行就会成一条台阶（LP 2925 / 2926）。
-        let steps: [CGFloat] = [0, 0.20, 0.40, 0.60, 0.80, 0.90, 0.95]
+        // C 档名称压在海报上，名称要 ≥3:1、元信息 ≥4.5:1（Colo 6940），渐隐要在名称那一行就吃满。
+        let steps: [CGFloat] = compactColumn
+            ? [0, 0.85, 0.93, 0.96, 0.98, 0.99, 1]
+            : [0, 0.20, 0.40, 0.60, 0.80, 0.90, 0.95]
         var stops = steps.enumerated().map { index, opacity in
             Gradient.Stop(
                 color: pageBackground.opacity(opacity),
@@ -765,7 +793,7 @@ struct PopularHero: View {
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .multilineTextAlignment(alignedLeading ? .leading : .center)
-                    .padding(.horizontal, alignedLeading ? 0 : 24)
+                    .padding(.horizontal, alignedLeading ? 0 : (compactColumn ? 16 : 24))
 
                 if let meta = current?.metaLine {
                     Text(meta)
@@ -784,13 +812,26 @@ struct PopularHero: View {
 
             // 滚动点挪到「开始观看」下面（LP 3127）：上面那排（含右侧收藏）整体上移 28 让出位置，
             // 点落在原来那排占的地方。
-            dots
-                .padding(.top, 12)
+            if compactColumn {
+                ZStack {
+                    dots
+                    HStack {
+                        Spacer()
+                        followButton
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            } else {
+                dots
+                    .padding(.top, 12)
+            }
         }
         // 文字块贴块底：开始观看那排压在块底上，名称落在块底往上 78（Colo 2853 / 2868）。
         // 1 行标题时正好是 78，2 行会更高——78 说的是单行那个位置。
         // 块底从 550 抬到 600 之后文字块跟着留出这 50，屏上位置一点不变（LP 2901 / Colo 2902）。
-        .padding(.bottom, alignedLeading ? 0 : Self.textBottomInset)
+        .padding(.leading, compactColumn ? compactLeadingBleed : 0)
+        .padding(.bottom, alignedLeading ? 0 : (compactColumn ? compactBottomInset : Self.textBottomInset))
         // 量整块（含块底那 50）：渐隐的高度直接用它，块里再多一行点也不会露出封面。
         // 之前这条量在了圆点那行上，量到的是圆点胶囊的 14，渐隐就只剩十几点、
         // 看着像整条没了（Colo 2922 那一版起就一直在犯）。
@@ -800,13 +841,24 @@ struct PopularHero: View {
     }
 
     private var actions: some View {
-        ZStack {
-            playButton()
+        Group {
+            if compactColumn {
+                // C 档左栏 210 宽（6888 规格）：继续观看通栏到内缩线，收藏贴右缘 16。
+                // 单栏那套是「胶囊居中、收藏浮在右缘」，在 210 宽里两个框会叠在一起（LP 6901）。
+                // Ato 6936：胶囊独占一行、整宽 178；收藏挪到圆点那一行右侧（见 textBlock）。
+                playButton(expanded: true)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+            } else {
+                ZStack {
+                    playButton()
 
-            HStack {
-                Spacer()
-                followButton
-                    .padding(.trailing, 16)
+                    HStack {
+                        Spacer()
+                        followButton
+                            .padding(.trailing, 16)
+                    }
+                }
             }
         }
         .frame(minHeight: 40)

@@ -121,21 +121,31 @@ struct LibraryScreen: View {
     }
 
     var body: some View {
+        // 竖屏转回横屏后，这页被分到「整屏宽 + 两侧安全区」（实测 998 = 874 + 62×2，别的页不丢）：
+        // 内容偏出屏、列数按 874 算。每次分到的尺寸一变就取「分到的宽」和「窗口宽减两侧安全区」
+        // 里小的那个当宽度，居中摆放。
+        GeometryReader { outer in
+            let win = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }.first?.keyWindow
+            let usable = win.map { $0.bounds.width - $0.safeAreaInsets.left - $0.safeAreaInsets.right } ?? outer.size.width
+            pageBody
+                .frame(width: min(outer.size.width, usable))
+                .frame(maxWidth: .infinity)
+                // 容器尺寸每次变化都重算档位和列数（Colo 6886 第三条）。
+                // 以前在页面内部量，转屏后它停在旧值（横→竖时还是 750，按 4 列排）；改用这一层量到的。
+                .onChange(of: min(outer.size.width, usable), initial: true) { _, w in
+                    libraryContainerSize = CGSize(width: w, height: outer.size.height)
+                }
+                .onChange(of: outer.size.height) { _, h in
+                    libraryContainerSize.height = h
+                }
+        }
+    }
+
+    private var pageBody: some View {
         content
             // 只量视口尺寸（宽档分档要用高度）：网格的左右内边距各 16，减掉就是可用内容宽。
             // 这颗探针必须在 ScrollView 外面，理由见 content 里那段注释。
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: LibraryContentWidthKey.self,
-                        value: proxy.size
-                    )
-                }
-            }
-            .onPreferenceChange(LibraryContentWidthKey.self) { size in
-                guard size.width > 0 else { return }
-                libraryContainerSize = size
-            }
             // LP 2026-10-24（后一条）：追番页整体上移到原来的高度——不用系统大标题了，
             // 导航栏收起，标题照旧写在内容里，顶栏只剩控制条；「同步」仍留在控制条里。
             // 顶栏改纯色底（同一条）：标题＋控制条铺页面底色并铺进状态栏，上滑不透内容。
@@ -922,19 +932,5 @@ private struct LibraryEntryCard: View {
         // 右侧那颗「修改状态」是自己的按钮，会先吃掉它范围内的点击。
         .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onTapGesture { onOpen() }
-    }
-}
-
-
-/// 量网格可用容器尺寸用的一次性 preference（追番页列宽与限宽按它算）。
-private struct LibraryContentWidthKey: PreferenceKey {
-    // 必须是 `let`：`var` 在严格并发下是非隔离的全局可变状态，编译不过
-    // （仓库里 InfoTabPanels.swift 的 IntroHeightKey 就是这个写法）。
-    static let defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = CGSize(
-            width: max(value.width, nextValue().width),
-            height: max(value.height, nextValue().height)
-        )
     }
 }

@@ -27,6 +27,7 @@ private struct KazumiSettingsDetailStyle: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.large)
             .scrollContentBackground(.hidden)
