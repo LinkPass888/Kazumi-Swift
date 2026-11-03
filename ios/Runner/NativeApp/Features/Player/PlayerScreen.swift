@@ -48,6 +48,10 @@ enum PlayerAspectRatioMode: String, CaseIterable, Identifiable {
         }
     }
 
+    var videoAspectOverride: String {
+        self == .ratio4x3 ? "4:3" : "no"
+    }
+
     /// 交给 AVPlayerLayer 的填充方式（原版 `BoxFit` 的等价物）。
     var videoGravity: AVLayerVideoGravity {
         switch self {
@@ -723,10 +727,15 @@ struct PlayerScreen: View {
             surface.onFinish = nil
             // 长按手势若被系统取消，松手回调不会来，退出时兜一次恢复。
             endTemporarySpeed()
-            // 离开播放页时交还方向锁；播放器内的小屏按钮则明确回竖屏。
+            // 横屏直接离开时先明确请求竖屏；只放开方向集合不会触发旋转，
+            // 开着系统竖屏锁时其它页面会继续停在横屏。
             isFullscreen = false
             sawLandscape = false
-            releaseOrientation()
+            if isWindowLandscape {
+                requestOrientation(.portrait, releaseAfterSuccess: true)
+            } else {
+                releaseOrientation()
+            }
             if let controller { persistProgress(controller) }
             // 画中画先拆：它的取帧任务绑定当前 mpv 引擎，
             // 必须赶在 `surface.stop()` 之前取消。
@@ -1779,7 +1788,10 @@ struct PlayerScreen: View {
         if let scene { notifyOrientationChange(in: scene) }
     }
 
-    private func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+    private func requestOrientation(
+        _ mask: UIInterfaceOrientationMask,
+        releaseAfterSuccess: Bool = false
+    ) {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive })
@@ -1824,6 +1836,9 @@ struct PlayerScreen: View {
                     if attempt > 0 {
                     }
                     lastOrientationResult = String(localized: "已转过去")
+                    if releaseAfterSuccess {
+                        OrientationLock.release(scene: scene)
+                    }
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(250))
@@ -2065,6 +2080,7 @@ struct PlayerScreen: View {
                     proxyURL: proxyURL,
                     shaderPaths: settings.playbackSuperResolutionMode.shaderPaths,
                     fillMode: aspectRatioMode.fillMode,
+                    videoAspectOverride: aspectRatioMode.videoAspectOverride,
                     danmaku: controller.danmakuComments,
                     danmakuStyle: danmakuStyle,
                     danmakuPlaybackRate: isTemporarySpeed ? settings.longPressSpeed : Double(playbackRate),

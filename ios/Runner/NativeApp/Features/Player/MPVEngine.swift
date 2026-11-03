@@ -314,6 +314,20 @@ final class MPVEngine {
         metalView?.updateDrawableSize()
     }
 
+    /// Metal 层尺寸变化后只重建视频输出，让 gpu-next 重新读取 drawableSize。
+    /// 两个列表都会优先选择 gpu-next；交替写入是为了触发 mpv 的 UPDATE_VO，
+    /// 不重载视频轨，也不动音频和播放进度。
+    private var usesFallbackVideoOutputList = false
+
+    func reconfigureVideoOutputForSurfaceResize() {
+        guard handle != nil, lastSnapshot.hasVideo, !renderingLocked else { return }
+        usesFallbackVideoOutputList.toggle()
+        setOptionForPlayback(
+            "options/vo",
+            usesFallbackVideoOutputList ? "gpu-next,null" : "gpu-next"
+        )
+    }
+
     func setSpeed(_ rate: Float) {
         guard rate.isFinite, rate > 0 else { return }
         var value = Double(rate)

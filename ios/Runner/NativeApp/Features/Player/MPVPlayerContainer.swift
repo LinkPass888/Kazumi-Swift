@@ -399,11 +399,14 @@ extension PlayerSurfaceModel: PlayerClockProvider {
 final class MPVHostView: UIView {
     let metalView = MPVMetalView()
     let overlay = DanmakuOverlayView()
+    weak var engine: MPVEngine?
 
     /// 视频尺寸、填充方式与弹幕顶部留白，由容器在 updateUIView 里推进来。
     private var videoSize: CGSize = .zero
     /// 上一次 layout 时的尺寸：用来认出「画面被撑大了」这件事。
     private var lastLayoutSize: CGSize = .zero
+    /// 转屏 / 进出全屏会连续触发布局，等尺寸稳定后再让 mpv 重配一次。
+    private var outputResizeTask: Task<Void, Never>?
     private var fillMode: MPVPlayerContainer.MPVFillMode = .fit
     private var danmakuTopInset: CGFloat = 0
 
@@ -467,6 +470,12 @@ final class MPVHostView: UIView {
             lastLayoutSize = bounds.size
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
+            outputResizeTask?.cancel()
+            outputResizeTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                self?.engine?.reconfigureVideoOutputForSurfaceResize()
+            }
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
         // 顶部让出控制栏（横屏 44pt），底部仍留 20% 给字幕：
@@ -496,6 +505,8 @@ struct MPVPlayerContainer: UIViewRepresentable {
     let shaderPaths: [String]
     /// 画面填充方式。
     let fillMode: MPVFillMode
+    /// mpv 的视频比例覆盖；`no` 使用片源比例。
+    let videoAspectOverride: String
     let danmaku: [DanmakuComment]
     let danmakuStyle: DanmakuOverlayView.Style
     let danmakuPlaybackRate: Double
@@ -525,6 +536,10 @@ struct MPVPlayerContainer: UIViewRepresentable {
         case crop
         /// 不保持比例，拉满。
         case stretch
+    }
+
+    private var videoSizeForLayout: CGSize {
+        videoAspectOverride == "4:3" ? CGSize(width: 4, height: 3) : surface.videoSize
     }
 
     func makeUIView(context: Context) -> MPVHostView {
@@ -557,6 +572,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
             surface?.hasFirstFrame = true
         }
         engine.start(in: host.metalView)
+        host.engine = engine
 
         context.coordinator.engine = engine
         context.coordinator.surface = surface
@@ -565,7 +581,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
         surface.danmakuOverlay = host.overlay
         host.overlay.clock = surface
         host.updateVideoLayout(
-            videoSize: surface.videoSize,
+            videoSize: videoSizeForLayout,
             fillMode: fillMode,
             danmakuTopInset: danmakuTopInset
         )
@@ -576,6 +592,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
             cookie: cookie,
             shaders: shaderPaths,
             fill: fillMode,
+            videoAspectOverride: videoAspectOverride,
             proxyURL: proxyURL
         )
         return host
@@ -589,7 +606,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
         context.coordinator.engine?.applyCacheSize(cacheSizeForPolicy())
         // 视频尺寸 / 填充方式 / 顶部留白变了，弹幕矩形跟着重算。
         uiView.updateVideoLayout(
-            videoSize: surface.videoSize,
+            videoSize: videoSizeForLayout,
             fillMode: fillMode,
             danmakuTopInset: danmakuTopInset
         )
@@ -600,6 +617,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
             cookie: cookie,
             shaders: shaderPaths,
             fill: fillMode,
+            videoAspectOverride: videoAspectOverride,
             proxyURL: proxyURL
         )
         context.coordinator.overlay?.apply(
@@ -631,6 +649,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
         private var lastURL: URL?
         private var lastShaders: [String] = []
         private var lastFill: MPVFillMode?
+        private var lastVideoAspectOverride = ""
         private var lastProxy: String?
 
         func apply(
@@ -640,6 +659,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
             cookie: String?,
             shaders: [String],
             fill: MPVFillMode,
+            videoAspectOverride: String,
             proxyURL: String?
         ) {
             guard let engine else { return }
@@ -666,6 +686,10 @@ struct MPVPlayerContainer: UIViewRepresentable {
                     engine.setOptionForPlayback("panscan", "0")
                     engine.setOptionForPlayback("keepaspect", "no")
                 }
+            }
+            if videoAspectOverride != lastVideoAspectOverride {
+                lastVideoAspectOverride = videoAspectOverride
+                engine.setOptionForPlayback("video-aspect-override", videoAspectOverride)
             }
             // 代理变了也要重新交给内核：设置里拨一下，正在放的那一集立刻生效。
             if proxyURL != lastProxy {
