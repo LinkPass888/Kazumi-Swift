@@ -51,6 +51,7 @@ extension SettingsStore {
     ///   * 设备标识与同步游标 —— 每台设备必须自己生成，拷过来会和另一台撞车；
     ///   * 同步内部状态与待办队列 —— 来自远端数据，不是用户设置；
     ///   * 代理「已测试通过」标记 —— 换设备后网络环境不同，必须重新测试；
+    ///   * 设置备份「不含账号与密码」开关 —— 这是本机导出偏好，不随备份迁移；
     ///   * 下载目录与安全作用域书签 —— 都是这台设备的沙箱状态；
     ///   * 引导与提示条「已显示」标记 —— 那份体验跟着设备走。
     ///   * Bangumi 用户名与用户 ID —— **只是缓存，不是设置**。每次连上都会
@@ -67,6 +68,7 @@ extension SettingsStore {
         "bangumiUsername",
         "bangumiUserId",
         "proxyConfigured",
+        SettingsKey.settingsBackupOmitCredentials,
         "downloadDirectory",
         "downloadDirectoryBookmark",
         "onboardingCompleted",
@@ -111,6 +113,9 @@ extension SettingsStore {
             SettingsKey.danmakuOpacity,
             SettingsKey.danmakuFontSize,
             SettingsKey.danmakuArea,
+            SettingsKey.danmakuAPIURL,
+            SettingsKey.danmakuAPIAppID,
+            SettingsKey.danmakuAPISecret,
             SettingsKey.downloadParallelEpisodes,
             SettingsKey.downloadDanmaku,
             SettingsKey.defaultStartupPage,
@@ -201,6 +206,9 @@ extension SettingsStore {
                 (SettingsKey.bangumiUsername, .string(bangumiUsername)),
                 (SettingsKey.proxyUrl, .string(proxyUrl)),
                 (SettingsKey.proxyTestUrl, .string(proxyTestUrl)),
+                (SettingsKey.danmakuAPIURL, .string(danmakuAPIURL)),
+                (SettingsKey.danmakuAPIAppID, .string(danmakuAPIAppID)),
+                (SettingsKey.danmakuAPISecret, .string(danmakuAPISecret)),
             ]
         }
         return pairs
@@ -480,6 +488,18 @@ extension SettingsStore {
         }
         if let text = value(SettingsKey.proxyTestUrl)?.stringValue {
             proxyTestUrl = text
+            restored += 1
+        }
+        if let text = value(SettingsKey.danmakuAPIURL)?.stringValue {
+            danmakuAPIURL = text
+            restored += 1
+        }
+        if let text = value(SettingsKey.danmakuAPIAppID)?.stringValue {
+            danmakuAPIAppID = text
+            restored += 1
+        }
+        if let text = value(SettingsKey.danmakuAPISecret)?.stringValue {
+            danmakuAPISecret = text
             restored += 1
         }
         // 未被上面任何属性接收的键整段写回（原版恢复备份就是整段覆盖设置箱）。

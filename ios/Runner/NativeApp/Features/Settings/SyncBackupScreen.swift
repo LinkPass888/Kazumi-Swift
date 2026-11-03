@@ -51,8 +51,6 @@ struct SyncBackupScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var colorScheme
 
-    /// 是否跳过账号与密码（默认跳过，与主项目一致）。
-    @State private var omitCredentials = true
     @State private var backupMessage: String?
     /// 结果那行是不是失败：失败用系统橙，成功用应用色。
     @State private var backupMessageIsError = false
@@ -99,7 +97,7 @@ struct SyncBackupScreen: View {
 
             Section {
                 Group {
-                    Toggle("不含账号与密码", isOn: $omitCredentials)
+                    Toggle("不含账号与密码", isOn: backupOmitCredentialsBinding)
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
             } header: {
@@ -223,9 +221,16 @@ struct SyncBackupScreen: View {
     }
 
     private var omitExplanation: String {
-        omitCredentials
-            ? String(localized: "跳过追番同步、WebDAV 和代理的账号密码，其余设置照常恢复")
-            : String(localized: "把同步账号、WebDAV 与代理密码一起导出，请只存放在自己可信的地方")
+        settings.settingsBackupOmitCredentials
+            ? String(localized: "跳过追番同步、WebDAV、代理和自定义弹幕接口的账号密钥，其余设置照常恢复")
+            : String(localized: "把同步账号、WebDAV、代理与自定义弹幕接口密钥一起导出，请只存放在自己可信的地方")
+    }
+
+    private var backupOmitCredentialsBinding: Binding<Bool> {
+        Binding(
+            get: { settings.settingsBackupOmitCredentials },
+            set: { settings.settingsBackupOmitCredentials = $0 }
+        )
     }
 
     // MARK: - 设置备份
@@ -308,7 +313,7 @@ struct SyncBackupScreen: View {
 
     private func exportBackup() {
         backupMessageScope = .clipboard
-        let snapshot = settings.backupSnapshot(omitCredentials: omitCredentials)
+        let snapshot = settings.backupSnapshot(omitCredentials: settings.settingsBackupOmitCredentials)
         guard !snapshot.isEmpty else {
             setBackupResult(String(localized: "没有可导出的设置"), isError: true)
             return
@@ -377,7 +382,7 @@ struct SyncBackupScreen: View {
     /// 导出到文件：内容与剪贴板那份完全一样，只是走文件系统。
     func exportBackupToFile() {
         backupMessageScope = .file
-        let snapshot = settings.backupSnapshot(omitCredentials: omitCredentials)
+        let snapshot = settings.backupSnapshot(omitCredentials: settings.settingsBackupOmitCredentials)
         guard !snapshot.isEmpty else {
             setBackupResult(String(localized: "没有可导出的设置"), isError: true)
             return
@@ -511,7 +516,7 @@ struct SyncBackupScreen: View {
                 + String(localized: "共 \(payload.count) 项设置，将覆盖当前设置。"),
         ]
         if payload.settings.keys.contains(where: SettingsBackup.credentialKeys.contains) {
-            blocks.append(String(localized: "恢复后请回到「同步设置」，确认追番同步和多设备同步还能连上。"))
+            blocks.append(String(localized: "恢复后请检查追番同步、多设备同步和自定义弹幕接口的凭据。"))
         }
         blocks.append(String(localized: "引导步骤、通知权限、设备同步状态不会被改动。"))
         return blocks.joined(separator: "\n\n")

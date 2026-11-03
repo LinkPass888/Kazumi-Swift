@@ -18,7 +18,8 @@ enum SettingsBackup {
     /// 备份文件的应用标识。
     static let appIdentifier = "Kazumi"
 
-    /// 凭据类键（键名用的是原版 Hive 键名）：对应原版 backup_settings.dart 的
+    /// 凭据类键（键名用的是原版 Hive 键名）：包含追番、WebDAV、代理和自定义弹幕接口。
+    /// 对应原版 backup_settings.dart 的
     /// `_credentialKeys` ——「不含账号与密码」的导出会跳过这些键，
     /// 恢复前的确认弹窗也据它提示用户重新确认凭据。
     ///
@@ -33,6 +34,9 @@ enum SettingsBackup {
         "webDavURL",
         "proxyUrl",
         "proxyTestUrl",
+        "danmakuAPIURL",
+        "danmakuAPIAppID",
+        "danmakuAPISecret",
     ]
 
     /// 解析后的备份内容。

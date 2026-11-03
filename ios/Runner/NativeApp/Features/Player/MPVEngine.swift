@@ -87,7 +87,7 @@ final class MPVEngine {
 
     /// 解码开关与模式由容器传入，只在建内核时读取，重新打开播放器后生效。
     var hardwareDecodeEnabled = true
-    var hardwareDecodeMode: HardwareDecodeMode = .videotoolboxCopy
+    var hardwareDecodeMode: HardwareDecodeMode = .videotoolbox
 
     /// 解复用缓存大小（字节）。进来之前由容器按低内存模式的档位算好；
     /// 之后档位或网络变了就调 `applyCacheSize(_:)` 立刻改，不用重建内核。

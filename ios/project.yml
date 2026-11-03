@@ -104,8 +104,9 @@ targets:
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes:
               - kazumi
-        # DanDanPlay 弹幕接口的凭据（构建时通过 DANDAN_APP_ID / DANDAN_APP_SECRET 注入）。
-        # 空值时弹幕功能不可用；设置页不再提供手填（LP 2026-10-24）。
+        # DanDanPlay 弹幕接口的默认配置（构建时通过 DANDAN_API_URL / DANDAN_APP_ID /
+        # DANDAN_APP_SECRET 注入）；设置页的自定义值优先于这里。
+        DanDanApiUrl: $(DANDAN_API_URL)
         DanDanAppId: $(DANDAN_APP_ID)
         DanDanAppSecret: $(DANDAN_APP_SECRET)
         LSRequiresIPhoneOS: true
@@ -184,7 +185,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi
         PRODUCT_NAME: $(TARGET_NAME)
-        # DanDanPlay 凭据占位；CI 通过 xcodebuild 覆盖，未提供时为空（可在设置里手填）。
+        # DanDanPlay 默认配置；CI 通过 xcodebuild 覆盖，设置页的自定义值优先。
+        DANDAN_API_URL: "https://api.dandanplay.net"
         DANDAN_APP_ID: ""
         DANDAN_APP_SECRET: ""
         # 版本号与 pubspec.yaml 的 `version: 2.4.8+20408` 保持一致。

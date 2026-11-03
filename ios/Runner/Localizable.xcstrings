@@ -13589,6 +13589,196 @@
           }
         }
       }
+    },
+    "自定义弹幕接口": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂彈幕介面"
+          }
+        }
+      }
+    },
+    "接口配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "介面設定"
+          }
+        }
+      }
+    },
+    "API 地址": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 位址"
+          }
+        }
+      }
+    },
+    "留空使用安装包内置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空使用安裝包內建"
+          }
+        }
+      }
+    },
+    "保存配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存設定"
+          }
+        }
+      }
+    },
+    "恢复安装包内置配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回復安裝包內建設定"
+          }
+        }
+      }
+    },
+    "自定义值优先于安装包内置的 API 地址、AppId 和 AppSecret。AppId 与 AppSecret 需要同时填写；留空会使用内置值。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂值優先於安裝包內建的 API 位址、AppId 和 AppSecret。AppId 與 AppSecret 需要同時填寫；留空會使用內建值。"
+          }
+        }
+      }
+    },
+    "安装包内置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安裝包內建"
+          }
+        }
+      }
+    },
+    "自定义密钥": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂金鑰"
+          }
+        }
+      }
+    },
+    "已保存自定义弹幕接口": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已儲存自訂彈幕介面"
+          }
+        }
+      }
+    },
+    "已恢复安装包内置配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已回復安裝包內建設定"
+          }
+        }
+      }
+    },
+    "API 地址格式错误，请使用 http:// 或 https:// 地址": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 位址格式錯誤，請使用 http:// 或 https:// 位址"
+          }
+        }
+      }
+    },
+    "AppId 与 AppSecret 需要同时填写": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppId 與 AppSecret 需要同時填寫"
+          }
+        }
+      }
+    },
+    "自定义弹幕接口配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂彈幕介面設定"
+          }
+        }
+      }
+    },
+    "收起配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收合設定"
+          }
+        }
+      }
+    },
+    "展开配置": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "展開設定"
+          }
+        }
+      }
+    },
+    "跳过追番同步、WebDAV、代理和自定义弹幕接口的账号密钥，其余设置照常恢复": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "略過追番同步、WebDAV、代理和自訂彈幕介面的帳號金鑰，其餘設定照常回復"
+          }
+        }
+      }
+    },
+    "把同步账号、WebDAV、代理与自定义弹幕接口密钥一起导出，请只存放在自己可信的地方": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把同步帳號、WebDAV、代理與自訂彈幕介面金鑰一起匯出，請只存放在自己可信的地方"
+          }
+        }
+      }
+    },
+    "恢复后请检查追番同步、多设备同步和自定义弹幕接口的凭据。": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回復後請檢查追番同步、多裝置同步和自訂彈幕介面的憑據。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

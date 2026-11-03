@@ -384,14 +384,18 @@ struct DanmakuSettingsScreen: View {
     @State private var isConfirmingRestore = false
     /// 恢复默认后顶上那句提示；两秒后自己收起来。
     @State private var showRestoredToast = false
-
-    /// DanDanPlay 凭据随打包注入（Info.plist），这个页不再写 UserDefaults 覆盖值。
+    @State private var isDanmakuAPIConfigExpanded = false
+    @State private var danmakuAPIURLText = ""
+    @State private var danmakuAPIAppIDText = ""
+    @State private var danmakuAPISecretText = ""
+    @State private var danmakuAPIConfigError: String?
+    @State private var danmakuAPIToast: LocalizedStringKey?
+    @State private var didPrefillDanmakuAPIConfig = false
 
     var body: some View {
         Form {
-            // 三路来源都只是开关（Ato 2502：账号是打包时注入的，屏上不该出现
-            // 账号、凭据这些字）。DanDanPlay 返回的每条弹幕自带来路标记，
-            // 这三颗就是按标记筛——关掉的那一路不画。
+            // 三路来源都只是内容筛选开关。DanDanPlay 返回的每条弹幕自带来路标记，
+            // 这三颗就是按标记筛——关掉的那一路不画。接口凭据在页面底部单独配置。
             Section("弹幕来源") {
                 Group {
                     Toggle(isOn: biliBiliSourceBinding) {
@@ -488,6 +492,74 @@ struct DanmakuSettingsScreen: View {
             }
             Section {
                 Group {
+                    danmakuAPIConfigRow
+
+                    if isDanmakuAPIConfigExpanded {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("API 地址")
+                                .frame(width: 80, alignment: .leading)
+
+                            TextField(DanDanCredentials.defaultBaseURL, text: $danmakuAPIURLText)
+                                .multilineTextAlignment(.leading)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .onChange(of: danmakuAPIURLText) {
+                                    danmakuAPIConfigError = nil
+                                }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("AppId")
+                                .frame(width: 80, alignment: .leading)
+                            TextField("留空使用安装包内置", text: $danmakuAPIAppIDText)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .onChange(of: danmakuAPIAppIDText) {
+                                    danmakuAPIConfigError = nil
+                                }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("AppSecret")
+                                .frame(width: 80, alignment: .leading)
+                            SecureField("留空使用安装包内置", text: $danmakuAPISecretText)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .onChange(of: danmakuAPISecretText) {
+                                    danmakuAPIConfigError = nil
+                                }
+                        }
+
+                        if let danmakuAPIConfigError {
+                            Text(danmakuAPIConfigError)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Button {
+                            saveDanmakuAPIConfig()
+                        } label: {
+                            Text("保存配置")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        if settings.hasCustomDanmakuAPI {
+                            Button("恢复安装包内置配置", role: .destructive) {
+                                restorePackagedDanmakuAPIConfig()
+                            }
+                        }
+                    }
+                }
+                .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
+            } header: {
+                Text("自定义弹幕接口")
+            } footer: {
+                Text("自定义值优先于安装包内置的 API 地址、AppId 和 AppSecret。AppId 与 AppSecret 需要同时填写；留空会使用内置值。")
+            }
+            Section {
+                Group {
                     Button {
                         isConfirmingRestore = true
                     } label: {
@@ -499,7 +571,9 @@ struct DanmakuSettingsScreen: View {
             // 页脚那句「将相关设置恢复为默认值」删了（Camo 3510）：点下去弹的确认框里就是这句，
             // 行里再说一遍是重复。
         }
+        .animation(nil, value: isDanmakuAPIConfigExpanded)
         .kazumiSettingsDetail("弹幕设置")
+        .onAppear { prefillDanmakuAPIConfig() }
         .confirmationDialog(
             "恢复默认弹幕设置",
             isPresented: $isConfirmingRestore,
@@ -519,15 +593,115 @@ struct DanmakuSettingsScreen: View {
             Text("弹幕来源、显示和样式设置将恢复为默认值，关键词屏蔽列表不会被清空。")
         }
         .overlay(alignment: .top) {
-            if showRestoredToast {
-                Text("已恢复默认弹幕设置")
-                    .font(.footnote)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.thinMaterial, in: Capsule())
-                    .padding(.top, 8)
-                    .transition(.opacity)
+            VStack(spacing: 8) {
+                if showRestoredToast {
+                    toastLabel("已恢复默认弹幕设置")
+                }
+                if let danmakuAPIToast {
+                    toastLabel(danmakuAPIToast)
+                }
             }
+            .padding(.top, 8)
+        }
+    }
+
+    private var danmakuAPIConfigRow: some View {
+        Button {
+            isDanmakuAPIConfigExpanded.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Text("接口配置")
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: 8)
+                Text(danmakuAPIConfigSummary)
+                    .foregroundStyle(Color.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .rotationEffect(.degrees(isDanmakuAPIConfigExpanded ? 180 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("自定义弹幕接口配置")
+        .accessibilityValue(danmakuAPIConfigSummary)
+        .accessibilityHint(isDanmakuAPIConfigExpanded ? "收起配置" : "展开配置")
+    }
+
+    private var danmakuAPIConfigSummary: String {
+        guard settings.hasCustomDanmakuAPI else {
+            return String(localized: "安装包内置")
+        }
+        let customURL = settings.danmakuAPIURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !customURL.isEmpty {
+            return URL(string: customURL)?.host ?? customURL
+        }
+        return String(localized: "自定义密钥")
+    }
+
+    private func toastLabel(_ text: LocalizedStringKey) -> some View {
+        Text(text)
+            .font(.footnote)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.thinMaterial, in: Capsule())
+            .transition(.opacity)
+    }
+
+    private func prefillDanmakuAPIConfig() {
+        guard !didPrefillDanmakuAPIConfig else { return }
+        didPrefillDanmakuAPIConfig = true
+        danmakuAPIURLText = settings.danmakuAPIURL
+        danmakuAPIAppIDText = settings.danmakuAPIAppID
+        danmakuAPISecretText = settings.danmakuAPISecret
+    }
+
+    private func saveDanmakuAPIConfig() {
+        let baseURL = danmakuAPIURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let appID = danmakuAPIAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = danmakuAPISecretText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !baseURL.isEmpty {
+            guard let components = URLComponents(string: baseURL),
+                  let scheme = components.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  components.host != nil
+            else {
+                danmakuAPIConfigError = String(localized: "API 地址格式错误，请使用 http:// 或 https:// 地址")
+                return
+            }
+        }
+        guard appID.isEmpty == secret.isEmpty else {
+            danmakuAPIConfigError = String(localized: "AppId 与 AppSecret 需要同时填写")
+            return
+        }
+
+        settings.danmakuAPIURL = baseURL
+        settings.danmakuAPIAppID = appID
+        settings.danmakuAPISecret = secret
+        danmakuAPIConfigError = nil
+        flashDanmakuAPI("已保存自定义弹幕接口")
+    }
+
+    private func restorePackagedDanmakuAPIConfig() {
+        danmakuAPIURLText = ""
+        danmakuAPIAppIDText = ""
+        danmakuAPISecretText = ""
+        danmakuAPIConfigError = nil
+        settings.danmakuAPIURL = ""
+        settings.danmakuAPIAppID = ""
+        settings.danmakuAPISecret = ""
+        flashDanmakuAPI("已恢复安装包内置配置")
+    }
+
+    private func flashDanmakuAPI(_ text: LocalizedStringKey) {
+        withAnimation { danmakuAPIToast = text }
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation { danmakuAPIToast = nil }
         }
     }
 

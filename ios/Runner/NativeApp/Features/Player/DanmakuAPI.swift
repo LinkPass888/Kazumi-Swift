@@ -19,6 +19,7 @@
 
 import CryptoKit
 import Foundation
+import os
 
 /// 一条弹幕。字段对应 DanDanPlay 的 `p`：`time,mode,color,uid`。
 ///
@@ -62,13 +63,71 @@ struct DanmakuEpisode: Identifiable, Hashable, Sendable {
     var id: Int { episodeID }
 }
 
-/// DanDanPlay 的凭据。只在打包时注入（Info.plist 的 DanDanAppId / DanDanAppSecret）。
-/// 设置页不再手填——LP 2026-10-24：「这个不是手动填的，是打包时从变量注入的」。
-enum DanDanCredentials {
-    static var appID: String { value(forInfoKey: "DanDanAppId") }
-    static var secret: String { value(forInfoKey: "DanDanAppSecret") }
+struct DanDanCustomConfiguration: Sendable {
+    var baseURL = ""
+    var appID = ""
+    var secret = ""
+}
 
-    static var isConfigured: Bool { !appID.isEmpty && !secret.isEmpty }
+struct DanDanResolvedCredentials: Sendable {
+    let baseURL: String
+    let appID: String
+    let secret: String
+}
+
+enum DanDanRuntimeConfiguration {
+    private static let state = OSAllocatedUnfairLock(
+        initialState: DanDanCustomConfiguration()
+    )
+
+    static var current: DanDanCustomConfiguration {
+        state.withLock { $0 }
+    }
+
+    static func apply(baseURL: String, appID: String, secret: String) {
+        state.withLock {
+            $0 = DanDanCustomConfiguration(
+                baseURL: baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                appID: appID.trimmingCharacters(in: .whitespacesAndNewlines),
+                secret: secret.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+    }
+}
+
+/// DanDanPlay 的配置：自定义值优先，留空时回退到安装包内封的 Info.plist 值。
+enum DanDanCredentials {
+    static let defaultBaseURL = "https://api.dandanplay.net"
+
+    static var packagedBaseURL: String {
+        let value = value(forInfoKey: "DanDanApiUrl")
+        return value.isEmpty ? defaultBaseURL : value
+    }
+
+    static var packagedAppID: String { value(forInfoKey: "DanDanAppId") }
+    static var packagedSecret: String { value(forInfoKey: "DanDanAppSecret") }
+
+    static var resolved: DanDanResolvedCredentials {
+        let custom = DanDanRuntimeConfiguration.current
+        return DanDanResolvedCredentials(
+            baseURL: normalizedBaseURL(custom.baseURL.isEmpty ? packagedBaseURL : custom.baseURL),
+            appID: custom.appID.isEmpty ? packagedAppID : custom.appID,
+            secret: custom.secret.isEmpty ? packagedSecret : custom.secret
+        )
+    }
+
+    static var isConfigured: Bool {
+        let credentials = resolved
+        return !credentials.appID.isEmpty && !credentials.secret.isEmpty
+    }
+
+    static func normalizedBaseURL(_ value: String) -> String {
+        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while result.hasSuffix("/"), !result.hasSuffix("://") {
+            result.removeLast()
+        }
+        return result
+    }
 
     private static func value(forInfoKey infoKey: String) -> String {
         let bundleValue = (Bundle.main.object(forInfoDictionaryKey: infoKey) as? String)?
@@ -106,8 +165,6 @@ enum DanmakuError: LocalizedError {
 }
 
 enum DanmakuAPI {
-    private static let domain = "https://api.dandanplay.net"
-
     private static let sessionProvider = ProxyAwareURLSession {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 15
@@ -199,7 +256,8 @@ enum DanmakuAPI {
     // MARK: - 请求
 
     private static func get(path: String, query: [URLQueryItem] = []) async throws -> Data {
-        guard var components = URLComponents(string: domain + path) else {
+        let credentials = DanDanCredentials.resolved
+        guard var components = URLComponents(string: credentials.baseURL + path) else {
             throw DanmakuError.badURL
         }
         components.queryItems = query.isEmpty ? nil : query
@@ -210,8 +268,8 @@ enum DanmakuAPI {
         request.setValue(HTTPHeaders.randomUserAgent(), forHTTPHeaderField: "User-Agent")
         request.setValue("1", forHTTPHeaderField: "X-Auth")
 
-        let appID = DanDanCredentials.appID
-        let secret = DanDanCredentials.secret
+        let appID = credentials.appID
+        let secret = credentials.secret
         if !appID.isEmpty, !secret.isEmpty {
             let timestamp = Int(Date().timeIntervalSince1970)
             request.setValue(appID, forHTTPHeaderField: "X-AppId")

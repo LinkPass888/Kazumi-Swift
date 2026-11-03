@@ -233,8 +233,13 @@ enum SettingsKey {
     static let danmakuBiliBiliSource = "danmakuBiliBiliSource"
     static let danmakuGamerSource = "danmakuGamerSource"
     static let danmakuDanDanSource = "danmakuDanDanSource"
+    static let danmakuAPIURL = "danmakuAPIURL"
+    static let danmakuAPIAppID = "danmakuAPIAppID"
+    static let danmakuAPISecret = "danmakuAPISecret"
     static let danmakuFilterRules = "danmakuFilterRules"
     static let danmakuSourcePriority = "danmakuSourcePriority"
+    /// 设置备份是否跳过账号与密码；只记在本机，不随设置备份迁移。
+    static let settingsBackupOmitCredentials = "settingsBackupOmitCredentials"
     static let webDAVURL = "webDAVURL"
     static let webDAVUser = "webDAVUser"
     static let webDAVPassword = "webDAVPassword"
@@ -470,6 +475,40 @@ final class SettingsStore {
 
     var danmakuDanDanSource: Bool {
         didSet { persist(danmakuDanDanSource, SettingsKey.danmakuDanDanSource) }
+    }
+
+    var danmakuAPIURL: String {
+        didSet {
+            persist(danmakuAPIURL, SettingsKey.danmakuAPIURL)
+            syncDanDanConfiguration()
+        }
+    }
+
+    var danmakuAPIAppID: String {
+        didSet {
+            persist(danmakuAPIAppID, SettingsKey.danmakuAPIAppID)
+            syncDanDanConfiguration()
+        }
+    }
+
+    var danmakuAPISecret: String {
+        didSet {
+            persist(danmakuAPISecret, SettingsKey.danmakuAPISecret)
+            syncDanDanConfiguration()
+        }
+    }
+
+    var hasCustomDanmakuAPI: Bool {
+        !danmakuAPIURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !danmakuAPIAppID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !danmakuAPISecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 设置备份是否跳过账号与密码，默认关。
+    var settingsBackupOmitCredentials: Bool {
+        didSet {
+            persist(settingsBackupOmitCredentials, SettingsKey.settingsBackupOmitCredentials)
+        }
     }
 
     var autoPlayNext: Bool {
@@ -881,6 +920,14 @@ final class SettingsStore {
         danmakuBiliBiliSource = Self.read(defaults, SettingsKey.danmakuBiliBiliSource, true)
         danmakuGamerSource = Self.read(defaults, SettingsKey.danmakuGamerSource, true)
         danmakuDanDanSource = Self.read(defaults, SettingsKey.danmakuDanDanSource, true)
+        danmakuAPIURL = Self.read(defaults, SettingsKey.danmakuAPIURL, "")
+        danmakuAPIAppID = Self.read(defaults, SettingsKey.danmakuAPIAppID, "")
+        danmakuAPISecret = Self.read(defaults, SettingsKey.danmakuAPISecret, "")
+        settingsBackupOmitCredentials = Self.read(
+            defaults,
+            SettingsKey.settingsBackupOmitCredentials,
+            false
+        )
         autoPlayNext = Self.read(defaults, SettingsKey.autoPlayNext, true)
         autoSkipOpEd = Self.read(defaults, SettingsKey.autoSkipOpEd, false)
         playSpeed = PlaybackSpeed.nearest(Self.read(defaults, SettingsKey.playSpeed, 1.0))
@@ -892,8 +939,8 @@ final class SettingsStore {
         privateMode = Self.read(defaults, SettingsKey.privateMode, false)
         hardwareDecodeEnabled = Self.read(defaults, SettingsKey.hardwareDecodeEnabled, true)
         hardwareDecodeMode = HardwareDecodeMode(
-            rawValue: Self.read(defaults, SettingsKey.hardwareDecodeMode, HardwareDecodeMode.videotoolboxCopy.rawValue)
-        ) ?? .videotoolboxCopy
+            rawValue: Self.read(defaults, SettingsKey.hardwareDecodeMode, HardwareDecodeMode.videotoolbox.rawValue)
+        ) ?? .videotoolbox
         // 老版本只写过 `lowMemoryMode` 那个布尔。它不是这里的三档键，读不到就回默认档，
         // 与 main「旧值留着、新键没写过就当自动」的做法一致。
         lowMemoryMode = LowMemoryMode(
@@ -987,6 +1034,7 @@ final class SettingsStore {
         // 动一下才生效。模拟器上就是这样：开关开着指向一个没在听的端口，
         // 主页照样正常加载。
         syncNetworkProxyPolicy()
+        syncDanDanConfiguration()
         // init 中给存储属性赋初值不会触发 didSet，这里补一次启动时的令牌注入；
         // 之后设置页改令牌、恢复备份都会走 `bangumiAccessToken.didSet`。
         BangumiAPI.accessToken = bangumiAccessToken
@@ -1005,7 +1053,7 @@ final class SettingsStore {
         brightnessVolumeGesture = true
         privateMode = false
         hardwareDecodeEnabled = true
-        hardwareDecodeMode = .videotoolboxCopy
+        hardwareDecodeMode = .videotoolbox
         lowMemoryMode = .auto
         playSpeed = 1.0
         buttonSkipTime = 80
@@ -1042,6 +1090,14 @@ final class SettingsStore {
 
     private func persist(_ value: Any?, _ key: String) {
         defaults.set(value, forKey: SettingsKey.keyPrefix + key)
+    }
+
+    private func syncDanDanConfiguration() {
+        DanDanRuntimeConfiguration.apply(
+            baseURL: danmakuAPIURL,
+            appID: danmakuAPIAppID,
+            secret: danmakuAPISecret
+        )
     }
 
     // MARK: - 原始快照（设置备份用）
