@@ -538,16 +538,18 @@ struct TimelineScreen: View {
             // 一页一天：用横向分页 ScrollView，滚动偏移直接驱动星期条玻璃，
             // 手指到哪玻璃到哪；松手弹到最近页，真换天那一刻才开始凝固计时。
             GeometryReader { pageProxy in
+                // 页宽 = 安全区内宽 + 左右安全区：横屏 750 + 62 + 62 = 874，正好一屏。
+                // 之前页宽取安全区内宽 750，视口却铺到屏幕边，右边 62 点就永远露着下一天，
+                // 翻页步长和页宽也不一致，每换一天攒 31 点。
+                let pageW = max(pageProxy.size.width
+                    + pageProxy.safeAreaInsets.leading
+                    + pageProxy.safeAreaInsets.trailing, 1)
                 ScrollViewReader { scrollProxy in
                 ScrollView(.horizontal) {
                     HStack(spacing: 0) {
                         ForEach(0..<7, id: \.self) { day in
                             dayPage(day)
-                                // 页宽 = 分页容器自己的实际宽（Colo 6820）。
-                                // 之前用 pageProxy.size.width，它量的是安全区内的宽，
-                                // 分页容器却铺满到安全区外，两者差的那些点就是
-                                // 「右边永远露着下一天」的根子。
-                                .containerRelativeFrame(.horizontal)
+                                .frame(width: pageW)
                                 .id(day)
                         }
                     }
@@ -566,18 +568,20 @@ struct TimelineScreen: View {
                     }
                 }
                 .scrollIndicators(.hidden)
-                // 分页容器钉到安全区内的宽（Colo 6820 的第二条允许分支）：
-                // 铺满屏时分页视口比内容宽，页宽跟着变宽，页内 12 内缩就对不上
-                // 页面其他内容的内缩了。钉住之后页宽 = 容器宽、内缩 12、卡宽 = 容器宽 − 24。
-                .frame(width: pageProxy.size.width)
+                // 视口也铺到整屏宽：视口比页宽窄一点，下一天就会从右边露出来。
+                .frame(width: pageW)
+                .ignoresSafeArea(.container, edges: .horizontal)
                 .onScrollGeometryChange(for: CGFloat.self, of: { geo in
                     geo.contentOffset.x
                 }, action: { _, new in
                     pageOffsetX = new
                 })
-                .onAppear { pageViewportWidth = max(pageProxy.size.width, 1) }
-                .onChange(of: pageProxy.size.width) { _, new in
+                .onAppear { pageViewportWidth = pageW }
+                .onChange(of: pageW) { _, new in
                     pageViewportWidth = max(new, 1)
+                    // 转屏会换页宽（402 → 874），旧偏移按旧页宽算，必须重新落到选中的那天，
+                    // 否则一转过屏就停在半页上。
+                    withAnimation(nil) { scrollProxy.scrollTo(selectedWeekday, anchor: .leading) }
                 }
                 }
             }
