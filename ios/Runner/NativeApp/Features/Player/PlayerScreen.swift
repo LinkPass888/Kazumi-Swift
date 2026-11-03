@@ -44,7 +44,8 @@ enum PlayerAspectRatioMode: String, CaseIterable, Identifiable {
         switch self {
         case .automatic: .fit
         case .crop: .crop
-        case .stretch, .ratio4x3: .stretch
+        case .stretch: .stretch
+        case .ratio4x3: .ratio4x3
         }
     }
 
@@ -1016,14 +1017,13 @@ struct PlayerScreen: View {
 
     // MARK: - 播放区
 
-    /// 全屏时把「画面比例」换成**窗口比例**：`.aspectRatio(_, contentMode: .fit)`
+    /// 全屏时把「画面比例」换成**容器比例**：`.aspectRatio(_, contentMode: .fit)`
     /// 传 nil 会退回内容的固有比例（mpv 视图是方的，上一版就成了 382×382）。
-    /// 换成窗口比例后 fit 的结果正好等于窗口，全屏铺满；4:3 档保留自己的比例。
-    /// 只改一个参数、
+    /// 换成容器自己的比例后 fit 的结果正好等于容器，全屏铺满——只改一个参数、
     /// 不改视图类型；改类型会把 mpv 拆掉重建、进度归零（3678）。
     private var boxAspectRatio: CGFloat {
-        if isFullscreen, aspectRatioMode != .ratio4x3, let size = fullscreenWindowSize {
-            return size.width / size.height
+        if isFullscreen, containerSize.width > 0, containerSize.height > 0 {
+            return containerSize.width / containerSize.height
         }
         return aspectRatioMode.frameAspectRatio
     }
@@ -1199,42 +1199,16 @@ struct PlayerScreen: View {
     /// 控制层仍然按安全区的 750 排，所以 15 秒两颗落在 750 的 1/4 与 3/4。
     private var fullscreenVideoSize: CGSize {
         guard isFullscreen else { return .zero }
-        if let size = fullscreenWindowSize { return size }
         return CGSize(
             width: containerSize.width + containerInsets.leading + containerInsets.trailing,
             height: containerSize.height + containerInsets.top + containerInsets.bottom
         )
     }
 
-    private var activeWindowScene: UIWindowScene? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-    }
-
-    /// 旋转后 SwiftUI 的 geometry 可能晚一拍；全屏画面直接跟当前窗口尺寸走。
-    private var fullscreenWindowSize: CGSize? {
-        guard let scene = activeWindowScene else { return nil }
-        let sizes = [
-            scene.windows.first(where: { $0.isKeyWindow })?.bounds.size,
-            scene.windows.first?.bounds.size,
-            scene.coordinateSpace.bounds.size,
-            scene.screen.bounds.size,
-        ].compactMap { $0 }
-        let wantsLandscape = scene.interfaceOrientation.isLandscape
-        return sizes.first {
-            $0.width > 1 && $0.height > 1
-                && ($0.width > $0.height) == wantsLandscape
-        } ?? sizes.first { $0.width > 1 && $0.height > 1 }
-    }
-
     private func interactiveSurface(_ controller: PlayerController) -> some View {
         GeometryReader { proxy in
-            // 全屏用窗口尺寸；竖屏和 4:3 档用播放区自己的尺寸。
-            let surfaceSize = isFullscreen && aspectRatioMode != .ratio4x3
-                ? fullscreenVideoSize
-                : proxy.size
+            // 全屏用窗口尺寸，竖屏用播放区自己的尺寸（两者在竖屏下相同）。
+            let surfaceSize = isFullscreen ? fullscreenVideoSize : proxy.size
             // 全屏时画面（874×402）比播放区（750×382）大，而 GeometryReader 的内容
             // 默认贴**左上角**——不居中就会整体偏右 62（LP 2026-10-27「视频偏右」）。
             // 外面再套一层居中的 frame，竖屏下两者同尺寸、没有影响。
@@ -1779,7 +1753,10 @@ struct PlayerScreen: View {
 
     /// 窗口现在是不是横的：直接问 UIKit，不依赖 SwiftUI 的尺寸回调有没有送到。
     private var isWindowLandscape: Bool {
-        guard let scene = activeWindowScene else { return false }
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        guard let scene else { return false }
         return scene.interfaceOrientation.isLandscape
     }
 
