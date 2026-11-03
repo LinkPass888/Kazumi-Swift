@@ -723,8 +723,10 @@ struct PlayerScreen: View {
             surface.onFinish = nil
             // 长按手势若被系统取消，松手回调不会来，退出时兜一次恢复。
             endTemporarySpeed()
-            // 带着全屏状态离开会把整个 App 锁在横屏，退出时一定回竖屏。
-            exitFullscreen()
+            // 离开播放页时交还方向锁；播放器内的小屏按钮则明确回竖屏。
+            isFullscreen = false
+            sawLandscape = false
+            releaseOrientation()
             if let controller { persistProgress(controller) }
             // 画中画先拆：它的取帧任务绑定当前 mpv 引擎，
             // 必须赶在 `surface.stop()` 之前取消。
@@ -1763,15 +1765,12 @@ struct PlayerScreen: View {
         guard isFullscreen else { return }
         isFullscreen = false
         sawLandscape = false
-        releaseOrientation()
+        requestOrientation(.portrait)
         showControls()
         syncHistoryWithWebDAV()
     }
 
-    /// 退出全屏时交还方向，不再硬请求竖屏。
-    ///
-    /// App 现在允许横屏浏览（iPad 适配那一轮），硬掰回竖屏会把整个界面拽成竖的。
-    /// 恢复默认方向集合，系统按设备姿态自己转回去。
+    /// 离开播放页时恢复 App 默认方向，让其它页面继续支持横屏浏览。
     private func releaseOrientation() {
         orientationRequestTask?.cancel()
         orientationGeneration += 1
