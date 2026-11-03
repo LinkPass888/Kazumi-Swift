@@ -1021,8 +1021,8 @@ struct PlayerScreen: View {
     /// 换成容器自己的比例后 fit 的结果正好等于容器，全屏铺满——只改一个参数、
     /// 不改视图类型；改类型会把 mpv 拆掉重建、进度归零（3678）。
     private var boxAspectRatio: CGFloat {
-        if isFullscreen, containerSize.width > 0, containerSize.height > 0 {
-            return containerSize.width / containerSize.height
+        if isFullscreen, let size = fullscreenWindowSize {
+            return size.width / size.height
         }
         return aspectRatioMode.frameAspectRatio
     }
@@ -1198,10 +1198,34 @@ struct PlayerScreen: View {
     /// 控制层仍然按安全区的 750 排，所以 15 秒两颗落在 750 的 1/4 与 3/4。
     private var fullscreenVideoSize: CGSize {
         guard isFullscreen else { return .zero }
+        if let size = fullscreenWindowSize { return size }
         return CGSize(
             width: containerSize.width + containerInsets.leading + containerInsets.trailing,
             height: containerSize.height + containerInsets.top + containerInsets.bottom
         )
+    }
+
+    private var activeWindowScene: UIWindowScene? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+    }
+
+    /// 旋转后 SwiftUI 的 geometry 可能晚一拍；全屏画面直接跟当前窗口尺寸走。
+    private var fullscreenWindowSize: CGSize? {
+        guard let scene = activeWindowScene else { return nil }
+        let sizes = [
+            scene.windows.first(where: { $0.isKeyWindow })?.bounds.size,
+            scene.windows.first?.bounds.size,
+            scene.coordinateSpace.bounds.size,
+            scene.screen.bounds.size,
+        ].compactMap { $0 }
+        let wantsLandscape = scene.interfaceOrientation.isLandscape
+        return sizes.first {
+            $0.width > 1 && $0.height > 1
+                && ($0.width > $0.height) == wantsLandscape
+        } ?? sizes.first { $0.width > 1 && $0.height > 1 }
     }
 
     private func interactiveSurface(_ controller: PlayerController) -> some View {
@@ -1752,10 +1776,7 @@ struct PlayerScreen: View {
 
     /// 窗口现在是不是横的：直接问 UIKit，不依赖 SwiftUI 的尺寸回调有没有送到。
     private var isWindowLandscape: Bool {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-        guard let scene else { return false }
+        guard let scene = activeWindowScene else { return false }
         return scene.interfaceOrientation.isLandscape
     }
 
