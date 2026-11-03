@@ -42,9 +42,9 @@ enum PlayerAspectRatioMode: String, CaseIterable, Identifiable {
     /// 交给 mpv 渲染层的填充方式。
     var fillMode: MPVPlayerContainer.MPVFillMode {
         switch self {
-        case .automatic, .ratio4x3: .fit
+        case .automatic: .fit
         case .crop: .crop
-        case .stretch: .stretch
+        case .stretch, .ratio4x3: .stretch
         }
     }
 
@@ -1016,12 +1016,13 @@ struct PlayerScreen: View {
 
     // MARK: - 播放区
 
-    /// 全屏时把「画面比例」换成**容器比例**：`.aspectRatio(_, contentMode: .fit)`
+    /// 全屏时把「画面比例」换成**窗口比例**：`.aspectRatio(_, contentMode: .fit)`
     /// 传 nil 会退回内容的固有比例（mpv 视图是方的，上一版就成了 382×382）。
-    /// 换成容器自己的比例后 fit 的结果正好等于容器，全屏铺满——只改一个参数、
+    /// 换成窗口比例后 fit 的结果正好等于窗口，全屏铺满；4:3 档保留自己的比例。
+    /// 只改一个参数、
     /// 不改视图类型；改类型会把 mpv 拆掉重建、进度归零（3678）。
     private var boxAspectRatio: CGFloat {
-        if isFullscreen, let size = fullscreenWindowSize {
+        if isFullscreen, aspectRatioMode != .ratio4x3, let size = fullscreenWindowSize {
             return size.width / size.height
         }
         return aspectRatioMode.frameAspectRatio
@@ -1230,8 +1231,10 @@ struct PlayerScreen: View {
 
     private func interactiveSurface(_ controller: PlayerController) -> some View {
         GeometryReader { proxy in
-            // 全屏用窗口尺寸，竖屏用播放区自己的尺寸（两者在竖屏下相同）。
-            let surfaceSize = isFullscreen ? fullscreenVideoSize : proxy.size
+            // 全屏用窗口尺寸；竖屏和 4:3 档用播放区自己的尺寸。
+            let surfaceSize = isFullscreen && aspectRatioMode != .ratio4x3
+                ? fullscreenVideoSize
+                : proxy.size
             // 全屏时画面（874×402）比播放区（750×382）大，而 GeometryReader 的内容
             // 默认贴**左上角**——不居中就会整体偏右 62（LP 2026-10-27「视频偏右」）。
             // 外面再套一层居中的 frame，竖屏下两者同尺寸、没有影响。
