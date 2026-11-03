@@ -234,8 +234,7 @@ enum SettingsKey {
     static let danmakuGamerSource = "danmakuGamerSource"
     static let danmakuDanDanSource = "danmakuDanDanSource"
     static let danmakuAPIURL = "danmakuAPIURL"
-    static let danmakuAPIAppID = "danmakuAPIAppID"
-    static let danmakuAPISecret = "danmakuAPISecret"
+    static let danmakuAPIRequestHeaders = "danmakuAPIRequestHeaders"
     static let danmakuFilterRules = "danmakuFilterRules"
     static let danmakuSourcePriority = "danmakuSourcePriority"
     /// 设置备份是否跳过账号与密码；只记在本机，不随设置备份迁移。
@@ -484,24 +483,16 @@ final class SettingsStore {
         }
     }
 
-    var danmakuAPIAppID: String {
+    var danmakuAPIRequestHeaders: String {
         didSet {
-            persist(danmakuAPIAppID, SettingsKey.danmakuAPIAppID)
-            syncDanDanConfiguration()
-        }
-    }
-
-    var danmakuAPISecret: String {
-        didSet {
-            persist(danmakuAPISecret, SettingsKey.danmakuAPISecret)
+            persist(danmakuAPIRequestHeaders, SettingsKey.danmakuAPIRequestHeaders)
             syncDanDanConfiguration()
         }
     }
 
     var hasCustomDanmakuAPI: Bool {
         !danmakuAPIURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !danmakuAPIAppID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !danmakuAPISecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !danmakuAPIRequestHeaders.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// 设置备份是否跳过账号与密码，默认关。
@@ -921,8 +912,11 @@ final class SettingsStore {
         danmakuGamerSource = Self.read(defaults, SettingsKey.danmakuGamerSource, true)
         danmakuDanDanSource = Self.read(defaults, SettingsKey.danmakuDanDanSource, true)
         danmakuAPIURL = Self.read(defaults, SettingsKey.danmakuAPIURL, "")
-        danmakuAPIAppID = Self.read(defaults, SettingsKey.danmakuAPIAppID, "")
-        danmakuAPISecret = Self.read(defaults, SettingsKey.danmakuAPISecret, "")
+        danmakuAPIRequestHeaders = Self.read(
+            defaults,
+            SettingsKey.danmakuAPIRequestHeaders,
+            ""
+        )
         settingsBackupOmitCredentials = Self.read(
             defaults,
             SettingsKey.settingsBackupOmitCredentials,
@@ -1095,8 +1089,7 @@ final class SettingsStore {
     private func syncDanDanConfiguration() {
         DanDanRuntimeConfiguration.apply(
             baseURL: danmakuAPIURL,
-            appID: danmakuAPIAppID,
-            secret: danmakuAPISecret
+            requestHeaders: (try? DanDanRequestHeaders.parse(danmakuAPIRequestHeaders)) ?? [:]
         )
     }
 

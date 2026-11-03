@@ -13620,6 +13620,56 @@
         }
       }
     },
+    "自定义请求头": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂請求頭"
+          }
+        }
+      }
+    },
+    "请求头名称": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請求頭名稱"
+          }
+        }
+      }
+    },
+    "值": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "值"
+          }
+        }
+      }
+    },
+    "删除请求头": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除請求頭"
+          }
+        }
+      }
+    },
+    "添加请求头": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增請求頭"
+          }
+        }
+      }
+    },
     "留空使用安装包内置": {
       "localizations": {
         "zh-Hant": {
@@ -13650,12 +13700,12 @@
         }
       }
     },
-    "自定义值优先于安装包内置的 API 地址、AppId 和 AppSecret。AppId 与 AppSecret 需要同时填写；留空会使用内置值。": {
+    "仅兼容 DanDanPlay v2 接口协议；其他格式的第三方接口暂不支持。": {
       "localizations": {
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "自訂值優先於安裝包內建的 API 位址、AppId 和 AppSecret。AppId 與 AppSecret 需要同時填寫；留空會使用內建值。"
+            "value": "僅相容 DanDanPlay v2 介面協定；其他格式的第三方介面暫不支援。"
           }
         }
       }
@@ -13710,12 +13760,12 @@
         }
       }
     },
-    "AppId 与 AppSecret 需要同时填写": {
+    "请求头格式错误，每行需填写 Header: Value": {
       "localizations": {
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "AppId 與 AppSecret 需要同時填寫"
+            "value": "請求頭格式錯誤，每行需填寫 Header: Value"
           }
         }
       }

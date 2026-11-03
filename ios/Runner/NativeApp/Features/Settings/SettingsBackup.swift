@@ -35,8 +35,7 @@ enum SettingsBackup {
         "proxyUrl",
         "proxyTestUrl",
         "danmakuAPIURL",
-        "danmakuAPIAppID",
-        "danmakuAPISecret",
+        "danmakuAPIRequestHeaders",
     ]
 
     /// 解析后的备份内容。

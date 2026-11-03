@@ -10,11 +10,12 @@
 //   2. `GET /api/v2/comment/{animeId}{第几集补足四位}?withRelated=true&chConvert=1`
 //      取这一集的弹幕（对应 getDanDanmaku）。
 //
-//  接口需要 AppId / 签名：签名算法为
+//  内置接口需要 AppId / 签名：签名算法为
 //  base64(sha256(appId + timestamp + path + secret))，与原版
 //  lib/utils/crypto.dart 的 generateDandanSignature 完全一致。
-//  凭据优先取设置里手填的值，其次取 Info.plist 的 DanDanAppId / DanDanAppSecret
-//  （构建时可通过 DANDAN_APP_ID / DANDAN_APP_SECRET 注入）。
+//  内置凭据取 Info.plist 的 DanDanAppId / DanDanAppSecret（构建时可通过
+//  DANDAN_APP_ID / DANDAN_APP_SECRET 注入）。自定义接口可额外提供请求头，
+//  同名请求头会覆盖内置请求头。
 //
 
 import CryptoKit
@@ -65,14 +66,14 @@ struct DanmakuEpisode: Identifiable, Hashable, Sendable {
 
 struct DanDanCustomConfiguration: Sendable {
     var baseURL = ""
-    var appID = ""
-    var secret = ""
+    var requestHeaders: [String: String] = [:]
 }
 
 struct DanDanResolvedCredentials: Sendable {
     let baseURL: String
     let appID: String
     let secret: String
+    let requestHeaders: [String: String]
 }
 
 enum DanDanRuntimeConfiguration {
@@ -84,18 +85,55 @@ enum DanDanRuntimeConfiguration {
         state.withLock { $0 }
     }
 
-    static func apply(baseURL: String, appID: String, secret: String) {
+    static func apply(baseURL: String, requestHeaders: [String: String]) {
         state.withLock {
             $0 = DanDanCustomConfiguration(
                 baseURL: baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                appID: appID.trimmingCharacters(in: .whitespacesAndNewlines),
-                secret: secret.trimmingCharacters(in: .whitespacesAndNewlines)
+                requestHeaders: requestHeaders
             )
         }
     }
 }
 
-/// DanDanPlay 的配置：自定义值优先，留空时回退到安装包内封的 Info.plist 值。
+enum DanDanRequestHeaders {
+    static func parse(_ source: String) throws -> [String: String] {
+        var headers: [String: String] = [:]
+        let lines = source
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+
+        for rawLine in lines {
+            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            guard let separator = line.firstIndex(of: ":") else {
+                throw DanmakuError.invalidRequestHeaders
+            }
+
+            let name = String(line[..<separator])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = String(line[line.index(after: separator)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !value.isEmpty else {
+                throw DanmakuError.invalidRequestHeaders
+            }
+            guard name.unicodeScalars.allSatisfy({ scalar in
+                scalar.isASCII && (
+                    scalar.properties.isAlphabetic
+                        || scalar.properties.numericType != nil
+                        || "!#$%&'*+-.^_`|~".unicodeScalars.contains(scalar)
+                )
+            }) else {
+                throw DanmakuError.invalidRequestHeaders
+            }
+
+            headers[name.lowercased()] = value
+        }
+        return headers
+    }
+}
+
+/// DanDanPlay 的配置：自定义 API 地址和请求头优先，其余回退到安装包内置值。
 enum DanDanCredentials {
     static let defaultBaseURL = "https://api.dandanplay.net"
 
@@ -111,14 +149,16 @@ enum DanDanCredentials {
         let custom = DanDanRuntimeConfiguration.current
         return DanDanResolvedCredentials(
             baseURL: normalizedBaseURL(custom.baseURL.isEmpty ? packagedBaseURL : custom.baseURL),
-            appID: custom.appID.isEmpty ? packagedAppID : custom.appID,
-            secret: custom.secret.isEmpty ? packagedSecret : custom.secret
+            appID: packagedAppID,
+            secret: packagedSecret,
+            requestHeaders: custom.requestHeaders
         )
     }
 
     static var isConfigured: Bool {
         let credentials = resolved
-        return !credentials.appID.isEmpty && !credentials.secret.isEmpty
+        return (!credentials.appID.isEmpty && !credentials.secret.isEmpty)
+            || !credentials.requestHeaders.isEmpty
     }
 
     static func normalizedBaseURL(_ value: String) -> String {
@@ -150,6 +190,7 @@ enum DanDanSignature {
 enum DanmakuError: LocalizedError {
     case badURL
     case badResponse
+    case invalidRequestHeaders
     case unauthorized
     case status(Int)
 
@@ -157,6 +198,7 @@ enum DanmakuError: LocalizedError {
         switch self {
         case .badURL: String(localized: "弹幕地址无效")
         case .badResponse: String(localized: "弹幕接口返回了无效响应")
+        case .invalidRequestHeaders: String(localized: "请求头格式错误，每行需填写 Header: Value")
         case .unauthorized: String(localized: "弹幕接口需要有效的 DanDanPlay 凭据")
         case .status(429): String(localized: "今日弹幕请求次数已达上限")
         case .status(let code): String(localized: "弹幕接口返回 HTTP \(String(describing: code))")
@@ -253,10 +295,36 @@ enum DanmakuAPI {
         }
     }
 
+    static func testConnection(baseURL: String, requestHeaders: String) async throws {
+        let headers = try DanDanRequestHeaders.parse(requestHeaders)
+        let credentials = DanDanResolvedCredentials(
+            baseURL: DanDanCredentials.normalizedBaseURL(
+                baseURL.isEmpty ? DanDanCredentials.packagedBaseURL : baseURL
+            ),
+            appID: DanDanCredentials.packagedAppID,
+            secret: DanDanCredentials.packagedSecret,
+            requestHeaders: headers
+        )
+        let data = try await get(
+            path: "/api/v2/search/episodes",
+            query: [
+                URLQueryItem(name: "anime", value: "kazumi"),
+                URLQueryItem(name: "v2", value: "true"),
+            ],
+            credentials: credentials
+        )
+        guard (try? JSONSerialization.jsonObject(with: data)) != nil else {
+            throw DanmakuError.badResponse
+        }
+    }
+
     // MARK: - 请求
 
-    private static func get(path: String, query: [URLQueryItem] = []) async throws -> Data {
-        let credentials = DanDanCredentials.resolved
+    private static func get(
+        path: String,
+        query: [URLQueryItem] = [],
+        credentials: DanDanResolvedCredentials = DanDanCredentials.resolved
+    ) async throws -> Data {
         guard var components = URLComponents(string: credentials.baseURL + path) else {
             throw DanmakuError.badURL
         }
@@ -283,6 +351,9 @@ enum DanmakuAPI {
                 ),
                 forHTTPHeaderField: "X-Signature"
             )
+        }
+        for (name, value) in credentials.requestHeaders {
+            request.setValue(value, forHTTPHeaderField: name)
         }
 
         let (data, response) = try await session.data(for: request)

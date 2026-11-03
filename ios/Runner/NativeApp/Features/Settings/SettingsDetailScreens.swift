@@ -377,6 +377,12 @@ struct PlayerSettingsScreen: View {
 
 // MARK: - 弹幕设置
 
+private struct DanmakuRequestHeaderRow: Identifiable {
+    let id = UUID()
+    var name = ""
+    var value = ""
+}
+
 struct DanmakuSettingsScreen: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(AppRouter.self) private var router
@@ -384,12 +390,12 @@ struct DanmakuSettingsScreen: View {
     @State private var isConfirmingRestore = false
     /// 恢复默认后顶上那句提示；两秒后自己收起来。
     @State private var showRestoredToast = false
-    @State private var isDanmakuAPIConfigExpanded = false
     @State private var danmakuAPIURLText = ""
-    @State private var danmakuAPIAppIDText = ""
-    @State private var danmakuAPISecretText = ""
+    @State private var danmakuAPIRequestHeaderRows = [DanmakuRequestHeaderRow()]
     @State private var danmakuAPIConfigError: String?
     @State private var danmakuAPIToast: LocalizedStringKey?
+    @State private var danmakuAPIBanner: KazumiBannerState?
+    @State private var isDanmakuAPITesting = false
     @State private var didPrefillDanmakuAPIConfig = false
 
     var body: some View {
@@ -492,71 +498,89 @@ struct DanmakuSettingsScreen: View {
             }
             Section {
                 Group {
-                    danmakuAPIConfigRow
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("API 地址")
+                            .frame(width: 80, alignment: .leading)
 
-                    if isDanmakuAPIConfigExpanded {
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("API 地址")
-                                .frame(width: 80, alignment: .leading)
+                        TextField(DanDanCredentials.defaultBaseURL, text: $danmakuAPIURLText)
+                            .multilineTextAlignment(.leading)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onChange(of: danmakuAPIURLText) {
+                                danmakuAPIConfigError = nil
+                            }
+                    }
 
-                            TextField(DanDanCredentials.defaultBaseURL, text: $danmakuAPIURLText)
-                                .multilineTextAlignment(.leading)
-                                .keyboardType(.URL)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .onChange(of: danmakuAPIURLText) {
-                                    danmakuAPIConfigError = nil
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("自定义请求头")
+
+                        ForEach($danmakuAPIRequestHeaderRows) { $row in
+                            HStack(spacing: 8) {
+                                TextField("请求头名称", text: $row.name)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .onChange(of: row.name) {
+                                        danmakuAPIConfigError = nil
+                                    }
+
+                                TextField("值", text: $row.value)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .onChange(of: row.value) {
+                                        danmakuAPIConfigError = nil
+                                    }
+
+                                Button(role: .destructive) {
+                                    danmakuAPIRequestHeaderRows.removeAll { $0.id == row.id }
+                                } label: {
+                                    Image(systemName: "minus.circle")
                                 }
-                        }
-
-                        HStack(spacing: 8) {
-                            Text("AppId")
-                                .frame(width: 80, alignment: .leading)
-                            TextField("留空使用安装包内置", text: $danmakuAPIAppIDText)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .onChange(of: danmakuAPIAppIDText) {
-                                    danmakuAPIConfigError = nil
-                                }
-                        }
-
-                        HStack(spacing: 8) {
-                            Text("AppSecret")
-                                .frame(width: 80, alignment: .leading)
-                            SecureField("留空使用安装包内置", text: $danmakuAPISecretText)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .onChange(of: danmakuAPISecretText) {
-                                    danmakuAPIConfigError = nil
-                                }
-                        }
-
-                        if let danmakuAPIConfigError {
-                            Text(danmakuAPIConfigError)
-                                .foregroundStyle(.red)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("删除请求头")
+                            }
                         }
 
                         Button {
-                            saveDanmakuAPIConfig()
+                            danmakuAPIRequestHeaderRows.append(DanmakuRequestHeaderRow())
                         } label: {
-                            Text("保存配置")
-                                .frame(maxWidth: .infinity)
+                            Label("添加请求头", systemImage: "plus.circle")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.borderless)
+                    }
 
-                        if settings.hasCustomDanmakuAPI {
-                            Button("恢复安装包内置配置", role: .destructive) {
-                                restorePackagedDanmakuAPIConfig()
-                            }
+                    if let danmakuAPIConfigError {
+                        Text(danmakuAPIConfigError)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Button {
+                        saveAndTestDanmakuAPIConfig()
+                    } label: {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .opacity(isDanmakuAPITesting ? 1 : 0)
+                            Text(isDanmakuAPITesting ? "正在测试…" : "保存并测试")
                         }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isDanmakuAPITesting)
+
+                    if settings.hasCustomDanmakuAPI {
+                        Button("恢复安装包内置配置", role: .destructive) {
+                            restorePackagedDanmakuAPIConfig()
+                        }
+                        .disabled(isDanmakuAPITesting)
                     }
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
             } header: {
                 Text("自定义弹幕接口")
             } footer: {
-                Text("自定义值优先于安装包内置的 API 地址、AppId 和 AppSecret。AppId 与 AppSecret 需要同时填写；留空会使用内置值。")
+                Text("仅兼容 DanDanPlay v2 接口协议；其他格式的第三方接口暂不支持。")
             }
             Section {
                 Group {
@@ -571,7 +595,6 @@ struct DanmakuSettingsScreen: View {
             // 页脚那句「将相关设置恢复为默认值」删了（Camo 3510）：点下去弹的确认框里就是这句，
             // 行里再说一遍是重复。
         }
-        .animation(nil, value: isDanmakuAPIConfigExpanded)
         .kazumiSettingsDetail("弹幕设置")
         .onAppear { prefillDanmakuAPIConfig() }
         .confirmationDialog(
@@ -594,6 +617,17 @@ struct DanmakuSettingsScreen: View {
         }
         .overlay(alignment: .top) {
             VStack(spacing: 8) {
+                if let danmakuAPIBanner {
+                    KazumiBanner(
+                        title: danmakuAPIBanner.title,
+                        detail: danmakuAPIBanner.detail,
+                        variant: danmakuAPIBanner.variant,
+                        mode: danmakuAPIBanner.mode,
+                        onDismiss: {
+                            withAnimation(.snappy) { self.danmakuAPIBanner = nil }
+                        }
+                    )
+                }
                 if showRestoredToast {
                     toastLabel("已恢复默认弹幕设置")
                 }
@@ -603,43 +637,7 @@ struct DanmakuSettingsScreen: View {
             }
             .padding(.top, 8)
         }
-    }
-
-    private var danmakuAPIConfigRow: some View {
-        Button {
-            isDanmakuAPIConfigExpanded.toggle()
-        } label: {
-            HStack(spacing: 8) {
-                Text("接口配置")
-                    .foregroundStyle(Color.primary)
-                Spacer(minLength: 8)
-                Text(danmakuAPIConfigSummary)
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .layoutPriority(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.secondary)
-                    .rotationEffect(.degrees(isDanmakuAPIConfigExpanded ? 180 : 0))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("自定义弹幕接口配置")
-        .accessibilityValue(danmakuAPIConfigSummary)
-        .accessibilityHint(isDanmakuAPIConfigExpanded ? "收起配置" : "展开配置")
-    }
-
-    private var danmakuAPIConfigSummary: String {
-        guard settings.hasCustomDanmakuAPI else {
-            return String(localized: "安装包内置")
-        }
-        let customURL = settings.danmakuAPIURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !customURL.isEmpty {
-            return URL(string: customURL)?.host ?? customURL
-        }
-        return String(localized: "自定义密钥")
+        .animation(.snappy, value: danmakuAPIBanner != nil)
     }
 
     private func toastLabel(_ text: LocalizedStringKey) -> some View {
@@ -655,14 +653,22 @@ struct DanmakuSettingsScreen: View {
         guard !didPrefillDanmakuAPIConfig else { return }
         didPrefillDanmakuAPIConfig = true
         danmakuAPIURLText = settings.danmakuAPIURL
-        danmakuAPIAppIDText = settings.danmakuAPIAppID
-        danmakuAPISecretText = settings.danmakuAPISecret
+        let parsed = (try? DanDanRequestHeaders.parse(settings.danmakuAPIRequestHeaders)) ?? [:]
+        danmakuAPIRequestHeaderRows = parsed.isEmpty
+            ? [DanmakuRequestHeaderRow()]
+            : parsed
+                .sorted { $0.key < $1.key }
+                .map { DanmakuRequestHeaderRow(name: $0.key, value: $0.value) }
     }
 
-    private func saveDanmakuAPIConfig() {
+    private func saveAndTestDanmakuAPIConfig() {
         let baseURL = danmakuAPIURLText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let appID = danmakuAPIAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let secret = danmakuAPISecretText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestHeaders = danmakuAPIRequestHeaderRows.compactMap { row in
+            let name = row.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = row.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty || !value.isEmpty else { return nil }
+            return "\(name): \(value)"
+        }.joined(separator: "\n")
 
         if !baseURL.isEmpty {
             guard let components = URLComponents(string: baseURL),
@@ -674,26 +680,47 @@ struct DanmakuSettingsScreen: View {
                 return
             }
         }
-        guard appID.isEmpty == secret.isEmpty else {
-            danmakuAPIConfigError = String(localized: "AppId 与 AppSecret 需要同时填写")
+        do {
+            _ = try DanDanRequestHeaders.parse(requestHeaders)
+        } catch {
+            danmakuAPIConfigError = error.localizedDescription
             return
         }
 
-        settings.danmakuAPIURL = baseURL
-        settings.danmakuAPIAppID = appID
-        settings.danmakuAPISecret = secret
-        danmakuAPIConfigError = nil
-        flashDanmakuAPI("已保存自定义弹幕接口")
+        isDanmakuAPITesting = true
+        Task { @MainActor in
+            do {
+                try await DanmakuAPI.testConnection(
+                    baseURL: baseURL,
+                    requestHeaders: requestHeaders
+                )
+                settings.danmakuAPIURL = baseURL
+                settings.danmakuAPIRequestHeaders = requestHeaders
+                danmakuAPIConfigError = nil
+                withAnimation(.snappy) {
+                    danmakuAPIBanner = KazumiBannerState(
+                        title: "连接正常",
+                        variant: .success
+                    )
+                }
+            } catch {
+                withAnimation(.snappy) {
+                    danmakuAPIBanner = KazumiBannerState(
+                        title: "连接失败",
+                        detail: error.localizedDescription
+                    )
+                }
+            }
+            isDanmakuAPITesting = false
+        }
     }
 
     private func restorePackagedDanmakuAPIConfig() {
         danmakuAPIURLText = ""
-        danmakuAPIAppIDText = ""
-        danmakuAPISecretText = ""
+        danmakuAPIRequestHeaderRows = [DanmakuRequestHeaderRow()]
         danmakuAPIConfigError = nil
         settings.danmakuAPIURL = ""
-        settings.danmakuAPIAppID = ""
-        settings.danmakuAPISecret = ""
+        settings.danmakuAPIRequestHeaders = ""
         flashDanmakuAPI("已恢复安装包内置配置")
     }
 

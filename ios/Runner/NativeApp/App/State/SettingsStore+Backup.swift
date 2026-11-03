@@ -114,8 +114,7 @@ extension SettingsStore {
             SettingsKey.danmakuFontSize,
             SettingsKey.danmakuArea,
             SettingsKey.danmakuAPIURL,
-            SettingsKey.danmakuAPIAppID,
-            SettingsKey.danmakuAPISecret,
+            SettingsKey.danmakuAPIRequestHeaders,
             SettingsKey.downloadParallelEpisodes,
             SettingsKey.downloadDanmaku,
             SettingsKey.defaultStartupPage,
@@ -207,8 +206,10 @@ extension SettingsStore {
                 (SettingsKey.proxyUrl, .string(proxyUrl)),
                 (SettingsKey.proxyTestUrl, .string(proxyTestUrl)),
                 (SettingsKey.danmakuAPIURL, .string(danmakuAPIURL)),
-                (SettingsKey.danmakuAPIAppID, .string(danmakuAPIAppID)),
-                (SettingsKey.danmakuAPISecret, .string(danmakuAPISecret)),
+                (
+                    SettingsKey.danmakuAPIRequestHeaders,
+                    .string(danmakuAPIRequestHeaders)
+                ),
             ]
         }
         return pairs
@@ -494,12 +495,8 @@ extension SettingsStore {
             danmakuAPIURL = text
             restored += 1
         }
-        if let text = value(SettingsKey.danmakuAPIAppID)?.stringValue {
-            danmakuAPIAppID = text
-            restored += 1
-        }
-        if let text = value(SettingsKey.danmakuAPISecret)?.stringValue {
-            danmakuAPISecret = text
+        if let text = value(SettingsKey.danmakuAPIRequestHeaders)?.stringValue {
+            danmakuAPIRequestHeaders = text
             restored += 1
         }
         // 未被上面任何属性接收的键整段写回（原版恢复备份就是整段覆盖设置箱）。
