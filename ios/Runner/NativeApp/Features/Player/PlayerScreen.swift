@@ -75,6 +75,7 @@ enum PlayerDetailTab: String, CaseIterable, Identifiable {
 /// 更多菜单里能打开的那几个页面，一次只有一张。
 enum PlayerSheet: String, Identifiable {
     case danmakuSettings
+    case danmakuSource
     case airPlay
     case externalPlay
     case syncPlay
@@ -519,6 +520,7 @@ struct PlayerScreen: View {
         // 进页面 / 切线路把剧集列表重新拉一遍时，上一轮的失败痕迹一并清掉，
         // 格子回到「没下过」（LP 5115）。
         .onChange(of: controller?.currentEpisode) { _, _ in
+            playPauseHUD = nil
             if let controller {
                 environment.downloads.clearFailures(recordKey: downloadRecordKey(controller))
             }
@@ -527,6 +529,14 @@ struct PlayerScreen: View {
             if let message, !message.isEmpty {
                 // 放画面 1/4 那条线上（LP 4773），跟倍速/收藏/定时关闭同一个位置。
                 surface.hudToastMessage = message
+            }
+        }
+        .onChange(of: controller?.danmakuStatus) { _, status in
+            switch status {
+            case .unavailable, .failed:
+                danmakuEnabled = false
+            case .idle, .loading, .ready, .empty, nil:
+                break
             }
         }
         // 退出全屏时把选集窗口收掉：它只属于横屏，留着会压在竖屏的选集区上。
@@ -789,6 +799,14 @@ struct PlayerScreen: View {
             }
             .environment(settings)
             .environment(environment.router)
+        case .danmakuSource:
+            NavigationStack {
+                DanmakuSourceSheet(
+                    initialKeyword: danmakuInitialKeyword,
+                    onSelectEpisode: applyManualDanmaku
+                )
+            }
+            .presentationDetents([.medium, .large])
         case .airPlay:
             airPlaySheet
         case .externalPlay:
@@ -2213,28 +2231,41 @@ struct PlayerScreen: View {
     /// 靠实心与否区分，不靠颜色。
     ///
     /// 点一下只弹菜单，不改状态、不震动：五项状态和「取消追番」都在里面。
-    ///
-    /// 菜单本体用详情页那一份（`CollectStatusMenu`，LP 4730）：里面是系统 Picker，
-    /// 当前那一档的勾由系统画在**行首**，跟番剧详情页一模一样。
-    /// 自己用 `Button` + `Label` 拼的时候勾放行尾画不出来，放行首又占掉唯一的图标槽，
-    /// 所以两份合成一份是唯一能对齐的写法。
+    /// 菜单交给 UIKit 持有，避免播放中 SwiftUI 刷新后菜单变成点不动的旧副本。
     private var collectButton: some View {
-        CollectStatusMenu(
-            current: currentCollectType,
-            // 没追的番没有可取消的，这一项不出现（跟详情页同一条规则）。
-            showsCancelItem: currentCollectType != .none,
-            onChange: { type in
+        SystemMenuButton(
+            items: collectMenuItems,
+            title: nil,
+            symbol: collectSymbolName,
+            accessibilityLabel: "追番状态",
+            tint: .white,
+            onOpen: { pinControlsWhileMenuOpen() }
+        )
+        .frame(width: 44, height: 44)
+    }
+
+    private var collectMenuItems: [SystemMenuButton.Item] {
+        var items = CollectType.enabledCases.map { type in
+            SystemMenuButton.Item(
+                title: type.buttonTitle,
+                symbol: type.statusSymbol,
+                isChecked: currentCollectType == type
+            ) {
                 applyCollectType(type)
             }
-        ) {
-            Image(systemName: collectSymbolName)
-                .font(.system(size: 20, weight: .regular))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
         }
-        .accessibilityLabel("追番状态")
-        .onTapGesture { pinControlsWhileMenuOpen() }
+        if currentCollectType != .none {
+            items.append(
+                SystemMenuButton.Item(
+                    title: String(localized: "取消追番"),
+                    symbol: "trash",
+                    isDestructive: true
+                ) {
+                    applyCollectType(.none)
+                }
+            )
+        }
+        return items
     }
 
     /// 顶栏那颗的符号＝当前状态（Colo 3984）。
@@ -2330,21 +2361,10 @@ struct PlayerScreen: View {
         return true
     }
 
-    /// 定时关闭的菜单标题：定上了就把分钟数写在上面。
-    private var sleepTimerTitle: String {
-        if let minutes = sleepTimerRemainingMinutes { return String(localized: "定时关闭（\(String(describing: minutes)) 分钟）") }
-        return "定时关闭"
-    }
-
-    /// 面板右边那行字：没开写「不开启」，开着写还剩几分钟（每分钟自己走）。
+    /// 面板右边那行字用固定档位，不把每秒倒计时塞进菜单签名。
     private var sleepTimerValue: String {
-        guard let minutes = sleepTimerRemainingMinutes else { return "不开启" }
-        return String(localized: "还剩 \(String(describing: minutes)) 分钟")
-    }
-
-    private var sleepTimerRemainingMinutes: Int? {
-        guard let remaining = sleepTimerRemaining else { return nil }
-        return max(1, Int((Double(remaining) / 60).rounded(.up)))
+        guard let minutes = sleepTimerMinutes else { return "不开启" }
+        return String(localized: "\(String(describing: minutes)) 分钟")
     }
 
     /// 用户选的那一档（选中的勾看它，不跟着倒数变）。
@@ -2352,14 +2372,10 @@ struct PlayerScreen: View {
         sleepTimerChosenMinutes
     }
 
-    /// 子菜单那一项的标题：定上了就把剩余时间写上去（LP 4669），例如
-    /// 「15 分钟 · 还剩 12:34」。点它就是按这一档重开倒数。
+    /// 菜单里只显示固定档位。倒计时每秒变化，如果写进菜单会逼 UIKit 每秒重建，
+    /// 播放中弹出来的菜单就又会变成点不动的旧副本。
     private func sleepTimerItemTitle(_ minutes: Int) -> String {
-        guard sleepTimerMinutes == minutes, let remaining = sleepTimerRemaining else {
-            return String(localized: "\(String(describing: minutes)) 分钟")
-        }
-        let clock = String(format: "%02d", remaining % 60)
-        return String(localized: "\(String(describing: minutes)) 分钟 · 还剩 \(String(describing: remaining / 60)):\(clock)")
+        String(localized: "\(String(describing: minutes)) 分钟")
     }
 
     /// 到点暂停。定时器是一次性的 Task，改定或取消都要把上一个收掉。
@@ -2590,8 +2606,8 @@ struct PlayerScreen: View {
     /// 弹幕开关。顶栏里是 44 见方，横屏那条输入行里矮一点（33），尺寸由外面给。
     private func danmakuButton(width: CGFloat = 44, height: CGFloat = 44) -> some View {
         Button {
-            danmakuEnabled.toggle()
             noteInteraction()
+            handleDanmakuButton()
         } label: {
             // 符号统一成 captions.bubble：开启用 .fill 表示（LP 2026-10-27 定，
             // 不用强调色），颜色一律白。尺寸 20pt，跟其余图标同一档。
@@ -2603,6 +2619,49 @@ struct PlayerScreen: View {
         }
         .buttonStyle(PlayerPressStyle())
         .accessibilityLabel(danmakuEnabled ? "关闭弹幕" : "打开弹幕")
+    }
+
+    private func handleDanmakuButton() {
+        if danmakuEnabled {
+            danmakuEnabled = false
+            return
+        }
+        if controller?.danmakuStatus == .loading {
+            surface.hudToastMessage = String(localized: "弹幕正在加载")
+            return
+        }
+        if let comments = controller?.danmakuComments, !comments.isEmpty {
+            danmakuEnabled = true
+            return
+        }
+        openSheet(.danmakuSource)
+    }
+
+    private var danmakuInitialKeyword: String {
+        let library = environment.library
+        if let entry = library.entry(for: bangumiID), !entry.displayName.isEmpty {
+            return entry.displayName
+        }
+        if let record = library.record(for: bangumiID), !record.bangumiName.isEmpty {
+            return record.bangumiName
+        }
+        return source?.itemName ?? ""
+    }
+
+    private func applyManualDanmaku(_ episode: DanmakuEpisode) async -> String? {
+        guard let controller else {
+            return String(localized: "播放器已关闭")
+        }
+        switch await controller.loadDanmaku(episodeID: episode.episodeID) {
+        case .loaded:
+            danmakuEnabled = true
+            return nil
+        case .empty:
+            return nil
+        case .failed(let message):
+            danmakuEnabled = false
+            return message
+        }
     }
 
     /// 弹幕设置的图标：`captions.bubble` 20pt 打底，右下角叠一颗 12pt 的
@@ -2659,61 +2718,18 @@ struct PlayerScreen: View {
     ///
     /// 菜单不把开合告诉代码，控制层的自动隐藏靠 `SystemMenuProbe` 看菜单在不在，
     /// 在就不收层。
-    /// 「更多」：点一下弹系统菜单（LP 2269「点错了，还是点击」）。
-    ///
-    /// 用 UIKit 的按钮菜单而不是 SwiftUI 的 `Menu`：画面每秒刷新，`Menu` 会跟着重建，
-    /// 弹出来的那一份和手上的视图对不上，选项点了没反应（LP 2026-10-25「还是无法点击」）。
+    /// 「更多」：点一下弹系统菜单。
+    /// UIKit 自己持有菜单和动作；播放状态刷新不会把屏幕上的菜单换成无主副本。
     private var moreMenu: some View {
-        // LP 2026-10-28：换成 mpv 之后可以试试换回 SwiftUI 的 `Menu`
-        // （Colo 同条：菜单项里放自定义 Button，label 写 HStack，值靠右）。
-        Menu {
-            ForEach(Array(moreMenuItems.enumerated()), id: \.offset) { _, item in
-                if let selection = item.selection {
-                    // 二级菜单里的「选一项」：内容是一张系统 Picker，勾在行首（LP 4734）。
-                    Menu {
-                        SystemSelectionPicker(selection: selection)
-                    } label: { menuRowLabel(item) }
-                } else if let submenu = item.submenu {
-                    Menu {
-                        ForEach(Array(submenu.enumerated()), id: \.offset) { _, child in
-                            Button { child.action() } label: { menuRowLabel(child) }
-                        }
-                    } label: { menuRowLabel(item) }
-                } else {
-                    Button { item.action() } label: { menuRowLabel(item) }
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 20, weight: .regular))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .accessibilityLabel("更多选项")
-        .onTapGesture { pinControlsWhileMenuOpen() }
-    }
-
-    /// 菜单里一行：图标 ＋ 名字 ＋ 同一行靠右的当前值。
-    ///
-    /// 值一定要看得见，不能每次点开二级才知道选的是什么（LP 2026-10-28）；
-    /// 但也不能换行排到名字下面。颜色跟系统菜单走，不写灰字（Colo 同条）。
-    /// 二级页里不用再写一遍名字，当前项打勾就够。
-    @ViewBuilder
-    private func menuRowLabel(_ item: SystemMenuButton.Item) -> some View {
-        HStack(spacing: 8) {
-            if item.isChecked {
-                Image(systemName: "checkmark")
-            } else if !item.symbol.isEmpty {
-                // 菜单只认单颗系统符号，合成图交给系统会被丢掉（同 SystemMenuButton）。
-                Image(systemName: item.symbol)
-            }
-            Text(item.title)
-            if let value = item.subtitle, !value.isEmpty {
-                Spacer(minLength: 8)
-                Text(value)
-            }
-        }
+        SystemMenuButton(
+            items: moreMenuItems,
+            title: nil,
+            symbol: "ellipsis",
+            accessibilityLabel: "更多选项",
+            tint: .white,
+            onOpen: { pinControlsWhileMenuOpen() }
+        )
+        .frame(width: 44, height: 44)
     }
 
     private var moreMenuItems: [SystemMenuButton.Item] {
@@ -4913,5 +4929,196 @@ private struct EdgeProgressRing: Shape {
 
     private static func point(center: CGPoint, r: CGFloat, angle: CGFloat) -> CGPoint {
         CGPoint(x: center.x + r * cos(angle), y: center.y + r * sin(angle))
+    }
+}
+
+private struct DanmakuSourceSheet: View {
+    let initialKeyword: String
+    let onSelectEpisode: (DanmakuEpisode) async -> String?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var keyword: String
+    @State private var animes: [DanmakuSearchAnime] = []
+    @State private var selectedAnime: DanmakuSearchAnime?
+    @State private var episodes: [DanmakuEpisode] = []
+    @State private var loading = false
+    @State private var errorMessage: String?
+
+    init(
+        initialKeyword: String,
+        onSelectEpisode: @escaping (DanmakuEpisode) async -> String?
+    ) {
+        self.initialKeyword = initialKeyword
+        self.onSelectEpisode = onSelectEpisode
+        _keyword = State(initialValue: initialKeyword)
+    }
+
+    var body: some View {
+        Group {
+            if let selectedAnime {
+                episodeContent(selectedAnime)
+            } else {
+                searchContent
+            }
+        }
+        .navigationTitle(selectedAnime == nil ? "选择弹幕源" : "选择分集")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("关闭") { dismiss() }
+            }
+        }
+        .overlay {
+            if loading {
+                ProgressView()
+                    .padding(18)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
+        .disabled(loading)
+    }
+
+    private var searchContent: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                TextField("番剧名称", text: $keyword)
+                    .submitLabel(.search)
+                    .onSubmit { Task { await search() } }
+                    .textFieldStyle(.roundedBorder)
+                Button("搜索") {
+                    Task { await search() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding()
+
+            if let errorMessage {
+                errorLabel(errorMessage)
+            }
+
+            List(animes) { anime in
+                Button {
+                    Task { await loadEpisodes(for: anime) }
+                } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(anime.animeTitle)
+                                .foregroundStyle(.primary)
+                            if !anime.typeDescription.isEmpty {
+                                Text(anime.typeDescription)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private func episodeContent(_ anime: DanmakuSearchAnime) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button {
+                    selectedAnime = nil
+                    episodes = []
+                    errorMessage = nil
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("返回")
+                Text(anime.animeTitle)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding()
+
+            if let errorMessage {
+                errorLabel(errorMessage)
+            }
+
+            List(episodes) { episode in
+                Button {
+                    Task { await select(episode) }
+                } label: {
+                    HStack {
+                        Text(episode.episodeTitle)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "captions.bubble")
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private func errorLabel(_ message: String) -> some View {
+        Text(message)
+            .font(.footnote)
+            .foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+    }
+
+    private func search() async {
+        let query = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            errorMessage = String(localized: "请输入番剧名称")
+            return
+        }
+        loading = true
+        errorMessage = nil
+        animes = []
+        defer { loading = false }
+        do {
+            animes = try await DanmakuAPI.searchAnimes(query)
+            if animes.isEmpty {
+                errorMessage = String(localized: "未找到番剧")
+            }
+        } catch {
+            errorMessage = String(localized: "搜索失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func loadEpisodes(for anime: DanmakuSearchAnime) async {
+        loading = true
+        errorMessage = nil
+        episodes = []
+        defer { loading = false }
+        do {
+            let result = try await DanmakuAPI.episodes(animeID: anime.animeID)
+            selectedAnime = anime
+            episodes = result
+            if result.isEmpty {
+                errorMessage = String(localized: "暂无分集")
+            }
+        } catch {
+            errorMessage = String(localized: "分集加载失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func select(_ episode: DanmakuEpisode) async {
+        loading = true
+        errorMessage = nil
+        if let failure = await onSelectEpisode(episode) {
+            errorMessage = String(localized: "弹幕源切换失败：\(failure)")
+            loading = false
+        } else {
+            dismiss()
+        }
     }
 }

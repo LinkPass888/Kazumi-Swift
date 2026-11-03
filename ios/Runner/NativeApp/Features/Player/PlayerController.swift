@@ -30,8 +30,15 @@ final class PlayerController {
         case idle
         case loading
         case ready
+        case empty
         case unavailable
         case failed
+    }
+
+    enum DanmakuManualResult: Equatable {
+        case loaded(Int)
+        case empty
+        case failed(String)
     }
 
     private(set) var phase: Phase = .idle
@@ -461,18 +468,49 @@ final class PlayerController {
             danmakuStatus = .ready
             KazumiLogBuffer.player("弹幕已加载：\(comments.count) 条")
         case .empty:
-            // 这集本来就没弹幕：不当成错误，也不跳提示。
             danmakuComments = []
-            danmakuStatus = .ready
-            danmakuMessage = nil
+            danmakuStatus = .empty
+            danmakuMessage = String(localized: "本集暂无弹幕；需要时可手动检索")
         case .unavailable(let message):
             danmakuComments = []
             danmakuStatus = .unavailable
-            danmakuMessage = message
+            danmakuMessage = String(localized: "\(message)，已关闭弹幕；再次打开可手动检索")
         case .failed(let message):
             danmakuComments = []
             danmakuStatus = .failed
-            danmakuMessage = message
+            danmakuMessage = String(localized: "弹幕加载失败：\(message)，已关闭弹幕；再次打开可手动检索")
+        }
+    }
+
+    func loadDanmaku(episodeID: Int) async -> DanmakuManualResult {
+        let episode = currentEpisode
+        let road = selectedRoad
+        danmakuStatus = .loading
+        danmakuMessage = nil
+        do {
+            let comments = try await DanmakuAPI.comments(episodeID: String(episodeID))
+            guard currentEpisode == episode, selectedRoad == road else {
+                return .failed(String(localized: "播放集数已变化，请重试"))
+            }
+            guard !comments.isEmpty else {
+                danmakuComments = []
+                danmakuStatus = .empty
+                danmakuMessage = String(localized: "该分集暂无弹幕")
+                return .empty
+            }
+            danmakuComments = comments
+            danmakuStatus = .ready
+            danmakuMessage = String(localized: "已切换弹幕源")
+            return .loaded(comments.count)
+        } catch {
+            guard currentEpisode == episode, selectedRoad == road else {
+                return .failed(String(localized: "播放集数已变化，请重试"))
+            }
+            let message = error.localizedDescription
+            danmakuComments = []
+            danmakuStatus = .failed
+            danmakuMessage = String(localized: "弹幕源切换失败：\(message)")
+            return .failed(message)
         }
     }
 

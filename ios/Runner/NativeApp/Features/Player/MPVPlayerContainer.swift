@@ -405,8 +405,6 @@ final class MPVHostView: UIView {
     private var videoSize: CGSize = .zero
     /// 上一次 layout 时的尺寸：用来认出「画面被撑大了」这件事。
     private var lastLayoutSize: CGSize = .zero
-    /// 转屏 / 进出全屏会连续触发布局，等尺寸稳定后再让 mpv 重配一次。
-    private var outputResizeTask: Task<Void, Never>?
     private var fillMode: MPVPlayerContainer.MPVFillMode = .fit
     private var danmakuTopInset: CGFloat = 0
 
@@ -470,12 +468,7 @@ final class MPVHostView: UIView {
             lastLayoutSize = bounds.size
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
-            outputResizeTask?.cancel()
-            outputResizeTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(100))
-                guard !Task.isCancelled else { return }
-                self?.engine?.reconfigureVideoOutputForSurfaceResize()
-            }
+            engine?.reconfigureVideoOutputForSurfaceResize()
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
         // 顶部让出控制栏（横屏 44pt），底部仍留 20% 给字幕：

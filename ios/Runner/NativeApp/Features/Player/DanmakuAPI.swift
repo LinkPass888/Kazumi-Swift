@@ -39,12 +39,27 @@ struct DanmakuComment: Identifiable, Hashable, Sendable {
 /// 一次取弹幕的结果，UI 据此决定提示文案。
 enum DanmakuFetchResult: Sendable {
     case success([DanmakuComment])
-    /// 这一集本来就没有弹幕：正常情况，界面上什么都不显示（Ato 2026-10-25）。
+    /// 这一集本来就没有弹幕。
     case empty
     /// 没有可用数据（未配置凭据 / DanDanPlay 没有这部番的记录）。
     case unavailable(String)
     /// 网络或接口失败。
     case failed(String)
+}
+
+struct DanmakuSearchAnime: Identifiable, Hashable, Sendable {
+    let animeID: Int
+    let animeTitle: String
+    let typeDescription: String
+
+    var id: Int { animeID }
+}
+
+struct DanmakuEpisode: Identifiable, Hashable, Sendable {
+    let episodeID: Int
+    let episodeTitle: String
+
+    var id: Int { episodeID }
 }
 
 /// DanDanPlay 的凭据。只在打包时注入（Info.plist 的 DanDanAppId / DanDanAppSecret）。
@@ -157,6 +172,30 @@ enum DanmakuAPI {
         return try parseComments(data)
     }
 
+    static func searchAnimes(_ keyword: String) async throws -> [DanmakuSearchAnime] {
+        let data = try await get(
+            path: "/api/v2/search/episodes",
+            query: [
+                URLQueryItem(name: "anime", value: keyword),
+                URLQueryItem(name: "v2", value: "true"),
+            ]
+        )
+        return try JSONDecoder().decode(SearchResponse.self, from: data).animes.map {
+            DanmakuSearchAnime(
+                animeID: $0.animeId,
+                animeTitle: $0.animeTitle,
+                typeDescription: $0.typeDescription ?? ""
+            )
+        }
+    }
+
+    static func episodes(animeID: Int) async throws -> [DanmakuEpisode] {
+        let data = try await get(path: "/api/v2/bangumi/\(animeID)")
+        return try JSONDecoder().decode(EpisodesResponse.self, from: data).bangumi.episodes.map {
+            DanmakuEpisode(episodeID: $0.episodeId, episodeTitle: $0.episodeTitle)
+        }
+    }
+
     // MARK: - 请求
 
     private static func get(path: String, query: [URLQueryItem] = []) async throws -> Data {
@@ -219,6 +258,29 @@ enum DanmakuAPI {
         }
 
         let comments: [Item]
+    }
+
+    private struct SearchResponse: Decodable {
+        struct Item: Decodable {
+            let animeId: Int
+            let animeTitle: String
+            let typeDescription: String?
+        }
+
+        let animes: [Item]
+    }
+
+    private struct EpisodesResponse: Decodable {
+        struct Bangumi: Decodable {
+            struct Episode: Decodable {
+                let episodeId: Int
+                let episodeTitle: String
+            }
+
+            let episodes: [Episode]
+        }
+
+        let bangumi: Bangumi
     }
 
     private static func parseComments(_ data: Data) throws -> [DanmakuComment] {
