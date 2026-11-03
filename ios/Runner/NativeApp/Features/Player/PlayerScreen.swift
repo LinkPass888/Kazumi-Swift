@@ -2083,7 +2083,7 @@ struct PlayerScreen: View {
                     fillMode: aspectRatioMode.fillMode,
                     danmaku: controller.danmakuComments,
                     danmakuStyle: danmakuStyle,
-                    danmakuPlaybackRate: Double(playbackRate),
+                    danmakuPlaybackRate: isTemporarySpeed ? settings.longPressSpeed : Double(playbackRate),
                     // 横屏让开顶栏；竖屏顶栏压在画面上，保持原样。
                     danmakuTopInset: isFullscreen ? 44 : 0,
                     lowMemoryMode: settings.lowMemoryMode,
