@@ -399,14 +399,11 @@ extension PlayerSurfaceModel: PlayerClockProvider {
 final class MPVHostView: UIView {
     let metalView = MPVMetalView()
     let overlay = DanmakuOverlayView()
-    weak var engine: MPVEngine?
 
     /// 视频尺寸、填充方式与弹幕顶部留白，由容器在 updateUIView 里推进来。
     private var videoSize: CGSize = .zero
     /// 上一次 layout 时的尺寸：用来认出「画面被撑大了」这件事。
     private var lastLayoutSize: CGSize = .zero
-    /// 转屏 / 进出全屏会连续触发布局，等尺寸稳定后再让 mpv 重配一次。
-    private var surfaceResizeTask: Task<Void, Never>?
     private var fillMode: MPVPlayerContainer.MPVFillMode = .fit
     private var danmakuTopInset: CGFloat = 0
 
@@ -470,12 +467,6 @@ final class MPVHostView: UIView {
             lastLayoutSize = bounds.size
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
-            surfaceResizeTask?.cancel()
-            surfaceResizeTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(100))
-                guard !Task.isCancelled else { return }
-                self?.engine?.reloadVideoForSurfaceResize()
-            }
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
         // 顶部让出控制栏（横屏 44pt），底部仍留 20% 给字幕：
@@ -534,8 +525,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
         case crop
         /// 不保持比例，拉满。
         case stretch
-        /// 保持 4:3 比例，留黑边。
-        case ratio4x3
     }
 
     func makeUIView(context: Context) -> MPVHostView {
@@ -568,7 +557,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
             surface?.hasFirstFrame = true
         }
         engine.start(in: host.metalView)
-        host.engine = engine
 
         context.coordinator.engine = engine
         context.coordinator.surface = surface
@@ -677,13 +665,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
                 case .stretch:
                     engine.setOptionForPlayback("panscan", "0")
                     engine.setOptionForPlayback("keepaspect", "no")
-                case .ratio4x3:
-                    engine.setOptionForPlayback("panscan", "0")
-                    engine.setOptionForPlayback("keepaspect", "yes")
-                    engine.setOptionForPlayback("video-aspect-override", "4:3")
-                }
-                if fill != .ratio4x3 {
-                    engine.setOptionForPlayback("video-aspect-override", "no")
                 }
             }
             // 代理变了也要重新交给内核：设置里拨一下，正在放的那一集立刻生效。
@@ -714,7 +695,7 @@ extension MPVPlayerContainer.MPVFillMode {
         switch self {
         case .stretch:
             return bounds
-        case .fit, .ratio4x3:
+        case .fit:
             scale = min(scaleX, scaleY)
         case .crop:
             scale = max(scaleX, scaleY)

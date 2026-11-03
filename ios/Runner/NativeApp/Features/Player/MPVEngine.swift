@@ -314,15 +314,6 @@ final class MPVEngine {
         metalView?.updateDrawableSize()
     }
 
-    /// Metal 层的尺寸已经变了，但 mpv 只有在视频输出重配时才会重新读取
-    /// `CAMetalLayer.drawableSize`。重载当前视频轨会走这条重配路径，音频和进度不动。
-    func reloadVideoForSurfaceResize() {
-        guard handle != nil, lastSnapshot.hasVideo, !renderingLocked else { return }
-        Task { @MainActor [weak self] in
-            _ = await self?.runAsyncCommand("video-reload")
-        }
-    }
-
     func setSpeed(_ rate: Float) {
         guard rate.isFinite, rate > 0 else { return }
         var value = Double(rate)

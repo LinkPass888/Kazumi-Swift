@@ -42,10 +42,9 @@ enum PlayerAspectRatioMode: String, CaseIterable, Identifiable {
     /// 交给 mpv 渲染层的填充方式。
     var fillMode: MPVPlayerContainer.MPVFillMode {
         switch self {
-        case .automatic: .fit
+        case .automatic, .ratio4x3: .fit
         case .crop: .crop
         case .stretch: .stretch
-        case .ratio4x3: .ratio4x3
         }
     }
 
