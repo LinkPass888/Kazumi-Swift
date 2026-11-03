@@ -734,8 +734,6 @@ struct PlayerScreen: View {
             pictureInPicture = nil
             surface.stop()
             controller?.stop()
-            // 退出播放器时把观看记录并进云盘（原版 player_item.dart:375 也是这个时机）。
-            syncHistoryIfNeeded()
         }
     }
 
@@ -1767,7 +1765,6 @@ struct PlayerScreen: View {
         sawLandscape = false
         requestOrientation(.portrait)
         showControls()
-        syncHistoryWithWebDAV()
     }
 
     /// 离开播放页时恢复 App 默认方向，让其它页面继续支持横屏浏览。
@@ -1780,18 +1777,6 @@ struct PlayerScreen: View {
             ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         OrientationLock.release(scene: scene)
         if let scene { notifyOrientationChange(in: scene) }
-    }
-
-    /// 原版 player_item.dart:374 / 458：退出全屏时把观看记录并一轮云盘。
-    /// 只在「启用 WebDAV」和「观看记录」都开着时发，失败只进日志，不扰用户。
-    private func syncHistoryWithWebDAV() {
-        guard settings.webDavEnable, settings.webDavEnableHistory else { return }
-        let settings = settings
-        let library = environment.library
-        Task {
-            let outcome = await WebDAVSync.sync([.history], settings: settings, library: library)
-            KazumiLogBuffer.network(outcome.log)
-        }
     }
 
     private func requestOrientation(_ mask: UIInterfaceOrientationMask) {
@@ -3344,17 +3329,6 @@ struct PlayerScreen: View {
     }
 
     // MARK: - 进度与续播
-
-    /// 把当前播放位置写进观看历史（对应原版 history 记录）。
-    /// 退出播放器时同步观看记录——只在多设备同步开着、且「观看记录」这一类打开时才发请求。
-    private func syncHistoryIfNeeded() {
-        guard settings.webDavEnable,
-              settings.webDavEnableHistory,
-              !settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let settings = settings
-        let library = environment.library
-        Task { _ = await WebDAVSync.sync([.history], settings: settings, library: library) }
-    }
 
     private func persistProgress(_ controller: PlayerController) {
         persistWatchProgress(

@@ -2221,16 +2221,6 @@
         }
       }
     },
-    "关掉之后不再自动同步，手动同步也停用。": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "關掉之後不再自動同步，手動同步也停用。"
-          }
-        }
-      }
-    },
     "关联": {
       "localizations": {
         "zh-Hant": {
@@ -3274,16 +3264,6 @@
         }
       }
     },
-    "启动 App、退出全屏时自动同步播放进度和历史记录。": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "啟動 App、退出全螢幕時自動同步播放進度與觀看紀錄。"
-          }
-        }
-      }
-    },
     "启动时检查更新": {
       "localizations": {
         "zh-Hant": {
@@ -4300,16 +4280,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "遮蔽詞 %@ 條"
-          }
-        }
-      }
-    },
-    "屏蔽词：修改规则后自动同步。": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "遮蔽詞：修改規則後自動同步。"
           }
         }
       }
@@ -12481,16 +12451,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "進度與備份"
-          }
-        }
-      }
-    },
-    "进收藏页时同步一次。原版 Kazumi 的收藏能读进来，这边新加的写不回原版。": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "進收藏頁時同步一次。原版 Kazumi 的收藏能讀進來，這邊新增的寫不回原版。"
           }
         }
       }

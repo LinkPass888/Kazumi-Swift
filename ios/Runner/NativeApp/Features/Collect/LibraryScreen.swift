@@ -154,13 +154,6 @@ struct LibraryScreen: View {
             .task {
                 sort = CollectSort(rawValue: settings.librarySort) ?? .updateTime
                 KazumiImageLoader.shared.prefetch(library.entries.map(\.imageURL))
-                // 进收藏页时并一次云盘（原版 collect_controller.dart:209 同一时机）。
-                if settings.webDavEnable,
-                   settings.webDavEnableCollect,
-                   !settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let outcome = await WebDAVSync.sync([.collect], settings: settings, library: library)
-                    KazumiLogBuffer.network(outcome.log)
-                }
             }
             // 追番条目变化时补齐时刻表：新加入「在看」的番也要拿到时刻。
             .task(id: library.watchingEntries.map(\.id)) {

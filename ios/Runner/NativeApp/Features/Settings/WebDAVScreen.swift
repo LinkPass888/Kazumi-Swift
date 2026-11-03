@@ -10,9 +10,7 @@
 //  「保存并测试」和结果行留在折区外面，不展开也能连、也能看见结果。
 //  没连通时下面两段整块灰掉 —— 灰的开关不能点，也不能假装能同步。
 //
-//  LP 2026-10-25：三个内容开关只管记住「同步哪几类」，拨一下不许当场跑一次同步。
-//  自动同步的时机跟原版一致（lib/pages/init_page.dart、player_item.dart）：
-//  启动时、退出播放器时各并一轮，改动开关本身不触发。
+//  所有同步只由「立即同步」手动触发；开关只记住启用状态和同步哪几类。
 //
 
 import SwiftUI
@@ -179,8 +177,6 @@ struct WebDAVScreen: View {
             Toggle("启用 WebDAV", isOn: enableBinding)
                 .disabled(!hasCredentials)
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
-        } footer: {
-            Text("关掉之后不再自动同步，手动同步也停用。")
         }
     }
 
@@ -242,12 +238,6 @@ struct WebDAVScreen: View {
             .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
         } header: {
             Text("要同步什么")
-        } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("启动 App、退出全屏时自动同步播放进度和历史记录。")
-                Text("屏蔽词：修改规则后自动同步。")
-                Text("进收藏页时同步一次。原版 Kazumi 的收藏能读进来，这边新加的写不回原版。")
-            }
         }
     }
 
@@ -333,15 +323,11 @@ struct WebDAVScreen: View {
         Binding(get: { settings.webDAVPassword }, set: { settings.webDAVPassword = $0 })
     }
 
-    /// 总开关只存值；打开的那一刻顺手并一轮（LP 2026-10-25：开启后要自动同步）。
+    /// 总开关只存值，不触发同步。
     private var enableBinding: Binding<Bool> {
         Binding(
             get: { settings.webDavEnable },
-            set: { newValue in
-                settings.webDavEnable = newValue
-                guard newValue else { return }
-                Task { await syncOnEnable() }
-            }
+            set: { settings.webDavEnable = $0 }
         )
     }
 
@@ -417,17 +403,6 @@ struct WebDAVScreen: View {
             syncDialogFailure = outcome.message
         }
         KazumiLogBuffer.network(outcome.log)
-    }
-
-    /// 打开总开关后自己跑的那一轮：选过内容就按选的那几类并，
-    /// 一类都没选就只连一下，至少让「已开启」这句话是真的。
-    private func syncOnEnable() async {
-        let contents = WebDAVSync.enabledContents(settings)
-        guard !contents.isEmpty else {
-            await saveAndTest()
-            return
-        }
-        await runSync(contents)
     }
 
     // MARK: - 连接

@@ -17,11 +17,7 @@ import SwiftUI
 struct KazumiTabShell: View {
     @Environment(AppRouter.self) private var router
     @Environment(SettingsStore.self) private var settings
-    @Environment(LibraryStore.self) private var library
     @Environment(AppEnvironment.self) private var environment
-
-    /// 屏蔽词刚改完那一轮上传：连着改几条只发最后一次。
-    @State private var shieldSyncTask: Task<Void, Never>?
 
     var body: some View {
         TabView(selection: tabSelection) {
@@ -52,40 +48,12 @@ struct KazumiTabShell: View {
         }
         // LP 2586：上滑时缩不缩由界面设置里那个开关控制（默认缩）。
         .tabBarMinimizeBehavior(settings.tabBarShrinkOnScroll ? .onScrollDown : .never)
-        // 启动时并一次云盘：原版 init_page.dart:98-106 也在这个时机同步观看记录。
-        // 只有真的开着同步、也选过内容才发请求，没配的话这里什么都不做。
         .task {
             // 每次启动重排一遍更新提醒：上一轮排的会随系统清理，追番列表也可能变了。
             await environment.refreshUpdateNotifications()
         }
-        .task {
-            guard settings.webDavEnable,
-                  !settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            let contents = WebDAVSync.enabledContents(settings)
-            guard !contents.isEmpty else { return }
-            let outcome = await WebDAVSync.sync(contents, settings: settings, library: library)
-            KazumiLogBuffer.network(outcome.log)
-        }
-        // 改屏蔽词后自动上传（原版 danmaku_shield_sync_service 改完 500ms 就同步）。
-        .onReceive(NotificationCenter.default.publisher(for: .kazumiDanmakuRulesChanged)) { _ in
-            scheduleShieldSync()
-        }
         // LP 清单「触感反馈」：关掉后底栏切换不再轻震（trigger 传 nil 就不触发）。
         .sensoryFeedback(.selection, trigger: hapticTrigger)
-    }
-
-    /// 只传屏蔽词这一类：开着的另外两类不动，云盘上那两份原样保留。
-    private func scheduleShieldSync() {
-        guard settings.webDavEnable,
-              settings.webDavEnableDanmakuShield,
-              !settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        shieldSyncTask?.cancel()
-        shieldSyncTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-            let outcome = await WebDAVSync.sync([.shield], settings: settings, library: library)
-            KazumiLogBuffer.network(outcome.log)
-        }
     }
 
     /// 触感反馈关闭时传 nil：`.sensoryFeedback` 只比较相邻两次的值，nil → nil 不触发。
