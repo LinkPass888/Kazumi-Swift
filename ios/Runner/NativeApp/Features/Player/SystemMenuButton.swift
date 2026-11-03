@@ -57,7 +57,11 @@ struct SystemMenuButton: UIViewRepresentable {
             for: .horizontal
         )
         button.addAction(
-            UIAction { [coordinator = context.coordinator] _ in coordinator.onOpen() },
+            UIAction { [weak coordinator = context.coordinator] _ in
+                MainActor.assumeIsolated {
+                    coordinator?.onOpen()
+                }
+            },
             for: .menuActionTriggered
         )
         apply(to: button, context: context)
@@ -242,7 +246,8 @@ struct SystemMenuButton: UIViewRepresentable {
         }
     }
 
-    final class Coordinator: @unchecked Sendable {
+    @MainActor
+    final class Coordinator {
         var items: [Item] = []
         var flat: [Item] = []
         var onOpen: () -> Void = {}
@@ -275,7 +280,9 @@ struct SystemMenuButton: UIViewRepresentable {
                         image: SystemMenuButton.menuImage(item),
                         attributes: item.isDestructive ? .destructive : []
                     ) { [weak self] _ in
-                        self?.flat[safe: index]?.action()
+                        MainActor.assumeIsolated {
+                            self?.flat[safe: index]?.action()
+                        }
                     }
                     action.state = item.isChecked ? .on : .off
                     return action
