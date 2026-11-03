@@ -542,15 +542,14 @@ struct DanmakuSettingsScreen: View {
                     danmakuAPIConfigRow
 
                     if isDanmakuAPIConfigExpanded {
-                        VStack(alignment: .leading, spacing: 8) {
-
-                            ForEach($danmakuAPIRequestHeaderRows) { $row in
-                                // LP 7045：两个请求头之间一条系统分隔线，左端对齐名称文本左缘（44 热区 + 8 间距）。
-                                if danmakuAPIRequestHeaderRows.first?.id != row.id {
-                                    Divider()
-                                        .padding(.leading, 52)
-                                }
-
+                        // LP 7113：换系统原生上下拖动。ForEach 必须是 List 的直接子级
+                        // （每行一个 List row），onMove/editActions 才生效——之前套在 VStack
+                        // 里整个是一行，原生 reorder 不工作；自制手势会闪，弃用。
+                        // LP 7134/Colo 7135：分隔线不再自画（Divider 在 Form 行内被压成不可见，
+                        // 自画线疑似闪烁源），删掉，用 List 原生行分隔线，颜色/粗细/位置全按系统默认，
+                        // 原规格「左端对齐52」作废。
+                        ForEach($danmakuAPIRequestHeaderRows) { $row in
+                            VStack(spacing: 0) {
                                 HStack(spacing: 8) {
                                     Button(role: .destructive) {
                                         danmakuAPIRequestHeaderRows.removeAll {
@@ -569,7 +568,7 @@ struct DanmakuSettingsScreen: View {
                                         let nameWidth = max(0, (proxy.size.width - 8) * 0.3)
                                         HStack(spacing: 8) {
                                             TextField("键", text: $row.name)
-                                                .frame(width: nameWidth, height: 44)
+                                                .frame(width: nameWidth, height: 40)
                                                 .textInputAutocapitalization(.never)
                                                 .autocorrectionDisabled()
                                                 .onChange(of: row.name) {
@@ -577,7 +576,7 @@ struct DanmakuSettingsScreen: View {
                                                 }
 
                                             TextField("值", text: $row.value)
-                                                .frame(maxWidth: .infinity, minHeight: 44)
+                                                .frame(maxWidth: .infinity, minHeight: 40)
                                                 .textInputAutocapitalization(.never)
                                                 .autocorrectionDisabled()
                                                 .onChange(of: row.value) {
@@ -585,53 +584,36 @@ struct DanmakuSettingsScreen: View {
                                                 }
                                         }
                                     }
-                                    .frame(height: 44)
-
-                                    Image(systemName: "line.3.horizontal")
-                                        .font(.system(size: 17))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 44, height: 44)
-                                        .contentShape(Rectangle())
-                                        .draggable(row.id.uuidString) {
-                                            Image(systemName: "line.3.horizontal")
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .accessibilityLabel(String(localized: "上下拖动调整顺序"))
+                                    .frame(height: 40)
                                 }
-                                .frame(height: 44)
-                                .dropDestination(for: String.self) { items, _ in
-                                    guard let item = items.first,
-                                          let draggedID = UUID(uuidString: item),
-                                          draggedID != row.id,
-                                          let sourceIndex = danmakuAPIRequestHeaderRows
-                                            .firstIndex(where: { $0.id == draggedID }),
-                                          let targetIndex = danmakuAPIRequestHeaderRows
-                                            .firstIndex(where: { $0.id == row.id })
-                                    else { return false }
-
-                                    danmakuAPIRequestHeaderRows.move(
-                                        fromOffsets: IndexSet(integer: sourceIndex),
-                                        toOffset: targetIndex > sourceIndex
-                                            ? targetIndex + 1
-                                            : targetIndex
-                                    )
-                                    return true
-                                }
+                                // Colo 7094：行高 44→40；删除热区仍 44（上下各溢 2 点）。
+                                .frame(height: 40)
                             }
-
-                            Button {
-                                danmakuAPIRequestHeaderRows.append(DanmakuRequestHeaderRow())
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "plus.circle")
-                                        .font(.system(size: 17))
-                                    Text("添加请求头")
-                                        .font(.system(size: 17))
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            }
-                            .buttonStyle(.borderless)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                            .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
                         }
+                        // LP 7113：系统原生上下拖动。这个 SDK 的 ForEach 上没有 .editActions
+                        // （绑定版/非绑定版都报 no member，两轮构建证实），常驻 editMode 方案
+                        // 被 LP 7150 划掉（根本不许有编辑模式）。先用 onMove 实测不进编辑模式
+                        // 能否按住直接拖，不行再换别的能编过的路子。
+                        .onMove { from, to in
+                            danmakuAPIRequestHeaderRows.move(fromOffsets: from, toOffset: to)
+                        }
+
+                        Button {
+                            danmakuAPIRequestHeaderRows.append(DanmakuRequestHeaderRow())
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus.circle")
+                                    .font(.system(size: 17))
+                                Text("添加请求头")
+                                    .font(.system(size: 17))
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                        }
+                        .buttonStyle(.borderless)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 0, trailing: 20))
+                        .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
 
                         if let danmakuAPIConfigError {
                             Text(danmakuAPIConfigError)
