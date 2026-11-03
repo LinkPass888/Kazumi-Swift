@@ -13660,6 +13660,16 @@
         }
       }
     },
+    "上下拖动调整顺序": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上下拖曳調整順序"
+          }
+        }
+      }
+    },
     "添加请求头": {
       "localizations": {
         "zh-Hant": {

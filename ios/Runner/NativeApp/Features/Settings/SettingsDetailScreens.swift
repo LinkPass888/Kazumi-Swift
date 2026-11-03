@@ -390,8 +390,9 @@ struct DanmakuSettingsScreen: View {
     @State private var isConfirmingRestore = false
     /// 恢复默认后顶上那句提示；两秒后自己收起来。
     @State private var showRestoredToast = false
+    @State private var isDanmakuAPIConfigExpanded = false
     @State private var danmakuAPIURLText = ""
-    @State private var danmakuAPIRequestHeaderRows = [DanmakuRequestHeaderRow()]
+    @State private var danmakuAPIRequestHeaderRows: [DanmakuRequestHeaderRow] = []
     @State private var danmakuAPIConfigError: String?
     @State private var danmakuAPIToast: LocalizedStringKey?
     @State private var danmakuAPIBanner: KazumiBannerState?
@@ -498,82 +499,126 @@ struct DanmakuSettingsScreen: View {
             }
             Section {
                 Group {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("API 地址")
-                            .frame(width: 80, alignment: .leading)
+                    danmakuAPIConfigRow
 
-                        TextField(DanDanCredentials.defaultBaseURL, text: $danmakuAPIURLText)
-                            .multilineTextAlignment(.leading)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .onChange(of: danmakuAPIURLText) {
-                                danmakuAPIConfigError = nil
-                            }
-                    }
+                    if isDanmakuAPIConfigExpanded {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("API 地址")
+                                .frame(width: 80, alignment: .leading)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("自定义请求头")
-
-                        ForEach($danmakuAPIRequestHeaderRows) { $row in
-                            HStack(spacing: 8) {
-                                TextField("请求头名称", text: $row.name)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .onChange(of: row.name) {
-                                        danmakuAPIConfigError = nil
-                                    }
-
-                                TextField("值", text: $row.value)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .onChange(of: row.value) {
-                                        danmakuAPIConfigError = nil
-                                    }
-
-                                Button(role: .destructive) {
-                                    danmakuAPIRequestHeaderRows.removeAll { $0.id == row.id }
-                                } label: {
-                                    Image(systemName: "minus.circle")
+                            TextField(DanDanCredentials.defaultBaseURL, text: $danmakuAPIURLText)
+                                .multilineTextAlignment(.leading)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .onChange(of: danmakuAPIURLText) {
+                                    danmakuAPIConfigError = nil
                                 }
-                                .buttonStyle(.borderless)
-                                .accessibilityLabel("删除请求头")
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("自定义请求头")
+
+                            ForEach($danmakuAPIRequestHeaderRows) { $row in
+                                HStack(spacing: 8) {
+                                    Button(role: .destructive) {
+                                        danmakuAPIRequestHeaderRows.removeAll {
+                                            $0.id == row.id
+                                        }
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                            .frame(width: 24, height: 44)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("删除请求头")
+
+                                    GeometryReader { proxy in
+                                        let nameWidth = max(0, (proxy.size.width - 8) * 0.3)
+                                        HStack(spacing: 8) {
+                                            TextField("请求头名称", text: $row.name)
+                                                .frame(width: nameWidth)
+                                                .textInputAutocapitalization(.never)
+                                                .autocorrectionDisabled()
+                                                .onChange(of: row.name) {
+                                                    danmakuAPIConfigError = nil
+                                                }
+
+                                            TextField("值", text: $row.value)
+                                                .frame(maxWidth: .infinity)
+                                                .textInputAutocapitalization(.never)
+                                                .autocorrectionDisabled()
+                                                .onChange(of: row.value) {
+                                                    danmakuAPIConfigError = nil
+                                                }
+                                        }
+                                    }
+                                    .frame(height: 44)
+
+                                    Image(systemName: "line.3.horizontal")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 24, height: 44)
+                                        .contentShape(Rectangle())
+                                        .draggable(row.id.uuidString) {
+                                            Image(systemName: "line.3.horizontal")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .accessibilityLabel("上下拖动调整顺序")
+                                }
+                                .dropDestination(for: String.self) { items, _ in
+                                    guard let item = items.first,
+                                          let draggedID = UUID(uuidString: item),
+                                          draggedID != row.id,
+                                          let sourceIndex = danmakuAPIRequestHeaderRows
+                                            .firstIndex(where: { $0.id == draggedID }),
+                                          let targetIndex = danmakuAPIRequestHeaderRows
+                                            .firstIndex(where: { $0.id == row.id })
+                                    else { return false }
+
+                                    danmakuAPIRequestHeaderRows.move(
+                                        fromOffsets: IndexSet(integer: sourceIndex),
+                                        toOffset: targetIndex > sourceIndex
+                                            ? targetIndex + 1
+                                            : targetIndex
+                                    )
+                                    return true
+                                }
                             }
+
+                            Button {
+                                danmakuAPIRequestHeaderRows.append(DanmakuRequestHeaderRow())
+                            } label: {
+                                Label("添加请求头", systemImage: "plus.circle")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+
+                        if let danmakuAPIConfigError {
+                            Text(danmakuAPIConfigError)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         Button {
-                            danmakuAPIRequestHeaderRows.append(DanmakuRequestHeaderRow())
+                            saveAndTestDanmakuAPIConfig()
                         } label: {
-                            Label("添加请求头", systemImage: "plus.circle")
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .opacity(isDanmakuAPITesting ? 1 : 0)
+                                Text(isDanmakuAPITesting ? "正在测试…" : "保存并测试")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderless)
-                    }
-
-                    if let danmakuAPIConfigError {
-                        Text(danmakuAPIConfigError)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Button {
-                        saveAndTestDanmakuAPIConfig()
-                    } label: {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .opacity(isDanmakuAPITesting ? 1 : 0)
-                            Text(isDanmakuAPITesting ? "正在测试…" : "保存并测试")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isDanmakuAPITesting)
-
-                    if settings.hasCustomDanmakuAPI {
-                        Button("恢复安装包内置配置", role: .destructive) {
-                            restorePackagedDanmakuAPIConfig()
-                        }
+                        .buttonStyle(.borderedProminent)
                         .disabled(isDanmakuAPITesting)
+
+                        if settings.hasCustomDanmakuAPI {
+                            Button("恢复安装包内置配置", role: .destructive) {
+                                restorePackagedDanmakuAPIConfig()
+                            }
+                            .disabled(isDanmakuAPITesting)
+                        }
                     }
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
@@ -582,6 +627,7 @@ struct DanmakuSettingsScreen: View {
             } footer: {
                 Text("仅兼容 DanDanPlay v2 接口协议；其他格式的第三方接口暂不支持。")
             }
+            .animation(nil, value: isDanmakuAPIConfigExpanded)
             Section {
                 Group {
                     Button {
@@ -649,16 +695,51 @@ struct DanmakuSettingsScreen: View {
             .transition(.opacity)
     }
 
+    private var danmakuAPIConfigRow: some View {
+        Button {
+            isDanmakuAPIConfigExpanded.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Text("接口配置")
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: 8)
+                Text(danmakuAPIConfigSummary)
+                    .foregroundStyle(Color.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .rotationEffect(.degrees(isDanmakuAPIConfigExpanded ? 180 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("自定义弹幕接口配置")
+        .accessibilityValue(danmakuAPIConfigSummary)
+        .accessibilityHint(isDanmakuAPIConfigExpanded ? "收起配置" : "展开配置")
+    }
+
+    private var danmakuAPIConfigSummary: String {
+        guard settings.hasCustomDanmakuAPI else {
+            return String(localized: "安装包内置")
+        }
+        let customURL = settings.danmakuAPIURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !customURL.isEmpty {
+            return URL(string: customURL)?.host ?? customURL
+        }
+        return String(localized: "自定义请求头")
+    }
+
     private func prefillDanmakuAPIConfig() {
         guard !didPrefillDanmakuAPIConfig else { return }
         didPrefillDanmakuAPIConfig = true
         danmakuAPIURLText = settings.danmakuAPIURL
         let parsed = (try? DanDanRequestHeaders.parse(settings.danmakuAPIRequestHeaders)) ?? [:]
-        danmakuAPIRequestHeaderRows = parsed.isEmpty
-            ? [DanmakuRequestHeaderRow()]
-            : parsed
-                .sorted { $0.key < $1.key }
-                .map { DanmakuRequestHeaderRow(name: $0.key, value: $0.value) }
+        danmakuAPIRequestHeaderRows = parsed
+            .sorted { $0.key < $1.key }
+            .map { DanmakuRequestHeaderRow(name: $0.key, value: $0.value) }
     }
 
     private func saveAndTestDanmakuAPIConfig() {
@@ -717,7 +798,7 @@ struct DanmakuSettingsScreen: View {
 
     private func restorePackagedDanmakuAPIConfig() {
         danmakuAPIURLText = ""
-        danmakuAPIRequestHeaderRows = [DanmakuRequestHeaderRow()]
+        danmakuAPIRequestHeaderRows = []
         danmakuAPIConfigError = nil
         settings.danmakuAPIURL = ""
         settings.danmakuAPIRequestHeaders = ""
