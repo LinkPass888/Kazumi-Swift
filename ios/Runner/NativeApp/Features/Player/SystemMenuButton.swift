@@ -50,8 +50,8 @@ struct SystemMenuButton: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> CapsuleMenuButton {
-        let button = CapsuleMenuButton(frame: .zero)
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .system)
         button.showsMenuAsPrimaryAction = true
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(
@@ -70,14 +70,14 @@ struct SystemMenuButton: UIViewRepresentable {
         return button
     }
 
-    func updateUIView(_ button: CapsuleMenuButton, context: Context) {
+    func updateUIView(_ button: UIButton, context: Context) {
         apply(to: button, context: context)
         button.setNeedsLayout()
     }
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        uiView: CapsuleMenuButton,
+        uiView: UIButton,
         context: Context
     ) -> CGSize? {
         let intrinsic = uiView.intrinsicContentSize
@@ -126,7 +126,7 @@ struct SystemMenuButton: UIViewRepresentable {
         return result
     }
 
-    private func apply(to button: CapsuleMenuButton, context: Context) {
+    private func apply(to button: UIButton, context: Context) {
         let coordinator = context.coordinator
         let resolvedItems = resolvedItems
         coordinator.items = resolvedItems
@@ -152,7 +152,7 @@ struct SystemMenuButton: UIViewRepresentable {
                 configuration.title = title
                 configuration.baseForegroundColor = tintColor
                 configuration.contentInsets = capsule
-                    ? NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
+                    ? NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
                     : .zero
                 if showsChevron {
                     configuration.image = UIImage(
@@ -163,7 +163,7 @@ struct SystemMenuButton: UIViewRepresentable {
                     configuration.imagePadding = 6
                 }
                 if capsule {
-                    configuration.background.backgroundColor = .clear
+                    configuration.background.backgroundColor = .secondarySystemBackground
                     configuration.cornerStyle = .capsule
                 }
                 configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
@@ -194,8 +194,6 @@ struct SystemMenuButton: UIViewRepresentable {
         } else {
             button.overrideUserInterfaceStyle = .unspecified
         }
-        button.capsuleVisible = capsule
-        button.capsuleBackground.backgroundColor = .secondarySystemBackground
         button.accessibilityLabel = accessibilityLabel
         button.contentHorizontalAlignment = .center
         button.contentVerticalAlignment = .center
@@ -352,42 +350,6 @@ struct SwiftSelectionMenuButton: View {
         }
         .tint(tint)
         .accessibilityLabel(accessibilityLabel)
-    }
-}
-
-final class CapsuleMenuButton: UIButton {
-    let capsuleBackground = UIView()
-
-    var capsuleVisible = false {
-        didSet {
-            capsuleBackground.isHidden = !capsuleVisible
-            setNeedsLayout()
-        }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        capsuleBackground.isUserInteractionEnabled = false
-        capsuleBackground.isHidden = true
-        insertSubview(capsuleBackground, at: 0)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard capsuleVisible else { return }
-        let height = min(32, bounds.height)
-        capsuleBackground.frame = CGRect(
-            x: bounds.minX,
-            y: bounds.midY - height / 2,
-            width: bounds.width,
-            height: height
-        )
-        capsuleBackground.layer.cornerRadius = height / 2
     }
 }
 
