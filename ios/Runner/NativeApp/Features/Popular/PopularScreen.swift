@@ -407,7 +407,11 @@ struct PopularScreen: View {
         // 大标题仍自画、位置照原版顶栏那一行（LP 7221）；系统大标题不采用。
         // iPad 窄窗口：系统顶栏 tab 条隐藏，改画叠图 tab 条（Ato 7111）；
         // iPhone 保留底部系统 tab 栏。
-        .toolbar(isPad ? .hidden : .visible, for: .tabBar)
+        // iPhone 这档不能写 `.visible`：这里是本 Tab 导航栈的根页面，根上显式声明
+        // 可见性会盖掉被推入页面自己的设置——播放页 `.toolbar(.hidden, for: .tabBar)`
+        // 因此失效，从推荐页「开始观看」进播放页时底部 tab 不收（LP 7339）。
+        // 用 `.automatic` 不表态，默认仍是可见，播放页的 `.hidden` 就能生效。
+        .toolbar(isPad ? .hidden : .automatic, for: .tabBar)
         .onAppear {
             // 先把缓存画出来，再后台刷新（LP 2733 / Ato 2734）：
             // 冷启动不该对着空页等网。
