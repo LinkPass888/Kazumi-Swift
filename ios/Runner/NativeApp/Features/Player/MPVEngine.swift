@@ -15,6 +15,8 @@ import UIKit
 protocol PlayerClockProvider: AnyObject {
     var currentPlaybackTime: Double { get }
     var isPlayingNow: Bool { get }
+    /// 正在等网络数据。弹幕时钟要跟着冻住，否则缓冲结束后会一次性回跳/漂移。
+    var isStalledNow: Bool { get }
     /// 画面真的走起来了（首帧 + 进度过 0.15）。换集/停止时由 `PlayerSurfaceModel` 自己复位。
     /// 弹幕层拿它当「起播」判据（LP 5033）：`isPlayingNow` 只表示内核没暂停，
     /// 加载阶段也为 true，用它放行会提前放 0 秒那批弹幕。
@@ -192,6 +194,10 @@ final class MPVEngine {
         // 当前网络算，之后设置或网络变了走 `applyCacheSize()` 立刻改。
         setOption("demuxer-max-bytes", String(cacheBytes))
         setOption("demuxer-max-back-bytes", String(cacheBytes))
+        // main 的网络预取窗口。1500 MiB 只限制内存上限，时间窗口仍要足够长；
+        // 3x 播放时默认窗口会很快耗尽，表现成频繁 core-idle。
+        setOption("cache-secs", "36000")
+        setOption("demuxer-readahead-secs", "1")
 
         let initStatus = mpv_initialize(mpv)
         guard initStatus >= 0 else {
@@ -303,7 +309,7 @@ final class MPVEngine {
         renderingLocked = locked
         log(locked ? "画面：进入后台" : "画面：回到前台")
         if !locked {
-            metalView?.updateDrawableSize()
+            requestRender()
         }
     }
 
@@ -312,6 +318,7 @@ final class MPVEngine {
         guard !renderingLocked else { return }
         metalView?.setNeedsLayout()
         metalView?.updateDrawableSize()
+        reconfigureVideoOutputForSurfaceResize()
     }
 
     /// Metal 层尺寸变化后只重建视频输出，让 gpu-next 重新读取 drawableSize。
@@ -466,6 +473,16 @@ final class MPVEngine {
         if let url = raw.url { return (url, raw.note) }
         log(raw.note)
 
+        // 直通硬件帧不一定能由 screenshot-raw 下载成打包 RGB。只在这条取帧命令
+        // 失败时临时切到 copy 解码，取完立刻恢复；正常播放和画中画路径不受影响。
+        #if !targetEnvironment(simulator)
+        if hardwareDecodeEnabled, hardwareDecodeMode == .videotoolbox {
+            let viaCopy = await captureRawFrame(usingCopyDecoder: true)
+            if let url = viaCopy.url { return (url, viaCopy.note) }
+            log(viaCopy.note)
+        }
+        #endif
+
         // 原始帧那条不成再退一步：试 VO 出图（真机上以前一直失败，留着当第二选择）。
         let viaVO = await captureFrameViaVO()
         if let url = viaVO.url { return (url, viaVO.note) }
@@ -474,8 +491,22 @@ final class MPVEngine {
     }
 
     /// `screenshot-raw` → CGImage → PNG 临时文件。
-    private func captureRawFrame() async -> (url: URL?, note: String) {
+    private func captureRawFrame(
+        usingCopyDecoder: Bool = false
+    ) async -> (url: URL?, note: String) {
         let started = Date()
+        if usingCopyDecoder {
+            setOptionForPlayback("hwdec", HardwareDecodeMode.videotoolboxCopy.rawValue)
+            _ = await waitForDecoder("videotoolbox-copy", timeout: 2)
+        }
+        defer {
+            if usingCopyDecoder {
+                setOptionForPlayback(
+                    "hwdec",
+                    Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode)
+                )
+            }
+        }
         guard let frame = await rawScreenshot() else {
             return (nil, "取帧失败：screenshot-raw 没回帧")
         }
@@ -495,9 +526,21 @@ final class MPVEngine {
         let sourceText = lastSnapshot.videoWidth > 0 && lastSnapshot.videoHeight > 0
             ? "，片源 \(Int(lastSnapshot.videoWidth))×\(Int(lastSnapshot.videoHeight))"
             : ""
-        let note = "截图成功（原始帧）：\(frame.width)×\(frame.height)\(sourceText)，\(frame.format)，\(Int(Date().timeIntervalSince(started) * 1000)) 毫秒"
+        let pathText = usingCopyDecoder ? "临时拷贝解码" : "原始帧"
+        let note = "截图成功（\(pathText)）：\(frame.width)×\(frame.height)\(sourceText)，\(frame.format)，\(Int(Date().timeIntervalSince(started) * 1000)) 毫秒"
         log(note)
         return (path, note)
+    }
+
+    private func waitForDecoder(_ expected: String, timeout: Double) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if stringProperty("hwdec-current")?.hasPrefix(expected) == true {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return false
     }
 
     /// 下发 `screenshot-raw video`，等回执里的那块帧。

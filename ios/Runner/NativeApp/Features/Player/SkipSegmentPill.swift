@@ -47,6 +47,8 @@ final class SkipSegmentPillModel {
     var duration: Double = 0
     /// 用户正在拖进度：弹窗收起来、不自动跳，松手再恢复。
     var isScrubbing = false
+    /// 当前集后面还有没有下一集。末集只提示跳过片尾，不再显示“下一集”倒数。
+    var hasNextEpisode = false
 
     private(set) var kind: SkipKind?
     private(set) var range: SkipRange?
@@ -217,7 +219,10 @@ final class SkipSegmentPillModel {
 
     /// 片尾结束到全集结尾 ≤5 秒：这时 ED 就是本集结尾，换成「下一集 / 取消」。
     private func endsEpisode(_ kind: SkipKind, _ range: SkipRange) -> Bool {
-        kind == .ending && duration > 0 && duration - range.end <= Self.postCreditsThreshold
+        hasNextEpisode
+            && kind == .ending
+            && duration > 0
+            && duration - range.end <= Self.postCreditsThreshold
     }
 }
 

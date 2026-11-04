@@ -611,7 +611,11 @@ private final class PiPFrameCopier {
             guard let self else { return }
             let frame = await engine.captureRawFrameForPictureInPicture()
             self.captureTask = nil
-            guard self.isCapturing, let frame else { return }
+            guard self.isCapturing else { return }
+            guard let frame else {
+                self.logOnce("screenshot-raw 没拿到画中画帧")
+                return
+            }
             self.enqueue(frame)
         }
     }
@@ -645,7 +649,7 @@ private final class PiPFrameCopier {
         }
 
         guard let pixelBuffer = frame.makePixelBuffer() else {
-            logOnce("原始帧转 CVPixelBuffer 失败")
+            logOnce("原始帧转 CVPixelBuffer 失败（\(frame.format)，\(frame.width)×\(frame.height)）")
             return
         }
         guard let sampleBuffer = makeSampleBuffer(

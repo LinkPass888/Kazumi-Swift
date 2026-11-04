@@ -391,6 +391,7 @@ final class PlayerSurfaceModel {
 extension PlayerSurfaceModel: PlayerClockProvider {
     var currentPlaybackTime: Double { currentTime }
     var isPlayingNow: Bool { isPlaying }
+    var isStalledNow: Bool { isStalled }
 }
 
 // MARK: - 画面
@@ -440,6 +441,13 @@ final class MPVHostView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            engine?.requestRender()
+        }
+    }
 
     /// 更新视频矩形所需的三样东西；真正的尺寸在 layoutSubviews 里按当前 bounds 算。
     func updateVideoLayout(

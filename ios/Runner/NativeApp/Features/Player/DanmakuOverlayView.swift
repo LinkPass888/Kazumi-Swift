@@ -198,8 +198,10 @@ final class DanmakuOverlayView: UIView {
         guard let clock else { return lastNow }
         let sample = max(0, clock.currentPlaybackTime)
         let stamp = CACurrentMediaTime()
-        // 首次采样、暂停或换内核：直接对齐绝对时间，暂停时不让弹幕自己前进。
-        if !sampleFilled || !clock.isPlayingNow {
+        // 首次采样、暂停、缓冲或换内核：直接对齐绝对时间。
+        // 缓冲时内核仍可能报 isPlaying；必须单独看 isStalled，否则弹幕会继续走、
+        // 数据恢复后再被绝对时间拽回去，看起来就是左右晃动。
+        if !sampleFilled || !clock.isPlayingNow || clock.isStalledNow {
             sampleTime = sample
             sampleStamp = stamp
             smoothTime = sample

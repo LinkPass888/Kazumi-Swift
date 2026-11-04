@@ -293,6 +293,57 @@ struct SystemMenuButton: UIViewRepresentable {
     }
 }
 
+/// 竖屏选集 / 评论页用的原生 SwiftUI 菜单。
+///
+/// 播放器控制层仍走上面的 UIKit 菜单，避免播放中视图刷新导致菜单动作失效；
+/// 这两个页面不属于控制层，恢复 SwiftUI `Menu` 后更贴近系统交互。
+struct SwiftSelectionMenuButton: View {
+    var selection: SystemMenuButton.Selection
+    var title: String
+    var accessibilityLabel: String
+    var tint: Color = .accentColor
+    var showsChevron = true
+    var capsule = true
+
+    var body: some View {
+        Menu {
+            ForEach(Array(selection.options.enumerated()), id: \.offset) { _, option in
+                Button {
+                    option.action()
+                } label: {
+                    if option.isSelected {
+                        Label(option.title, systemImage: "checkmark")
+                    } else {
+                        Text(option.title)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                if showsChevron {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, capsule ? 12 : 0)
+            .frame(minHeight: 44)
+            .background {
+                if capsule {
+                    Capsule(style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .tint(tint)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 private extension Array {
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil

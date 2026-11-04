@@ -108,18 +108,12 @@ struct MPVRawFrame: Sendable {
                     for x in 0..<width {
                         let pixel = rowStart.advanced(by: x * bytesPerPixel)
                         let destination = outRow.advanced(by: x * 4)
-                        if bytesPerPixel == 4 {
-                            // channels 里记的是「RGBA 四个字节分别从源里哪一位取」。
-                            destination[0] = pixel[channels[0]]
-                            destination[1] = pixel[channels[1]]
-                            destination[2] = pixel[channels[2]]
-                            destination[3] = channels[3] >= 0 ? pixel[channels[3]] : 255
-                        } else {
-                            destination[0] = pixel[channels[0]]
-                            destination[1] = pixel[channels[1]]
-                            destination[2] = pixel[channels[2]]
-                            destination[3] = 255
-                        }
+                        // channels 记的是 RGBA 各通道在源像素里的字节偏移。
+                        // 16-bit RGB 取高字节即可直接降到 8-bit 显示。
+                        destination[0] = pixel[channels[0]]
+                        destination[1] = pixel[channels[1]]
+                        destination[2] = pixel[channels[2]]
+                        destination[3] = channels[3] >= 0 ? pixel[channels[3]] : 255
                     }
                 }
             }
@@ -192,7 +186,7 @@ struct MPVRawFrame: Sendable {
 
     /// 一种打包像素格式的读法。
     private struct PixelLayout {
-        /// 一个像素占几个字节：`rgb24`/`bgr24` 是 3，其余打包格式是 4。
+        /// 一个像素占几个字节：8-bit 是 3/4，16-bit RGB 是 6/8。
         let bytesPerPixel: Int
         /// RGBA 四个字节分别取源里的第几位，-1 表示源里没有这个通道。
         let map: [Int]
@@ -212,6 +206,14 @@ struct MPVRawFrame: Sendable {
         case "abgr": return PixelLayout(bytesPerPixel: 4, map: [3, 2, 1, 0])
         case "rgb24": return PixelLayout(bytesPerPixel: 3, map: [0, 1, 2, -1])
         case "bgr24": return PixelLayout(bytesPerPixel: 3, map: [2, 1, 0, -1])
+        case "rgb48le", "rgb48": return PixelLayout(bytesPerPixel: 6, map: [1, 3, 5, -1])
+        case "bgr48le", "bgr48": return PixelLayout(bytesPerPixel: 6, map: [5, 3, 1, -1])
+        case "rgb48be": return PixelLayout(bytesPerPixel: 6, map: [0, 2, 4, -1])
+        case "bgr48be": return PixelLayout(bytesPerPixel: 6, map: [4, 2, 0, -1])
+        case "rgba64le", "rgba64": return PixelLayout(bytesPerPixel: 8, map: [1, 3, 5, 7])
+        case "bgra64le", "bgra64": return PixelLayout(bytesPerPixel: 8, map: [5, 3, 1, 7])
+        case "rgba64be": return PixelLayout(bytesPerPixel: 8, map: [0, 2, 4, 6])
+        case "bgra64be": return PixelLayout(bytesPerPixel: 8, map: [4, 2, 0, 6])
         default: return nil
         }
     }

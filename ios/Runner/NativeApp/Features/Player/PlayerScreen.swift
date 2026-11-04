@@ -595,6 +595,7 @@ struct PlayerScreen: View {
                         enabled: settings.aniSkipLookup
                     )
                     skipPill.segments = settings.aniSkipLookup ? controller.skipSegments : .empty
+                    skipPill.hasNextEpisode = controller.currentEpisode < controller.episodes.count
                 }
                 skipPill.position = surface.currentTime
                 skipPill.duration = surface.duration
@@ -1973,6 +1974,7 @@ struct PlayerScreen: View {
         guard !isTemporarySpeed else { return }
         isTemporarySpeed = true
         rateBeforeTemporarySpeed = playbackRate
+        PlayerHaptics.bump()
         surface.setPlaybackRate(Float(settings.longPressSpeed))
     }
 
@@ -2130,15 +2132,22 @@ struct PlayerScreen: View {
             .buttonStyle(PlayerPressStyle())
             .accessibilityLabel("返回")
 
-            // 横屏：远程投屏、视频比例跟在返回右边（LP 2026-10-28 第 5 条）。
             if isFullscreen {
-                airPlayButton
-                aspectRatioButton
+                let meta = nowPlayingMeta(controller)
+                let episodeNumber = max(1, controller.currentEpisode)
+                Text("\(meta.title) · \(String(format: "%02d", episodeNumber))")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             // main 竖屏顶栏不放标题（标题在画面下面那块），这里只留出 40 高，
             // 免得后面几颗按钮被顶到左边（Colo 3599）。
-            Spacer(minLength: 40)
+            if !isFullscreen {
+                Spacer(minLength: 40)
+            }
 
             // 横屏底栏已经有弹幕开关，顶栏这颗藏起来，不然两个开关
             // （LP 2026-10-27）。竖屏没有底栏开关，照旧留着。
@@ -2165,22 +2174,7 @@ struct PlayerScreen: View {
         .padding(.top, 12)
     }
 
-    /// 横屏顶栏的远程投屏（LP 2026-10-28 第 5 条）：点开就是那张选设备的卡。
-    private var airPlayButton: some View {
-        Button {
-            openSheet(.airPlay)
-        } label: {
-            Image(systemName: "airplayvideo")
-                .font(.system(size: 20, weight: .regular))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(PlayerPressStyle())
-        .accessibilityLabel("远程投屏")
-    }
-
-    /// 横屏顶栏的视频比例（LP 2026-10-28 第 5 条）：点开直接选，当前项系统打勾。
+    /// 横屏底栏的视频比例：点开直接选，当前项系统打勾。
     private var aspectRatioButton: some View {
         SystemMenuButton(
             selection: .init(options: PlayerAspectRatioMode.allCases.map { mode in
@@ -2361,10 +2355,10 @@ struct PlayerScreen: View {
         return true
     }
 
-    /// 面板右边那行字用固定档位，不把每秒倒计时塞进菜单签名。
+    /// 正在倒数时显示主菜单行右侧的 mm:ss。
     private var sleepTimerValue: String {
-        guard let minutes = sleepTimerMinutes else { return "不开启" }
-        return String(localized: "\(String(describing: minutes)) 分钟")
+        guard let remaining = sleepTimerRemaining else { return "不开启" }
+        return String(format: "%02d:%02d", remaining / 60, remaining % 60)
     }
 
     /// 用户选的那一档（选中的勾看它，不跟着倒数变）。
@@ -2372,10 +2366,12 @@ struct PlayerScreen: View {
         sleepTimerChosenMinutes
     }
 
-    /// 菜单里只显示固定档位。倒计时每秒变化，如果写进菜单会逼 UIKit 每秒重建，
-    /// 播放中弹出来的菜单就又会变成点不动的旧副本。
+    /// 档位保持固定；正在倒数的那一项额外显示 mm:ss。
     private func sleepTimerItemTitle(_ minutes: Int) -> String {
-        String(localized: "\(String(describing: minutes)) 分钟")
+        if sleepTimerChosenMinutes == minutes, let remaining = sleepTimerRemaining {
+            return String(format: "%02d:%02d", remaining / 60, remaining % 60)
+        }
+        return String(localized: "\(String(describing: minutes)) 分钟")
     }
 
     /// 到点暂停。定时器是一次性的 Task，改定或取消都要把上一个收掉。
@@ -2782,9 +2778,13 @@ struct PlayerScreen: View {
                 ) {}
             )
         }
-        // 横屏顶栏已经有远程投屏和视频比例（左上角那两颗），
-        // 「更多」里就不再重复一份（LP 2026-10-28：仅限横屏）。
-        let redundantInLandscape: [SystemMenuButton.Item] = isFullscreen ? [] : [
+        // 横屏底栏已经有视频比例；远程投屏不再占顶栏，统一收进「更多」。
+        let displayMenuItems: [SystemMenuButton.Item] = isFullscreen ? [
+            SystemMenuButton.Item(title: "远程投屏", symbol: "airplayvideo") {
+                closeMenu()
+                openSheet(.airPlay)
+            },
+        ] : [
             SystemMenuButton.Item(title: "远程投屏", symbol: "airplayvideo") {
                 closeMenu()
                 openSheet(.airPlay)
@@ -2823,7 +2823,7 @@ struct PlayerScreen: View {
                 closeMenu()
                 openSheet(.videoInfo)
             },
-        ] + redundantInLandscape + [
+        ] + displayMenuItems + [
             SystemMenuButton.Item(title: String(localized: "外部播放"), symbol: "arrow.up.forward.app") {
                 closeMenu()
                 openSheet(.externalPlay)
@@ -3024,6 +3024,7 @@ struct PlayerScreen: View {
                     .frame(maxWidth: .infinity)
                 superResolutionButton
                 speedButton
+                aspectRatioButton
                 episodesButton
                 fullscreenButton
             }
@@ -3919,6 +3920,20 @@ struct PlayerScreen: View {
         let currentPage = min(episodeGridPage, max(0, pages - 1))
         let lo = currentPage * pageSize
         let hi = min(total, lo + pageSize)
+        let pageSelection = SystemMenuButton.Selection(options: (0 ..< pages).map { page in
+            let a = page * pageSize + 1
+            let b = min(total, (page + 1) * pageSize)
+            return SystemMenuButton.Selection.Option(
+                title: String(localized: "\(String(describing: a))–\(String(describing: b)) 集"),
+                isSelected: episodeGridPage == page
+            ) {
+                episodeGridPage = page
+            }
+        })
+        let pageTitle = String(localized: "\(String(describing: lo + 1))–\(String(describing: hi)) 集")
+        let pageAccessibilityLabel = String(
+            localized: "快速跳转，现在显示第 \(String(describing: lo + 1)) 到 \(String(describing: hi)) 集"
+        )
 
         VStack(spacing: 0) {
             // 线路选择器只在 2 条以上线路时才画，季选择器只在 2 季以上时才画，
@@ -3939,28 +3954,26 @@ struct PlayerScreen: View {
                     }
                     // 页码菜单在选择态里收起：顶行这时候要给三颗按钮腾位置（Colo 5090）。
                     if pages > 1 && !isChoosingDownloads {
-                        SystemMenuButton(
-                            selection: .init(options: (0 ..< pages).map { page in
-                                let a = page * pageSize + 1
-                                let b = min(total, (page + 1) * pageSize)
-                                return SystemMenuButton.Selection.Option(
-                                    title: String(localized: "\(String(describing: a))–\(String(describing: b)) 集"),
-                                    isSelected: episodeGridPage == page
-                                ) {
-                                    episodeGridPage = page
-                                }
-                            }),
-                            title: String(localized: "\(String(describing: lo + 1))–\(String(describing: hi)) 集"),
-                            symbol: "",
-                            accessibilityLabel: String(localized: "快速跳转，现在显示第 \(String(describing: lo + 1)) 到 \(String(describing: hi)) 集"),
-                            // 剧集/评论区不算播放器菜单，字和选中态跟主题色
-                            // （LP 2026-10-28；Colo 划的界）。
-                            tint: .accentColor,
-                            showsChevron: true,
-                            menuTint: .accentColor,
-                            // 「选一项」的钮套胶囊（Colo 5439）。
-                            capsule: true
-                        )
+                        Group {
+                            if isFullscreen {
+                                SystemMenuButton(
+                                    selection: pageSelection,
+                                    title: pageTitle,
+                                    symbol: "",
+                                    accessibilityLabel: pageAccessibilityLabel,
+                                    tint: .accentColor,
+                                    showsChevron: true,
+                                    menuTint: .accentColor,
+                                    capsule: true
+                                )
+                            } else {
+                                SwiftSelectionMenuButton(
+                                    selection: pageSelection,
+                                    title: pageTitle,
+                                    accessibilityLabel: pageAccessibilityLabel
+                                )
+                            }
+                        }
                         .frame(height: 44)
                     }
                     Spacer(minLength: 0)
@@ -4284,20 +4297,11 @@ struct PlayerScreen: View {
     private var commentsPane: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                // 左：当前集（默认当集，不再提供「整部番」）
-                // 也用 UIKit 菜单：播放中视图每秒重建，SwiftUI 的 Menu 弹出来的是旧的那份、
-                // 点了不执行（LP 3321「剧集和评论下边的都换了吗」）。
-                SystemMenuButton(
+                // 左：当前集（默认当集，不再提供「整部番」）。
+                SwiftSelectionMenuButton(
                     selection: commentEpisodeSelection(),
                     title: commentEpisode.map { String(localized: "第 \(String(describing: $0)) 集") } ?? String(localized: "第 — 集"),
-                    symbol: "",
-                    accessibilityLabel: commentEpisode.map { String(localized: "当前查看第 \(String(describing: $0)) 集评论") } ?? String(localized: "当前查看集数评论"),
-                    // 评论区那颗，跟选集数 / 排序一样回主题色（LP 2026-10-28）。
-                    tint: .accentColor,
-                    showsChevron: true,
-                    menuTint: .accentColor,
-                    // 「选一项」的钮套胶囊（Colo 5439）。
-                    capsule: true
+                    accessibilityLabel: commentEpisode.map { String(localized: "当前查看第 \(String(describing: $0)) 集评论") } ?? String(localized: "当前查看集数评论")
                 )
                 .frame(height: 44)
                 Spacer(minLength: 8)
@@ -4309,7 +4313,7 @@ struct PlayerScreen: View {
                     .contentTransition(.numericText())
                 Spacer(minLength: 8)
                 // 右：排序（按钮上直接写当前排序方式） + 刷新
-                SystemMenuButton(
+                SwiftSelectionMenuButton(
                     selection: .init(options: [
                         SystemMenuButton.Selection.Option(
                             title: String(localized: "最新优先"),
@@ -4327,14 +4331,7 @@ struct PlayerScreen: View {
                         },
                     ]),
                     title: isCommentsAscending ? "最早优先" : "最新优先",
-                    symbol: "",
-                    accessibilityLabel: String(localized: "评论排序"),
-                    // 同选集数那颗：剧集/评论区的菜单钮用主题色。
-                    tint: .accentColor,
-                    showsChevron: true,
-                    menuTint: .accentColor,
-                    // 「选一项」的钮套胶囊（Colo 5439）。
-                    capsule: true
+                    accessibilityLabel: String(localized: "评论排序")
                 )
                 .frame(height: 44)
                 Button {
@@ -4524,11 +4521,10 @@ struct PlayerScreen: View {
     }
 
     /// 线路：多于一条时才出现，按钮上写当前实际在用的那条线路名。
+    @ViewBuilder
     private func roadMenu(_ controller: PlayerController) -> some View {
-        // 用 UIKit 的菜单按钮，不用 SwiftUI 的 `Menu`：播放中视图每秒重建，
-        // `Menu` 弹出来的是旧的那一份，点了不执行（播放器里那两颗也是这么修的）。
-        SystemMenuButton(
-            selection: .init(options: controller.roads.enumerated().map { index, road in
+        let selection = SystemMenuButton.Selection(
+            options: controller.roads.enumerated().map { index, road in
                 .init(
                     title: Self.roadItemTitle(road),
                     isSelected: index == controller.selectedRoad
@@ -4539,22 +4535,33 @@ struct PlayerScreen: View {
                     surface.prepareForNewEpisode()
                     Task { await controller.selectRoad(index) }
                 }
-            }),
-            // 不预设「线路 1」：来源给什么名字就显示什么名字（cht／chs 这种照抄），
-            // 也不自己编号（LP 3370 / Colo 3371）。
-            title: controller.roads.indices.contains(controller.selectedRoad)
-                ? Self.roadName(controller.roads[controller.selectedRoad])
-                : String(localized: "线路"),
-            symbol: "",
-            accessibilityLabel: String(localized: "选择线路"),
-            // 线路在选集区，跟选集数 / 排序 / 评论集一样算剧集那块，用主题色
-            // （LP 2026-10-28；Colo 指的位置）。
-            tint: .accentColor,
-            showsChevron: true,
-            menuTint: .accentColor,
-            // 「选一项」的钮套胶囊（Colo 5439）：四颗之一。
-            capsule: true
+            }
         )
+        // 不预设「线路 1」：来源给什么名字就显示什么名字（cht／chs 这种照抄），
+        // 也不自己编号（LP 3370 / Colo 3371）。
+        let title = controller.roads.indices.contains(controller.selectedRoad)
+            ? Self.roadName(controller.roads[controller.selectedRoad])
+            : String(localized: "线路")
+        Group {
+            if isFullscreen {
+                SystemMenuButton(
+                    selection: selection,
+                    title: title,
+                    symbol: "",
+                    accessibilityLabel: String(localized: "选择线路"),
+                    tint: .accentColor,
+                    showsChevron: true,
+                    menuTint: .accentColor,
+                    capsule: true
+                )
+            } else {
+                SwiftSelectionMenuButton(
+                    selection: selection,
+                    title: title,
+                    accessibilityLabel: String(localized: "选择线路")
+                )
+            }
+        }
         .frame(height: 44)
     }
 
