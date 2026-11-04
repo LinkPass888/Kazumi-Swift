@@ -3159,9 +3159,6 @@ struct PlayerScreen: View {
             // 右缘别贴到安全区边上：留 16，加上这一侧的安全区就是离屏幕边的最小距离
             // （Colo：贴边时右上、右下那两格会被屏幕圆角切掉）。
             .padding(.trailing, 16)
-            // 玻璃压在视频上，内容一律按深色排：白字、深底格子，
-            // 浅色下那套白底黑字在这儿糊成一团。
-            .environment(\.colorScheme, .dark)
             .background { GlassBackdrop() }
             // 只有左边两个角是圆的，右边贴着屏边（Colo §7：32）。
             .clipShape(
@@ -3958,7 +3955,6 @@ struct PlayerScreen: View {
                                     tint: .accentColor,
                                     showsChevron: true,
                                     menuTint: .accentColor,
-                                    interfaceStyle: colorScheme,
                                     capsule: true
                                 )
                             } else {
@@ -4058,6 +4054,7 @@ struct PlayerScreen: View {
         // 铺满并靠左：VStack 默认把没铺满的子视图摆到中间，线路按钮那一行
         // 就会被摆到屏幕中间（LP 3389 / Colo 3390）。
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground).opacity(0.88))
         .onAppear {
             // 进来就把当前集那一块翻出来，不用用户再去找
             if total > 0 {
@@ -4547,7 +4544,6 @@ struct PlayerScreen: View {
                     tint: .accentColor,
                     showsChevron: true,
                     menuTint: .accentColor,
-                    interfaceStyle: colorScheme,
                     capsule: true
                 )
             } else {

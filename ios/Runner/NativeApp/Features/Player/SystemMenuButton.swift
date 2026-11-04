@@ -41,8 +41,6 @@ struct SystemMenuButton: UIViewRepresentable {
     var tint: Color = .white
     var showsChevron: Bool = false
     var menuTint: Color = .primary
-    /// UIKit 菜单按钮所在页面被强制深色时，仍按外层真实外观解析动态色。
-    var interfaceStyle: ColorScheme? = nil
     var symbolSize: CGFloat = 20
     var symbolWeight: Font.Weight = .regular
     var onOpen: () -> Void = {}
@@ -142,7 +140,6 @@ struct SystemMenuButton: UIViewRepresentable {
             String(showsChevron),
             String(capsule),
             String(describing: tintColor),
-            String(interfaceStyle == .dark),
         ].joined(separator: "|")
 
         if appearanceSignature != coordinator.appearanceSignature {
@@ -152,7 +149,7 @@ struct SystemMenuButton: UIViewRepresentable {
                 configuration.title = title
                 configuration.baseForegroundColor = tintColor
                 configuration.contentInsets = capsule
-                    ? NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+                    ? NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
                     : .zero
                 if showsChevron {
                     configuration.image = UIImage(
@@ -189,11 +186,6 @@ struct SystemMenuButton: UIViewRepresentable {
         }
 
         button.tintColor = tintColor
-        if let interfaceStyle {
-            button.overrideUserInterfaceStyle = interfaceStyle == .dark ? .dark : .light
-        } else {
-            button.overrideUserInterfaceStyle = .unspecified
-        }
         button.accessibilityLabel = accessibilityLabel
         button.contentHorizontalAlignment = .center
         button.contentVerticalAlignment = .center
