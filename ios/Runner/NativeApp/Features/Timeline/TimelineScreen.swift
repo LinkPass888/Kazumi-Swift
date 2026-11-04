@@ -197,7 +197,8 @@ struct TimelineScreen: View {
             Spacer(minLength: 8)
             optionsButton
         }
-        .padding(.horizontal, 16)
+        // iPad 宽档标题边距 20，跟「我的」页系统大标题取齐（Colo 7261）；手机档照旧 16。
+        .padding(.horizontal, isWideTier ? 20 : 16)
         .padding(.top, 8)
         .padding(.bottom, 10)
     }

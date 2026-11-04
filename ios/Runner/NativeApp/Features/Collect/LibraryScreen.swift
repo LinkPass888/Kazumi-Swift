@@ -196,7 +196,8 @@ struct LibraryScreen: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
+        // iPad 宽档标题边距 20，跟「我的」页系统大标题取齐（Colo 7261）；手机档照旧 16。
+        .padding(.horizontal, isWideTier ? 20 : 16)
         .padding(.top, 8)
         .padding(.bottom, 10)
         // Colo 3461：搜索状态下，搜索框以上这一整块是取消的**主要落点**——

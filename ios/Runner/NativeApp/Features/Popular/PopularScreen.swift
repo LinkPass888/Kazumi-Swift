@@ -445,11 +445,11 @@ struct PopularScreen: View {
                 .frame(height: 36)
                 .padding(.top, 73)
                 // 大标题在 tab 条下一行（行顶 117 = 109+8，左 16）；样式照 HEAD topBar 原样
-                //（.largeTitle semibold、字距 −0.4、.primary、一层黑 30% 阴影）。
+                //（.largeTitle semibold、字距 −0.4、黑 30% 阴影），字恒白（LP 7275 / Colo 7279）。
                 Text("推荐")
                     .font(.largeTitle.weight(.semibold))
                     .tracking(-0.4)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.white)
                     .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 16)
@@ -462,7 +462,7 @@ struct PopularScreen: View {
                     Text("推荐")
                         .font(.largeTitle.weight(.semibold))
                         .tracking(-0.4)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Color.white)
                         .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
                         .frame(height: 44, alignment: .center)
                         .accessibilityAddTraits(.isHeader)

@@ -436,39 +436,79 @@ struct PopularHero: View {
     }
 
     /// 封面在左、整块信息在右，垂直居中（Colo 6725）：右栏 963 高，六项排满 432，
-    /// 居中后上留 265、下留 266，读起来是留白不是洞。标题和两颗圆钮压在这一栏的顶上。
+    /// 居中后上留 265、下留 266，读起来是留白不是洞。标题压在封面右段 x=500、
+    /// 两颗圆钮贴屏右缘（Colo 7244），不再收进右栏；整行（标题行+圆钮+信息块）
+    /// 挂同一个跟移偏移（Ato 7241 / Colo 7236）。
     private var trailingFilledLayout: some View {
         HStack(alignment: .top, spacing: 32) {
             coverLayer
                 .frame(width: coverWidth, height: coverHeight)
             VStack(alignment: .leading, spacing: 0) {
-                PopularWideTopBar(leadingPadding: 0)
-                    .padding(.top, Self.statusBarHeight + 12)
                 Spacer(minLength: 0)
                 infoCard
                     .frame(width: textWidth, alignment: .leading)
                 Spacer(minLength: 0)
             }
             .frame(width: textWidth)
+            // 信息块和标题行同一个量：封面底边往下长多少就下移多少（Ato 7241 / Colo 7236）。
+            .offset(y: fadeOffset)
             Spacer(minLength: 0)
         }
         .frame(height: coverHeight)
+        .overlay(alignment: .topLeading) {
+            // 标题贴屏最左，边距跟「我的」页系统大标题取齐 x=20（LP 7255 / Colo 7257 实机量得）；
+            // 行顶 = tab 药丸实际底边 +8（Colo 7253）；量不到药丸时按 1032×1376 实测节奏回落
+            // （tab 底 59.5、标题顶 67.5）。
+            PopularWideTopBar(leadingPadding: 20)
+                .padding(.top, (Self.tabBarBottomEdge() ?? Self.statusBarHeight + 26) + 8)
+                // 标题行和圆钮跟信息块同一个量：封面底边往下长多少就下移多少，
+                // 同一个状态（pullScale）、同一个弹簧（Ato 7241 / Colo 7236）。
+                .offset(y: fadeOffset)
+        }
+    }
+
+    /// 浮动 tab 条药丸底边（窗口 y）：iPad 竖屏全宽档的大标题要压在它下面一行
+    /// （Colo 7253：标题行顶 = tab 条实际底边 +8）。找法同 PopularScreen.tabBarLeadingEdge；
+    /// 系统改名找不到时返回 nil，调用处自己回落。
+    static func tabBarBottomEdge() -> CGFloat? {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first?.keyWindow,
+              let bar = findTabBar(in: window) else { return nil }
+        var queue: [UIView] = bar.subviews
+        while !queue.isEmpty {
+            let v = queue.removeFirst()
+            if String(describing: type(of: v)) == "_UITabBarItemPlatterView" {
+                return v.convert(v.bounds, to: window).maxY.rounded()
+            }
+            queue.append(contentsOf: v.subviews)
+        }
+        return nil
+    }
+
+    private static func findTabBar(in view: UIView) -> UITabBar? {
+        if let bar = view as? UITabBar { return bar }
+        for sub in view.subviews { if let b = findTabBar(in: sub) { return b } }
+        return nil
     }
 
     /// 左栏信息块：名称、元信息、开始观看、圆点、简介、标签行（Colo 6691）。
     /// 简介是异步来的，先占住位置再替换，免得数据一到整块往下推。
     private var infoCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // 手机竖屏（overlay 压图）居中（LP 7284 / Colo 7286）；below / trailingFilled 仍是左缘那套。
+        let centered = textPlacement == .overlay
+        return VStack(alignment: .leading, spacing: 0) {
             Text(current?.displayName ?? "")
                 .font(.system(size: title2Base * coverTextScale, weight: .bold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
-                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
 
+            // 元信息回到带 • 的灰字（LP 7307，胶囊那几轮作废）；手机竖屏随整块居中。
             if let meta = current?.metaLine {
                 Text(meta)
                     .font(.system(size: footnoteBase * coverTextScale))
                     .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                    .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
                     .padding(.top, 6)
             }
 
@@ -476,22 +516,38 @@ struct PopularHero: View {
             // 收藏留同一行右端；通栏只属于 below / iPad 横屏左栏（Ato 6936）。
             // 轮播页点在按钮行上面（LP 7231）：元信息底下，先点后按钮。
             dots
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
                 .padding(.top, 12)
 
-            HStack(spacing: 12) {
-                playButton(expanded: textPlacement == .below || textPlacement == .trailingFilled)
-                    .frame(maxWidth: (textPlacement == .below || textPlacement == .trailingFilled) ? .infinity : nil)
-                if textPlacement == .overlay {
-                    Spacer(minLength: 0)
+            // 手机竖屏：开始观看单独居中，收藏贴右缘（LP 7295，改掉 7286 的「整体居中」）；
+            // 其余档照旧：below / trailingFilled 开始观看通栏，收藏同行右端。
+            Group {
+                if centered {
+                    ZStack {
+                        playButton(expanded: false)
+                            .frame(maxWidth: .infinity)
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            followButton
+                        }
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        playButton(expanded: textPlacement == .below || textPlacement == .trailingFilled)
+                            .frame(maxWidth: (textPlacement == .below || textPlacement == .trailingFilled) ? .infinity : nil)
+                        followButton
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                followButton
             }
             .padding(.top, 10)
 
             summarySlot
                 .padding(.top, 16)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // 名称、简介跟着居中（multilineTextAlignment 沿环境往下传）。
+        .multilineTextAlignment(centered ? .center : .leading)
+        .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
     }
 
     /// 简介位：有数据画三行，没有就先画三条骨架灰条占住同一块高度（Colo 6691 第二条）。
@@ -972,7 +1028,8 @@ struct PopularHero: View {
                 .tracking(-0.4)
                 // 压在封面上的字得有一层才读得清（Colo 2864）：就这一层，别更重。
                 .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
-                .foregroundStyle(.primary)
+                // 恒定白（LP 7275 / Colo 7279）：不随系统深浅色变，不是语义色。
+                .foregroundStyle(Color.white)
                 .accessibilityAddTraits(.isHeader)
 
             Spacer()
@@ -1210,7 +1267,10 @@ struct PopularWideTopBar: View {
             Text("推荐")
                 .font(.largeTitle.weight(.semibold))
                 .tracking(-0.4)
-                .foregroundStyle(.primary)
+                // 恒定白（LP 7275 / Colo 7279）：与窄档标题同一套，不随系统深浅色变。
+                .foregroundStyle(Color.white)
+                // 白字得有一层才读得清（Colo 2864），两档同一层。
+                .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
                 .accessibilityAddTraits(.isHeader)
 
             Spacer()
@@ -1238,9 +1298,13 @@ struct PopularTopBarCircle: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(.primary)
+                // 图标恒白（LP 7275 / Colo 7279）。
+                .foregroundStyle(Color.white)
                 .frame(width: 40, height: 40)
                 .kazumiGlassCapsule(interactive: true)
+                // 玻璃固定取深色那一档（LP 7277 / Colo 7279）：让系统 glassEffect
+                // 按深色档渲染，不用 tint 压黑（tint 只是色罩，出不来深玻璃）。
+                .environment(\.colorScheme, .dark)
         }
         .buttonStyle(.plain)
         .hitTarget44()
