@@ -1632,12 +1632,12 @@
         }
       }
     },
-    "今日缓存计划":{
+    "今日番剧更新":{
       "localizations":{
         "zh-Hant":{
           "stringUnit":{
             "state":"translated",
-            "value":"今日快取計畫"
+            "value":"今日動畫更新"
           }
         }
       }
@@ -4909,16 +4909,6 @@
         }
       }
     },
-    "已请求打开收藏库。":{
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"已請求開啟收藏庫。"
-          }
-        }
-      }
-    },
     "已请求打开现有搜索页面；页面可能联网。":{
       "localizations":{
         "zh-Hant":{
@@ -5922,16 +5912,6 @@
         }
       }
     },
-    "打开%@收藏库":{
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"開啟%@收藏庫"
-          }
-        }
-      }
-    },
     "打开%@的详情":{
       "localizations":{
         "zh-Hant":{
@@ -5982,16 +5962,6 @@
         }
       }
     },
-    "打开应用的收藏库，不修改收藏状态。":{
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"打開應用程式的收藏庫，不修改收藏狀態。"
-          }
-        }
-      }
-    },
     "打开弹幕":{
       "localizations":{
         "zh-Hant":{
@@ -6008,16 +5978,6 @@
           "stringUnit":{
             "state":"translated",
             "value":"開啟播放器"
-          }
-        }
-      }
-    },
-    "打开收藏库":{
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"打開收藏庫"
           }
         }
       }
@@ -6931,16 +6891,6 @@
           "stringUnit":{
             "state":"translated",
             "value":"收藏已同步"
-          }
-        }
-      }
-    },
-    "收藏库":{
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"收藏庫"
           }
         }
       }
@@ -8340,12 +8290,12 @@
         }
       }
     },
-    "查看今日缓存计划":{
+    "查看今日番剧更新":{
       "localizations":{
         "zh-Hant":{
           "stringUnit":{
             "state":"translated",
-            "value":"查看今日快取計畫"
+            "value":"查看今日動畫更新"
           }
         }
       }
@@ -12244,16 +12194,6 @@
         }
       }
     },
-    "运行并打开：收藏库":{
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"執行並打開：收藏庫"
-          }
-        }
-      }
-    },
     "运行并打开：番剧详情":{
       "localizations":{
         "zh-Hant":{
@@ -12284,12 +12224,12 @@
         }
       }
     },
-    "运行：今日缓存计划":{
+    "运行：今日番剧更新":{
       "localizations":{
         "zh-Hant":{
           "stringUnit":{
             "state":"translated",
-            "value":"執行：今日快取計畫"
+            "value":"執行：今日動畫更新"
           }
         }
       }

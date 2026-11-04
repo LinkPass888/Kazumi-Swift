@@ -6,7 +6,6 @@
 //  启动后先检查应用更新（有新版就弹更新日志），再检查规则更新。
 //
 
-import AppIntents
 import SwiftUI
 
 struct AppRoot: View {
@@ -42,28 +41,13 @@ struct AppRoot: View {
         // 强调色按 SwiftUI 的当前明暗显式取：这里能读到 `colorScheme`（= 设置里的
         // 主题模式），不再走 UIKit 动态色那条路。
         .tint(accentColor)
-        .onAppIntentExecution(OpenAnimeIntent.self) { intent in
-            guard intent.anime.id > 0,
-                  environment.library.entry(for: intent.anime.id) != nil
-                    || environment.library.record(for: intent.anime.id) != nil else { return }
-            environment.router.open(.bangumi(intent.anime.id))
-        }
-        .onAppIntentExecution(SearchAnimeIntent.self) { intent in
-            let query = intent.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !query.isEmpty else { return }
-            environment.router.open(.search(query))
-        }
-        .onAppIntentExecution(OpenLibraryIntent.self) { _ in
-            environment.router.open(.library)
-        }
-        .onAppIntentExecution(OpenHistoryIntent.self) { _ in
-            environment.router.open(.history)
-        }
-        .onAppIntentExecution(OpenDownloadsIntent.self) { _ in
-            environment.router.open(.downloads)
-        }
         .onAppear {
             environment.router.isRootMounted = failure == nil
+            // 冷启动时意图可能早于根视图就绪，先把它要去的页面补发出去。
+            if let link = AppRouter.pendingFromIntent {
+                AppRouter.pendingFromIntent = nil
+                environment.router.open(link)
+            }
             environment.router.onExternalNavigationRequested?()
         }
         .onChange(of: environment.router.externalNavigationDeferralCount) { _, count in

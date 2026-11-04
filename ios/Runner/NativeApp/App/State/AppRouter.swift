@@ -372,6 +372,19 @@ final class AppRouter {
     var externalNavigationDeferralCount = 0
     @ObservationIgnored var onExternalNavigationRequested: (() -> Void)?
 
+    /// 前台 App Intent 在自己的进程里跑，拿不到 SwiftUI 环境，只能从这里回到同一个 router。
+    static weak var activeInstance: AppRouter?
+    /// 冷启动时意图可能先于根视图就绪，先存着，等 AppRoot 挂上再发出去。
+    static var pendingFromIntent: KazumiLink?
+
+    static func openFromIntent(_ link: KazumiLink) {
+        if let active = activeInstance {
+            active.open(link)
+        } else {
+            pendingFromIntent = link
+        }
+    }
+
     @discardableResult
     func openURL(_ url: URL) -> Bool {
         guard let link = KazumiLink.parse(url) else { return false }
@@ -434,6 +447,7 @@ final class AppRouter {
     /// 启动时打开的标签（对应原版的 defaultStartupPage）。
     init(defaultStartupPage: String = "/tab/popular/") {
         selectedDestination = AppDestination.from(startupPage: defaultStartupPage)
+        AppRouter.activeInstance = self
     }
 
     func path(for destination: AppDestination) -> [AppRoute] {

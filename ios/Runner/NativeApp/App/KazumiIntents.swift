@@ -136,6 +136,14 @@ private enum LocalIntentData {
         return String(localized: "本机“\(filter.title)”收藏共\(entries.count)部\(suffix)：\(names)。仅本机已保存记录，未查询云端。")
     }
 
+    static func librarySummary(_ filter: IntentLibraryFilter) -> String {
+        let count = library().entries.filter {
+            $0.collectType != .none && (filter.collectType == nil || $0.collectType == filter.collectType)
+        }.count
+        guard count > 0 else { return String(localized: "本机没有“\(filter.title)”收藏记录；未查询云端。") }
+        return String(localized: "本机“\(filter.title)”收藏共\(count)部，名单在结果里。")
+    }
+
     static func today(now: Date = Date()) -> String {
         guard let snapshot = TimelineCache.shared.localCurrentSnapshot(
             seasonStart: AnimeSeason.seasonRange(for: now).start
@@ -197,6 +205,7 @@ struct OpenAnimeIntent: TargetContentProvidingIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         try LocalIntentData.validate(anime)
+        AppRouter.openFromIntent(.bangumi(anime.id))
         return .result()
     }
 }
@@ -209,20 +218,12 @@ struct SearchAnimeIntent: TargetContentProvidingIntent {
     static var parameterSummary: some ParameterSummary { Summary("搜索番剧\(\.$query)") }
     @MainActor
     func perform() async throws -> some IntentResult {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else {
             throw KazumiIntentError.emptyQuery
         }
+        AppRouter.openFromIntent(.search(keyword))
         return .result()
-    }
-}
-
-struct OpenLibraryIntent: TargetContentProvidingIntent {
-    static let title: LocalizedStringResource = "打开收藏库"
-    static let description = IntentDescription("打开应用的收藏库，不修改收藏状态。")
-    static let supportedModes: IntentModes = .foreground
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        .result()
     }
 }
 
@@ -232,7 +233,8 @@ struct OpenHistoryIntent: TargetContentProvidingIntent {
     static let supportedModes: IntentModes = .foreground
     @MainActor
     func perform() async throws -> some IntentResult {
-        .result()
+        AppRouter.openFromIntent(.history)
+        return .result()
     }
 }
 
@@ -242,12 +244,13 @@ struct OpenDownloadsIntent: TargetContentProvidingIntent {
     static let supportedModes: IntentModes = .foreground
     @MainActor
     func perform() async throws -> some IntentResult {
-        .result()
+        AppRouter.openFromIntent(.downloads)
+        return .result()
     }
 }
 
 struct ReadTodayScheduleIntent: AppIntent {
-    static let title: LocalizedStringResource = "查看今日缓存计划"
+    static let title: LocalizedStringResource = "查看今日番剧更新"
     static let description = IntentDescription("离线读取当季时间表缓存中的今日计划及保存时间，不查询云端，不保证片源可用。")
     static let supportedModes: IntentModes = .background
     @MainActor
@@ -279,7 +282,8 @@ struct ReadLibraryIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         let text = LocalIntentData.libraryText(filter)
-        return .result(value: text, dialog: "\(text)")
+        let dialog = LocalIntentData.librarySummary(filter)
+        return .result(value: text, dialog: "\(dialog)")
     }
 }
 
@@ -287,8 +291,7 @@ struct KazumiShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: OpenAnimeIntent(), phrases: ["用\(.applicationName)打开番剧"], shortTitle: "打开番剧", systemImageName: "play.rectangle")
         AppShortcut(intent: SearchAnimeIntent(), phrases: ["用\(.applicationName)搜索番剧"], shortTitle: "搜索番剧", systemImageName: "magnifyingglass")
-        AppShortcut(intent: ReadTodayScheduleIntent(), phrases: ["查看\(.applicationName)今日计划", "\(.applicationName)今天更新什么"], shortTitle: "今日缓存计划", systemImageName: "calendar")
-        AppShortcut(intent: OpenLibraryIntent(), phrases: ["打开\(.applicationName)收藏库"], shortTitle: "收藏库", systemImageName: "heart")
+        AppShortcut(intent: ReadTodayScheduleIntent(), phrases: ["查看\(.applicationName)今日计划", "\(.applicationName)今天更新什么"], shortTitle: "今日番剧更新", systemImageName: "calendar")
         AppShortcut(intent: OpenHistoryIntent(), phrases: ["查看\(.applicationName)观看历史"], shortTitle: "观看历史", systemImageName: "clock")
     }
     static let shortcutTileColor: ShortcutTileColor = .blue
@@ -318,7 +321,7 @@ struct KazumiIntentDebugView: View {
                 }
             }
             Section("本机只读结果") {
-                Button("运行：今日缓存计划") {
+                Button("运行：今日番剧更新") {
                     run { (try await ReadTodayScheduleIntent().perform()).value ?? "没有返回内容" }
                 }.accessibilityIdentifier("debug-intents-today")
                 Picker("收藏状态", selection: $filter) {
@@ -349,7 +352,6 @@ struct KazumiIntentDebugView: View {
                         let intent = SearchAnimeIntent()
                         intent.query = query
                         _ = try await intent.perform()
-                        environment.router.open(.search(query.trimmingCharacters(in: .whitespacesAndNewlines)))
                         return "已请求打开现有搜索页面；页面可能联网。"
                     }
                 }.accessibilityIdentifier("debug-intents-search")
@@ -359,29 +361,19 @@ struct KazumiIntentDebugView: View {
                         let intent = OpenAnimeIntent()
                         intent.anime = selected
                         _ = try await intent.perform()
-                        environment.router.open(.bangumi(selected.id))
                         return "已请求打开番剧详情，不自动播放。"
                     }
                 }.disabled(selected == nil)
                     .accessibilityIdentifier("debug-intents-open-anime")
-                Button("运行并打开：收藏库") {
-                    run {
-                        _ = try await OpenLibraryIntent().perform()
-                        environment.router.open(.library)
-                        return "已请求打开收藏库。"
-                    }
-                }.accessibilityIdentifier("debug-intents-open-library")
                 Button("运行并打开：观看历史") {
                     run {
                         _ = try await OpenHistoryIntent().perform()
-                        environment.router.open(.history)
                         return "已请求打开观看历史。"
                     }
                 }.accessibilityIdentifier("debug-intents-open-history")
                 Button("运行并打开：下载") {
                     run {
                         _ = try await OpenDownloadsIntent().perform()
-                        environment.router.open(.downloads)
                         return "已请求打开下载页面。"
                     }
                 }.accessibilityIdentifier("debug-intents-open-downloads")
