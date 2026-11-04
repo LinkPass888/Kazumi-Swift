@@ -41,6 +41,8 @@ struct SystemMenuButton: UIViewRepresentable {
     var tint: Color = .white
     var showsChevron: Bool = false
     var menuTint: Color = .primary
+    /// UIKit 菜单按钮所在页面被强制深色时，仍按外层真实外观解析动态色。
+    var interfaceStyle: ColorScheme? = nil
     var symbolSize: CGFloat = 20
     var symbolWeight: Font.Weight = .regular
     var onOpen: () -> Void = {}
@@ -48,8 +50,8 @@ struct SystemMenuButton: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> UIButton {
-        let button = UIButton(type: .system)
+    func makeUIView(context: Context) -> CapsuleMenuButton {
+        let button = CapsuleMenuButton(frame: .zero)
         button.showsMenuAsPrimaryAction = true
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(
@@ -68,14 +70,14 @@ struct SystemMenuButton: UIViewRepresentable {
         return button
     }
 
-    func updateUIView(_ button: UIButton, context: Context) {
+    func updateUIView(_ button: CapsuleMenuButton, context: Context) {
         apply(to: button, context: context)
         button.setNeedsLayout()
     }
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        uiView: UIButton,
+        uiView: CapsuleMenuButton,
         context: Context
     ) -> CGSize? {
         let intrinsic = uiView.intrinsicContentSize
@@ -124,7 +126,7 @@ struct SystemMenuButton: UIViewRepresentable {
         return result
     }
 
-    private func apply(to button: UIButton, context: Context) {
+    private func apply(to button: CapsuleMenuButton, context: Context) {
         let coordinator = context.coordinator
         let resolvedItems = resolvedItems
         coordinator.items = resolvedItems
@@ -140,6 +142,7 @@ struct SystemMenuButton: UIViewRepresentable {
             String(showsChevron),
             String(capsule),
             String(describing: tintColor),
+            String(interfaceStyle == .dark),
         ].joined(separator: "|")
 
         if appearanceSignature != coordinator.appearanceSignature {
@@ -160,7 +163,7 @@ struct SystemMenuButton: UIViewRepresentable {
                     configuration.imagePadding = 6
                 }
                 if capsule {
-                    configuration.background.backgroundColor = .secondarySystemBackground
+                    configuration.background.backgroundColor = .clear
                     configuration.cornerStyle = .capsule
                 }
                 configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
@@ -186,6 +189,13 @@ struct SystemMenuButton: UIViewRepresentable {
         }
 
         button.tintColor = tintColor
+        button.overrideUserInterfaceStyle = switch interfaceStyle {
+        case .dark?: .dark
+        case .light?: .light
+        case nil: .unspecified
+        }
+        button.capsuleVisible = capsule
+        button.capsuleBackground.backgroundColor = .secondarySystemBackground
         button.accessibilityLabel = accessibilityLabel
         button.contentHorizontalAlignment = .center
         button.contentVerticalAlignment = .center
@@ -330,17 +340,54 @@ struct SwiftSelectionMenuButton: View {
             }
             .foregroundStyle(tint)
             .padding(.horizontal, capsule ? 12 : 0)
-            .frame(minHeight: 44)
+            .frame(height: capsule ? 32 : nil)
             .background {
                 if capsule {
                     Capsule(style: .continuous)
                         .fill(Color(.secondarySystemBackground))
                 }
             }
+            .frame(height: capsule ? 44 : nil)
             .contentShape(Rectangle())
         }
         .tint(tint)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+final class CapsuleMenuButton: UIButton {
+    let capsuleBackground = UIView()
+
+    var capsuleVisible = false {
+        didSet {
+            capsuleBackground.isHidden = !capsuleVisible
+            setNeedsLayout()
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        capsuleBackground.isUserInteractionEnabled = false
+        capsuleBackground.isHidden = true
+        insertSubview(capsuleBackground, at: 0)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard capsuleVisible else { return }
+        let height = min(32, bounds.height)
+        capsuleBackground.frame = CGRect(
+            x: bounds.minX,
+            y: bounds.midY - height / 2,
+            width: bounds.width,
+            height: height
+        )
+        capsuleBackground.layer.cornerRadius = height / 2
     }
 }
 

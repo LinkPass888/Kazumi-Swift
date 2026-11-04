@@ -2455,20 +2455,7 @@ struct PlayerScreen: View {
             // （Colo 2026-10-28：是 0 就是没挂上，是 6 但画面没变才是着色器本身的问题）。
             ("超分辨率", String(localized: "\(String(describing: settings.playbackSuperResolutionMode.title)) · \(String(describing: surface.appliedShaderCount())) 颗着色器（已挂）")),
         ]
-        return VStack(spacing: 0) {
-            ZStack {
-                Text("播放信息")
-                    .font(.headline)
-                HStack {
-                    Spacer()
-                    Button("完成") { activeSheet = nil }
-                        .font(.subheadline)
-                }
-            }
-            .padding(.top, 16)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
-
+        return NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(rows.indices, id: \.self) { index in
@@ -2485,9 +2472,16 @@ struct PlayerScreen: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 20)
             }
+            .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
+            .navigationTitle("播放信息")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { activeSheet = nil }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
         .onDisappear {
             // 关掉时把「已复制」与定时器收干净，下次打开不带着上一次的状态。
             mediaURLCopiedTask?.cancel()
@@ -3964,6 +3958,7 @@ struct PlayerScreen: View {
                                     tint: .accentColor,
                                     showsChevron: true,
                                     menuTint: .accentColor,
+                                    interfaceStyle: colorScheme,
                                     capsule: true
                                 )
                             } else {
@@ -4552,6 +4547,7 @@ struct PlayerScreen: View {
                     tint: .accentColor,
                     showsChevron: true,
                     menuTint: .accentColor,
+                    interfaceStyle: colorScheme,
                     capsule: true
                 )
             } else {
@@ -4739,7 +4735,7 @@ private struct SyncPlaySheet: View {
             .navigationTitle("一起看")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("关闭") { showingSyncPlay = false }
                 }
             }

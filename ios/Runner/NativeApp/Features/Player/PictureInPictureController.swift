@@ -42,6 +42,8 @@ final class PictureInPictureController: NSObject {
 
     /// 系统已经确认画中画窗口起来了。
     private(set) var isActive = false
+    /// 用户从画中画点“返回 App”时，关闭小窗不能按后台关闭处理去暂停播放器。
+    private var isRestoringToApp = false
 
     /// 出问题时的日志钩子。
     ///
@@ -289,6 +291,31 @@ final class PictureInPictureController: NSObject {
             .first { $0.isKeyWindow }
     }
 
+    /// 从画中画恢复时把原播放器窗口拉到前台；播放页本身一直在导航栈里。
+    private func restoreAppWindow() -> Bool {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        guard let target = hostView.window?.windowScene
+            ?? scenes.first(where: { $0.activationState == .foregroundActive })
+            ?? scenes.first(where: { $0.activationState == .foregroundInactive })
+            ?? scenes.first
+        else { return false }
+
+        if let window = hostView.window ?? target.windows.first(where: \.isKeyWindow)
+            ?? target.windows.first
+        {
+            window.makeKeyAndVisible()
+        }
+        guard target.activationState != .foregroundActive else { return true }
+
+        UIApplication.shared.requestSceneSessionActivation(
+            target.session,
+            userActivity: nil,
+            options: UIScene.ActivationRequestOptions(),
+            errorHandler: nil
+        )
+        return true
+    }
+
     // MARK: - 取帧节拍
 
     private func beginCapture() {
@@ -374,9 +401,11 @@ extension PictureInPictureController: @preconcurrency AVPictureInPictureControll
         _ pictureInPictureController: AVPictureInPictureController
     ) {
         isActive = false
+        let restoredToApp = isRestoringToApp
+        isRestoringToApp = false
         // 收回低频：内联播放时不需要 30Hz 的额外拷贝。
         copier?.captureInterval = 1.0 / 2.0
-        if UIApplication.shared.applicationState == .background {
+        if UIApplication.shared.applicationState == .background, !restoredToApp {
             // 用户自己点了画中画窗口的关闭键、App 还在后台：画面没了。
             // 没开后台音频就停声；开着则继续当音频播放器用。
             onStoppedInBackground?()
@@ -392,8 +421,15 @@ extension PictureInPictureController: @preconcurrency AVPictureInPictureControll
         restoreUserInterfaceForPictureInPictureStopWithCompletionHandler
         completionHandler: @escaping (Bool) -> Void
     ) {
-        // 播放页一直都在（画中画是从它起来的），不需要额外恢复界面。
-        completionHandler(true)
+        // 播放页一直都在（画中画是从它起来的），这里只负责把承载它的窗口拉回前台。
+        let restored = restoreAppWindow()
+        isRestoringToApp = restored
+        log(restored ? "从画中画返回播放器" : "从画中画返回失败：找不到播放器窗口")
+        stop()
+        completionHandler(restored)
+        if !restored {
+            isRestoringToApp = false
+        }
     }
 }
 
