@@ -929,6 +929,36 @@
         }
       }
     },
+    "kazumi://bangumi/<番剧号>":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"kazumi://bangumi/<動畫編號>"
+          }
+        }
+      }
+    },
+    "kazumi://search?query=<关键词>":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"kazumi://search?query=<關鍵字>"
+          }
+        }
+      }
+    },
+    "kazumi://watch/<番剧号>":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"kazumi://watch/<動畫編號>"
+          }
+        }
+      }
+    },
     "mpv / MPVKit（播放内核）":{
       "localizations":{
         "zh-Hant":{
@@ -1478,6 +1508,16 @@
           "stringUnit":{
             "state":"translated",
             "value":"與 Bangumi 保持相同的追番狀態"
+          }
+        }
+      }
+    },
+    "两种写法打开同一页，行为相同。":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"兩種寫法開啟同一頁，行為相同。"
           }
         }
       }
@@ -2272,6 +2312,16 @@
         }
       }
     },
+    "关键词里的空格写成 +。":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"關鍵字裡的空格寫成 +。"
+          }
+        }
+      }
+    },
     "关闭":{
       "localizations":{
         "zh-Hant":{
@@ -3047,6 +3097,16 @@
         }
       }
     },
+    "只切到「追番」页，不往里推。":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"只切換到「追番」頁，不往裡推。"
+          }
+        }
+      }
+    },
     "只有「在看」里能按放送时间排":{
       "localizations":{
         "zh-Hant":{
@@ -3603,6 +3663,16 @@
           "stringUnit":{
             "state":"translated",
             "value":"在「%@」裡搜尋"
+          }
+        }
+      }
+    },
+    "在其它 App 或快捷指令里打开下面这些地址，可以直接跳到 Kazumi 的对应页面。":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"在其他 App 或捷徑裡打開下面這些位址，可以直接跳到 Kazumi 的對應頁面。"
           }
         }
       }
@@ -9342,6 +9412,16 @@
         }
       }
     },
+    "深链":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"深層連結"
+          }
+        }
+      }
+    },
     "混音":{
       "localizations":{
         "zh-Hant":{
@@ -9849,6 +9929,16 @@
           "stringUnit":{
             "state":"translated",
             "value":"動畫條目加速"
+          }
+        }
+      }
+    },
+    "番剧详情":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"動畫詳情"
           }
         }
       }

@@ -79,17 +79,16 @@ struct AboutScreen: View {
                 }
 
                 VStack(spacing: 8) {
-                    linkRow(String(localized: "项目主页"), url: KazumiAppInfo.projectURL)
+                    NavigationLink {
+                        DeepLinksScreen()
+                    } label: {
+                        licensesRow("深链")
+                    }
+                    .buttonStyle(.plain)
                     linkRow(String(localized: "源码仓库"), url: KazumiAppInfo.sourceURL)
                     linkRow(String(localized: "问题反馈"), url: KazumiAppInfo.issuesURL)
                     linkRow(String(localized: "贡献指南"), url: KazumiAppInfo.contributingURL)
-                    NavigationLink {
-                        ThirdPartyLicensesScreen()
-                    } label: {
-                        licensesRow("第三方许可证")
-                    }
                     linkRow(String(localized: "Telegram 频道"), url: KazumiAppInfo.telegramURL)
-                    linkRow(String(localized: "图标作者"), url: KazumiAppInfo.iconAuthorURL)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -114,6 +113,12 @@ struct AboutScreen: View {
                     linkRow(String(localized: "Anime4K（超分辨率着色器）"), url: KazumiAppInfo.anime4KURL)
                     linkRow(String(localized: "Fuzi（XPath 解析）"), url: KazumiAppInfo.fuziURL)
                     linkRow(String(localized: "GPL-3.0 许可证"), url: KazumiAppInfo.licenseURL)
+                    NavigationLink {
+                        ThirdPartyLicensesScreen()
+                    } label: {
+                        licensesRow("第三方许可证")
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 Text("本应用与上述数据提供方无隶属关系，番剧信息与评论版权归原作者所有。")

@@ -27,6 +27,16 @@
 <td align="center">番剧详情</td>
 <td align="center">播放</td>
 </tr>
+<tr>
+<td align="center"><img src="static/screenshot/04-schedule.png" width="196"></td>
+<td align="center"><img src="static/screenshot/05-following.png" width="196"></td>
+<td align="center"><img src="static/screenshot/06-profile.png" width="196"></td>
+</tr>
+<tr>
+<td align="center">时间表</td>
+<td align="center">追番</td>
+<td align="center">我的</td>
+</tr>
 </table>
 
 ## 特点
