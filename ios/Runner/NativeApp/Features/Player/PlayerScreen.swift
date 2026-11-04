@@ -4054,7 +4054,6 @@ struct PlayerScreen: View {
         // 铺满并靠左：VStack 默认把没铺满的子视图摆到中间，线路按钮那一行
         // 就会被摆到屏幕中间（LP 3389 / Colo 3390）。
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemBackground).opacity(0.88))
         .onAppear {
             // 进来就把当前集那一块翻出来，不用用户再去找
             if total > 0 {
