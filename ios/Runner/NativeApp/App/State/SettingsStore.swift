@@ -110,9 +110,9 @@ enum SuperResolutionMode: Int, CaseIterable, Identifiable, Sendable {
 
 }
 
-/// 播放倍速档位。对应原版 `lib/utils/constants.dart` 的 `defaultPlaySpeedList`：
-/// 0.25 → 3.0，每档 0.25，共 12 档。播放器菜单与设置页的「默认倍速」共用这一份，
-/// 避免两处档位再次走偏。
+/// 播放倍速档位：0.5 → 3.0 共九档，具体见 `all`。原版 `lib/utils/constants.dart` 的
+/// `defaultPlaySpeedList` 是从 0.25 起、每档 0.25 的十二档；这里去掉 0.25，2.0 以上
+/// 改成 0.5 的步长。播放器菜单与设置页的「默认倍速」共用这一份，避免两处档位再次走偏。
 enum PlaybackSpeed {
     /// 播放器菜单与设置页给的档位：0.5 到 3.0，够用又不至于一长串。
     static let all: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
