@@ -3974,7 +3974,10 @@ struct PlayerScreen: View {
                         downloadEntryButton(controller)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.leading, 16)
+                // 右边跟下面集数网格的 20 对齐（网格那侧多 4 是给屏幕圆角/刘
+                // 海的，顶行下载按钮原来用 16，右边比集数差一格（LP 7391）。
+                .padding(.trailing, 20)
                 .frame(height: 44)
             }
 
@@ -4535,14 +4538,18 @@ struct PlayerScreen: View {
             : String(localized: "线路")
         Group {
             if isFullscreen {
+                // 字和箭头取设置里的主题色（LP 7379）：横屏这颗是 UIKit 按钮，
+                // 传 .accentColor 经 UIColor 桥接脱离 SwiftUI 环境，解析不出
+                // AppRoot 设的主题色；显式取调色板，底色仍是浅灰胶囊不动（Colo 7382）。
+                let accent = KazumiPalette.accent(for: colorScheme)
                 SystemMenuButton(
                     selection: selection,
                     title: title,
                     symbol: "",
                     accessibilityLabel: String(localized: "选择线路"),
-                    tint: .accentColor,
+                    tint: accent,
                     showsChevron: true,
-                    menuTint: .accentColor,
+                    menuTint: accent,
                     capsule: true
                 )
             } else {

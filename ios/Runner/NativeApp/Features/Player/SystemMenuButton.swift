@@ -149,7 +149,9 @@ struct SystemMenuButton: UIViewRepresentable {
                 configuration.title = title
                 configuration.baseForegroundColor = tintColor
                 configuration.contentInsets = capsule
-                    ? NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
+                    // 胶囊上下各 7：原来上下 0 只有字高那么薄（约 18，LP 7364）；
+                    // 先改 6 量出 30，比右边下载胶囊的 32 还差 2，再补到 7 对齐（LP 量高度）。
+                    ? NSDirectionalEdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
                     : .zero
                 if showsChevron {
                     configuration.image = UIImage(
