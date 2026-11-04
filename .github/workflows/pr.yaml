@@ -1,117 +1,102 @@
 ---
-    name: "PR workflow"
+name: "PR workflow"
 
-    on:
-      pull_request:
-        types:
-          - opened
-          - synchronize
-          - reopened
-          - ready_for_review
-        paths-ignore:
-          - 'static/**'
-          - '**.md'
-          - '.gitignore'
-          - '.github/ISSUE_TEMPLATE/**'
-          - 'fastlane/**'
-      workflow_dispatch:
-        inputs:
-          logLevel:
-            description: 'Log level'
-            required: true
-            default: 'warning'
-          run_ios:
-            description: 'manually run ios build'
-            required: false
-            default: false
-            type: boolean
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths-ignore:
+      - 'static/**'
+      - '**.md'
+      - '.gitignore'
+      - '.github/ISSUE_TEMPLATE/**'
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: true
+        default: 'warning'
 
-    env:
-      DANDANAPI_APPID: ${{ secrets.DANDANAPI_APPID }}
-      DANDANAPI_KEY: ${{ secrets.DANDANAPI_KEY }}
-      KAZUMI_APPID: ${{ secrets.KAZUMI_APPID }}
-      KAZUMI_KEY: ${{ secrets.KAZUMI_KEY }}
-    
-    jobs:
-      flutter-test:
-        if: ${{ github.event_name == 'workflow_dispatch' || ! github.event.pull_request.draft }}
-        runs-on: "ubuntu-latest"
-        permissions:
-          contents: read
-        steps:
-          - name: Clone repository
-            uses: actions/checkout@v4
-          - name: Set up Flutter
-            uses: subosito/flutter-action@v2.16.0
-            with:
-              channel: stable
-              flutter-version-file: pubspec.yaml
-          - name: Get Flutter dependencies
-            run: flutter pub get
-            shell: bash
-          - name: Install native build tools
-            run: |
-              sudo apt-get update
-              sudo apt-get install -y cmake ninja-build g++
-            shell: bash
-          - name: Run Flutter tests
-            run: flutter test
-            shell: bash
+env:
+  SCHEME: Runner
+  PROJECT: ios/Runner.xcodeproj
 
-      flutter-analyze:
-        if: ${{ github.event_name == 'workflow_dispatch' || ! github.event.pull_request.draft }}
-        runs-on: "ubuntu-latest"
-        permissions:
-          contents: read
-        steps:
-          - name: Clone repository
-            uses: actions/checkout@v4
-          - name: Set up Flutter
-            uses: subosito/flutter-action@v2.16.0
-            with:
-              channel: stable
-              flutter-version-file: pubspec.yaml
-          - name: Get Flutter dependencies
-            run: flutter pub get
-            shell: bash
-          - name: Analyze Flutter project
-            run: flutter analyze --no-fatal-infos --fatal-warnings
-            shell: bash
+jobs:
+  build-ios:
+    if: ${{ github.event_name == 'workflow_dispatch' || ! github.event.pull_request.draft }}
+    name: "Build for iOS"
+    # 用 Xcode 27 的镜像（公开预览，label 就叫 xcode-27）：默认 Xcode 27.1、iOS 27 的 SDK。
+    # 之前跑在 macos-26 上，默认 Xcode 26.6 / iOS SDK 26.5——同一个 App 编出来的包
+    # 和模拟器那版（iOS 27 SDK）不是一套 SDK，系统边缘效果这类东西表现会不一样
+    # （LP：手机上顶栏那条模糊看不到，模拟器上有）。改成 27 是为了让两边对齐。
+    runs-on: "xcode-27"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
 
+      # 不钉版本，就用 xcode-27 镜像默认那个（现在是 Xcode 27.1 / iOS SDK 27.1，LP 3253/3254 定的）。
+      # 只把版本号打进日志，编完能直接看到这次是拿哪套 SDK 编的。
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
-      flutter-build-ios:
-        needs: [flutter-test, flutter-analyze]
-        if: ${{ github.event_name == 'workflow_dispatch' || ! github.event.pull_request.draft }}
-        name: "Release for iOS"
-        runs-on: "macos-26"
-        permissions: write-all
+      - name: Install build tools
+        run: brew install xcodegen xcbeautify
 
-        steps:
-          - name: Clone repository
-            uses: actions/checkout@v4
-          - name: Set up Flutter
-            uses: subosito/flutter-action@v2.16.0
-            with:
-              channel: stable
-              flutter-version-file: pubspec.yaml
-          - run: flutter pub get
-          - name: Install native build tools
-            run: brew install cmake ninja
-          - name: Build IPA
-            run: >-
-              flutter build ios --release --no-codesign
-              --dart-define=DANDANAPI_APPID=$DANDANAPI_APPID
-              --dart-define=DANDANAPI_KEY=$DANDANAPI_KEY
-              --dart-define=KAZUMI_APPID=$KAZUMI_APPID
-              --dart-define=KAZUMI_KEY=$KAZUMI_KEY
-          - name: Create IPA
-            run: |
-              mkdir Payload
-              cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
-              find Payload/Runner.app/Frameworks -type d -name "*.framework" -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
-              zip -q -r Kazumi_ios_canary_no_sign.ipa Payload
-          - name: Upload iOS build
-            uses: actions/upload-artifact@v4
-            with:
-              name: ios_outputs
-              path: Kazumi_ios_*.ipa
+      - name: Generate Xcode project
+        run: xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Resolve Swift Packages
+        run: |
+          set -o pipefail
+          xcodebuild -project "$PROJECT" -scheme "$SCHEME" -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" | xcbeautify
+
+      - name: Build (no codesign)
+        env:
+          DANDAN_APP_ID: ${{ secrets.DANDANAPI_APPID }}
+          DANDAN_APP_SECRET: ${{ secrets.DANDANAPI_KEY }}
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
+            DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
+            | xcbeautify
+
+      - name: Package canary IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "未找到 Runner.app：$APP_PATH" >&2
+            exit 1
+          fi
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/Runner.app
+          find Payload/Runner.app -type d -name "*.framework" -exec codesign --force --sign - {} \;
+          find Payload/Runner.app -type f -name "*.dylib" -exec codesign --force --sign - {} \;
+          zip -q -r Kazumi_ios_canary_no_sign.ipa Payload
+
+      - name: Upload canary IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios_outputs
+          path: Kazumi_ios_*.ipa
+          if-no-files-found: error

@@ -33,6 +33,11 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+# tool/palette_probe 是独立的一次性校验包（自带 pubspec），不参与主工程构建
+tool/palette_probe/.dart_tool/
+tool/palette_probe/.packages
+tool/palette_probe/build/
+tool/palette_probe/pubspec.lock
 
 # Symbolication related
 app.*.symbols
@@ -55,3 +60,10 @@ android/build/reports/problems/
 **/macos/Pods/
 **/ios/Podfile.lock
 **/macos/Podfile.lock
+# Widget Preview related
+.widget_preview/
+
+# Local AI/tool artifacts
+.clinerules/
+.flutter-leftovers/
+intent-opportunities.md

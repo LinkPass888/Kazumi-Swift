@@ -1,4 +1,12 @@
-**/dgph
+# 原生工程的 Xcode 工程由 XcodeGen 生成，不纳入版本管理。
+Runner.xcodeproj
+Runner.xcworkspace
+xcuserdata
+**/xcuserdata/
+**/DerivedData/
+DerivedData/
+**/Pods/
+**/.symlinks/
 *.mode1v3
 *.mode2v3
 *.moved-aside
@@ -8,27 +16,10 @@
 .sconsign.dblite
 .tags*
 **/.vagrant/
-**/DerivedData/
-Icon?
-**/Pods/
-**/.symlinks/
-profile
-xcuserdata
+# 构建产物：仅忽略与 xcodeproj 同级的 profile 目录/文件，
+# 注意不能写成裸 `profile`——那会在大小写不敏感的文件系统上误伤
+# Runner/NativeApp/Features/Profile/（「我的」页面源码）。
+/profile
 **/.generated/
-Flutter/App.framework
-Flutter/Flutter.framework
-Flutter/Flutter.podspec
-Flutter/Generated.xcconfig
-Flutter/ephemeral/
-Flutter/app.flx
-Flutter/app.zip
-Flutter/flutter_assets/
-Flutter/flutter_export_environment.sh
-ServiceDefinitions.json
-Runner/GeneratedPluginRegistrant.*
-
-# Exceptions to above rules.
-!default.mode1v3
-!default.mode2v3
-!default.pbxuser
-!default.perspectivev3
+**/SourcePackages/
+.build/

@@ -1,0 +1,259 @@
+# XcodeGen 工程描述（Windows 环境下唯一的工程事实标准）
+#
+# 该文件取代 Flutter 时代的 Runner.xcodeproj / Podfile：
+#   * 源码全部来自 ios/Runner/NativeApp（纯 Swift 6 + SwiftUI）
+#   * 图标与启动图沿用 ios/Runner/Assets.xcassets（AppIcon.appiconset 未被改动）
+#   * 根目录 assets/ 以 folder reference 形式原样打进 Bundle，供 Anime4K 着色器与内置规则复用
+#
+# 生成工程：xcodegen generate --spec ios/project.yml --project ios
+# 产物路径：ios/Runner.xcodeproj，scheme 名称与包名保持 Runner / com.example.kazumi
+
+name: Runner
+
+options:
+  bundleIdPrefix: com.example
+  # 与 Flutter 原工程一致的部署版本（iOS 26 原生液态玻璃 API 需要）。
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  # 只做简体 + 繁体：源语言简体，系统是繁中（zh-Hant 任意地区）就用繁体，
+  # 其余一切语言（含英文、日文）落回简体。地区不参与判断（LP 6131/6132）。
+  developmentLanguage: zh-Hans
+  knownRegions:
+    - zh-Hans
+    - zh-Hant
+    - Base
+  generateEmptyDirectories: false
+  groupSortPosition: top
+  xcodeVersion: "26.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # 编译期把 SwiftUI 视图里的字面量提取进字符串目录（Xcode 自动做，代码不用改）。
+    SWIFT_EMIT_LOC_STRINGS: YES
+    DEVELOPMENT_LANGUAGE: zh-Hans
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CLANG_ENABLE_MODULES: YES
+    CLANG_ENABLE_OBJC_ARC: YES
+    GCC_C_LANGUAGE_STANDARD: gnu17
+    ENABLE_BITCODE: NO
+    # mpv / FFmpeg 库体积较大，保留完整的调试符号映射。
+    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+
+packages:
+  Fuzi:
+    url: https://github.com/cezheng/Fuzi.git
+    from: 3.1.3
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit.git
+    exactVersion: 1.1.0-n9.0.2
+
+targets:
+  Runner:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+
+    sources:
+      # 纯 SwiftUI 业务代码。
+      - path: Runner/NativeApp
+      # 字符串目录：源语言简体，繁体在 zh-Hant 里。
+      - path: Runner/Localizable.xcstrings
+        buildPhase: resources
+      # 图标 / 启动图资源目录，原样编译进 Assets.car（AppIcon.appiconset 不做任何改动）。
+      - path: Runner/Assets.xcassets
+        buildPhase: resources
+      # 启动屏 storyboard，只引用 Assets.xcassets 中的图片。
+      - path: Runner/Base.lproj
+        buildPhase: resources
+      # 根目录静态资源：Anime4K .glsl 着色器、内置默认规则 .json、图片。
+      # 使用 folder reference 保留目录结构，运行时通过 Bundle 路径读取。
+      - path: ../assets/shaders
+        type: folder
+        buildPhase: resources
+      - path: ../assets/images
+        type: folder
+        buildPhase: resources
+      - path: ../assets/statements
+        type: folder
+        buildPhase: resources
+      - path: ../licenses
+        type: folder
+        buildPhase: resources
+        optional: true
+
+    info:
+      path: Runner/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleDisplayName: Kazumi
+        CFBundleName: kazumi
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleSignature: "????"
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLName: com.predidit.kazumi.navigation
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - kazumi
+        # DanDanPlay 弹幕接口的默认配置（构建时通过 DANDAN_API_URL / DANDAN_APP_ID /
+        # DANDAN_APP_SECRET 注入）；设置页的自定义值优先于这里。
+        DanDanApiUrl: $(DANDAN_API_URL)
+        DanDanAppId: $(DANDAN_APP_ID)
+        DanDanAppSecret: $(DANDAN_APP_SECRET)
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIApplicationSupportsIndirectInputEvents: true
+        # 单场景。以前这里没有这一段，生成的包里压根不带场景清单
+        # （源码 Info.plist 里那份是空配置，xcodegen 合并时被丢了）。
+        # 点锁屏卡片让系统拉起 app 走的就是场景激活这条路（LP 4626）。
+        # 场景路由表：SpringBoard / mediaremoted 是跨进程读静态 Info.plist 来判断
+        # 「点灵动岛、锁屏卡片能不能把 App 唤到前台」的，只有 SupportsMultipleScenes
+        # 时它们认不出可唤醒的窗口场景，点了没反应（LP 5008/5025 的老问题）。
+        # 这里只声明配置名与 UISceneClassName，**不写 UISceneDelegateClassName**：
+        # 写了就会顶掉 SwiftUI 的 AppSceneDelegate —— 指向空壳类黑屏（86fecd3/LP 5031），
+        # 指向自己又会让它转发回自己、栈溢出（d8a69b3/LP 5019）。
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneClassName: UIWindowScene
+                # 必须有这一行：SpringBoard 响应灵动岛/锁屏卡片点击时，配置里既没有
+                # delegate 类也没有 storyboard，就判定为残缺配置、直接放弃激活场景，
+                # 表现就是点卡片只展开、不进 App（LP 5008/5534）。
+                UISceneDelegateClassName: KazumiSceneDelegate
+        UIStatusBarHidden: false
+        UIViewControllerBasedStatusBarAppearance: true
+        CADisableMinimumFrameDurationOnPhone: true
+        # 「原地打开」开关。缺了它，文件夹面板点「打开」会把文件夹交不回 App
+        # （面板不关、什么也不发生），而导入模式（先拷进沙箱）照样能用——
+        # 正好就是 LP 5218/5226 报的形状。
+        # 这两个键以前只写在 Runner/Info.plist 里，构建脚本每次都用 xcodegen
+        # 按本文件重写 Info.plist，于是它们被悄悄丢掉了；必须写在这里。
+        LSSupportsOpeningDocumentsInPlace: true
+        # 让 App 的文件夹在「文件」App 的「我的 iPhone」里看得见。
+        UIFileSharingEnabled: true
+        # 声明能打开文件夹。原地打开是把东西交给「能打开它的 App」，
+        # 一条类型都不声明时这条交接链没有落点。Alternate 让它只在
+        # 「打开方式」里垫底，不抢默认处理者。
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Folder
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.folder
+        UIBackgroundModes:
+          - audio
+          - picture-in-picture
+        LSApplicationQueriesSchemes:
+          - vlc-x-callback
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsArbitraryLoadsInWebContent: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: >-
+          用于在局域网内发现并投屏到电视（DLNA / AirPlay），以及「一起看」房间的局域网直连。
+        NSBonjourServices:
+          - _airplay._tcp
+          - _raop._tcp
+          - _googlecast._tcp
+          - _dlna._tcp
+        # 相机与「读相册」两条权限说明已删（Ato 1125）：图片搜索只剩 PhotosPicker
+        # 一条路，选图在系统进程里做、不需要权限说明；真正碰相册的只有存截图那条，
+        # 用的是下面这条「保存到相册」。那两句留着就是替不存在的功能向审核要权限。
+        NSPhotoLibraryAddUsageDescription: 用于把播放器截图保存到相册。
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi
+        PRODUCT_NAME: $(TARGET_NAME)
+        # DanDanPlay 默认配置；CI 通过 xcodebuild 覆盖，设置页的自定义值优先。
+        DANDAN_API_URL: "https://api.dandanplay.net"
+        DANDAN_APP_ID: ""
+        DANDAN_APP_SECRET: ""
+        # 版本号：3.0.0 起（Ato 7411）。仓库已无 Dart 工程，pubspec.yaml 不存在了，
+        # 版本唯一来源就是这里 + CHANGELOG.md 顶部条目。
+        MARKETING_VERSION: "3.0.0"
+        CURRENT_PROJECT_VERSION: "30000"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+        INFOPLIST_FILE: Runner/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        DEVELOPMENT_ASSET_PATHS: ""
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: YES
+
+    dependencies:
+      # XHTML / XPath 解析（libxml2），对应原项目 xpath_selector 的职责。
+      - package: Fuzi
+      # gpu-next / Vulkan / MoltenVK 与 libplacebo 由 MPVKit 一并提供。
+      - package: MPVKit
+      # iOS 27 才有的 NowPlaying 框架（MediaSession / requestToBecomeApplicationPrimary）。
+      # **必须弱链接**：强链接的话 iOS 26 的设备在 dyld 阶段就找不到符号、App 直接起不来。
+      # 所有用法都包在 `if #available(iOS 27.0, *)` 里，见 Features/Player/NowPlayingSession27.swift。
+      - sdk: NowPlaying.framework
+        weak: true
+
+  RunnerTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: RunnerTests
+        excludes:
+          - Fixtures
+          - Fixtures/**
+          # 旧测试直接驱动 GLKView / mpv_render_context，与 Metal 窗口输出管线不兼容。
+          - MPVRendererTests.swift
+      - path: RunnerTests/Fixtures
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: Runner
+      - package: MPVKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi.RunnerTests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+
+schemes:
+  Runner:
+    build:
+      targets:
+        Runner: all
+        RunnerTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - name: RunnerTests
+          parallelizable: true
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
