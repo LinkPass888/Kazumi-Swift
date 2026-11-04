@@ -62,3 +62,8 @@ android/build/reports/problems/
 **/macos/Podfile.lock
 # Widget Preview related
 .widget_preview/
+
+# Local AI/tool artifacts
+.clinerules/
+.flutter-leftovers/
+intent-opportunities.md
