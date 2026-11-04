@@ -189,10 +189,10 @@ struct SystemMenuButton: UIViewRepresentable {
         }
 
         button.tintColor = tintColor
-        button.overrideUserInterfaceStyle = switch interfaceStyle {
-        case .dark?: .dark
-        case .light?: .light
-        case nil: .unspecified
+        if let interfaceStyle {
+            button.overrideUserInterfaceStyle = interfaceStyle == .dark ? .dark : .light
+        } else {
+            button.overrideUserInterfaceStyle = .unspecified
         }
         button.capsuleVisible = capsule
         button.capsuleBackground.backgroundColor = .secondarySystemBackground
