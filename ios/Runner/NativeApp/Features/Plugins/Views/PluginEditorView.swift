@@ -97,7 +97,11 @@ struct PluginEditorView: View {
                         .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
                 }
             }
-            .padding(20)
+            .padding(.vertical, 20)
+            .padding(.horizontal, 16)
+            // 跟设置二级页同一套外壳（Ato 7332/7334）：限宽 700 居中，行内缩 16，行宽 668。
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
         // 顶部滚动边缘：渐进模糊（.soft），不另外加材质或底色。
         .scrollEdgeEffectStyle(.soft, for: .top)

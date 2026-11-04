@@ -124,6 +124,9 @@ struct AboutScreen: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
+            // 跟设置二级页同一套外壳（Ato 7332/7334）：限宽 700 居中，行内缩 16，行宽 668。
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
         // 顶部滚动边缘：渐进模糊（.soft）。
         // Colo 3532：二级页统一用分组页底（显式按 colorScheme 取色）。
