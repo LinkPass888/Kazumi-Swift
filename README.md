@@ -104,6 +104,12 @@ xcodebuild -project ios/Runner.xcodeproj -scheme Runner \
 
 本项目基于 GNU 通用公共许可证第 3 版（GPL-3.0）授权，不对适用性、可靠性或准确性作任何担保。使用需遵守所在地法律法规，不得侵犯第三方知识产权。因使用产生的数据与缓存应在 24 小时内清除。
 
+## 支持开发
+
+Kazumi 免费、开源、不插广告，也没有付费功能。用着顺手的话，可以请作者喝杯奶茶：
+
+[爱发电](https://afdian.com/a/linkpass)
+
 ## 致谢
 
 - [弹弹play](https://www.dandanplay.com/) —— 弹幕
