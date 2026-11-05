@@ -320,13 +320,6 @@ struct BangumiInfoScreen: View {
         max(96, startPlayingButtonHeight + 34)
     }
 
-    /// 顶栏底色的出现跟标题交接分开算：内容一往上走就起底。
-    /// 原来底色跟着交接进度走，而交接要等滚过 30 点；最大字号下标题比默认高很多，
-    /// 滚到 30 点前已经滑进顶栏里了，那一段就是字叠字（Fuck 6552 那条线索）。
-    private var topBarBackgroundOpacity: CGFloat {
-        min(1, max(0, scrollOffset / 6))
-    }
-
     private func topBar(_ controller: InfoController) -> some View {
         let progress = titleRevealProgress
         return HStack(spacing: 10) {
@@ -377,14 +370,6 @@ struct BangumiInfoScreen: View {
         .padding(.trailing, KazumiGlassMetrics.barEdgeInset)
         .padding(.top, 4)
         .padding(.bottom, 8)
-        // Ato 6546：往下滚时正文从标题底下穿过去，字叠字。
-        // 内容一往上走就给顶栏铺一层页面底色；顶部不动时仍然没有背景条，
-        // Colo 原来那条设计不变。
-        .background {
-            KazumiPalette.background(for: colorScheme)
-                .opacity(topBarBackgroundOpacity)
-                .ignoresSafeArea(edges: .top)
-        }
     }
 
     /// 顶栏圆形玻璃按钮，尺寸与间距取自 KazumiGlassMetrics。

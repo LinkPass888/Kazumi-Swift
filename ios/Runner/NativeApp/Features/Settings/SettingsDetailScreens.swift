@@ -43,35 +43,6 @@ private struct KazumiSettingsDetailStyle: ViewModifier {
             // 条目色原本不另外给——Form 的分组行本来就是白／#1C1C1E，跟规格同值。
             // Colo 3532：改为各 Section 显式给 groupedRow，不再依赖系统动态行色。
             .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
-            // 上面 scrollContentBackground(.hidden) 把 Form 的底也拿掉了，导航栏的背板
-            // 跟着没了：滚动时正文会从标题底下透出来（Ato 6558 / 6579）。
-            .kazumiSettingsNavBacking()
-    }
-}
-
-/// 导航栏背板（Ato 6579）。顶部大标题态用系统默认材质，标题不被糊；
-/// 滚起来换 `.bar`——系统导航栏自己那层底，不是自绘实底。
-/// 原来用的 regularMaterial 太透：正文从底下透上来还是读得出成句（Ato 6591 的規則管理）。
-struct KazumiSettingsNavBacking: ViewModifier {
-    @State private var scrolled = false
-
-    func body(content: Content) -> some View {
-        content
-            .onScrollGeometryChange(for: Bool.self) { geo in
-                geo.contentOffset.y > 4
-            } action: { _, newValue in
-                scrolled = newValue
-            }
-            .toolbarBackground(
-                scrolled ? AnyShapeStyle(.bar) : AnyShapeStyle(Color.clear),
-                for: .navigationBar
-            )
-    }
-}
-
-extension View {
-    func kazumiSettingsNavBacking() -> some View {
-        modifier(KazumiSettingsNavBacking())
     }
 }
 
@@ -1245,8 +1216,8 @@ private struct UpdateScheduleSheet: View {
 
 struct ThemeSettingsScreen: View {
     @Environment(SettingsStore.self) private var settings
+    @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
-    @State private var isShowingThemeColorSheet = false
 
     /// 与原版 interface_settings.dart 的 defaultPageMap 一致。
     private static let startupPages: [(value: String, title: String)] = [
@@ -1270,7 +1241,7 @@ struct ThemeSettingsScreen: View {
                     }
                     row {
                         Button {
-                            isShowingThemeColorSheet = true
+                            router.isShowingThemeColorSheet = true
                         } label: {
                             HStack {
                                 // LP 3513：配色改名「强调色」。
@@ -1330,17 +1301,10 @@ struct ThemeSettingsScreen: View {
             }
         }
         .kazumiSettingsDetail("外观与界面")
-        .sheet(isPresented: $isShowingThemeColorSheet) {
-            ThemeColorSheet(selection: themeColorBinding)
-        }
     }
 
     private var themeBinding: Binding<KazumiThemeMode> {
         Binding(get: { settings.themeMode }, set: { settings.themeMode = $0 })
-    }
-
-    private var themeColorBinding: Binding<KazumiThemeColor> {
-        Binding(get: { settings.themeColor }, set: { settings.themeColor = $0 })
     }
 
     private var oledBinding: Binding<Bool> {

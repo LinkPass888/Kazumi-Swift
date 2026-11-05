@@ -77,7 +77,6 @@ struct DeepLinksScreen: View {
             .frame(maxWidth: .infinity)
         }
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
-        .kazumiSettingsNavBacking()
         .navigationTitle("深链")
         .navigationBarTitleDisplayMode(.inline)
     }

@@ -201,6 +201,9 @@ struct PluginListView: View {
         .background(KazumiPalette.heroBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("规则管理")
         .navigationBarTitleDisplayMode(.large)
+        // Colo 7611：这一屏原来只有一层自绘实色，没有 .soft。撤掉实色要补上 .soft，
+        // 否则滚起来「規則倉庫」「新增規則」又从大标题底下透上来。
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .toolbar { toolbarContent }
         .navigationDestination(isPresented: Binding(
             get: { selectedRule != nil },
@@ -249,16 +252,6 @@ struct PluginListView: View {
         .onAppear {
             if plugins.pluginList.isEmpty { plugins.load() }
         }
-        // Ato 6591：滚起来时「規則倉庫」「新增規則」从标题底下透上来。
-        // 跟設定首頁、下載設定用同一个背板（系统材质），不再单独画一条。
-        // 必须挂在 `.toolbar` 之后：挂在前面时导航栏背板不生效，栏还是透明的。
-        // Ato 6610：背板后面过的是白卡上的粗黑字，半透明材质挡不住——
-        // 换多厚（.ultraThickMaterial）都还认得出「新增規則」。改用页顶那一档实色。
-        // 实色只在滚起来时才画，大标题态系统自己不给背板，所以不用跟着滚动状态切。
-        .toolbarBackground(
-            AnyShapeStyle(KazumiPalette.heroBackgroundTop(for: colorScheme)),
-            for: .navigationBar
-        )
     }
     // MARK: - 行
 

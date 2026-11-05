@@ -136,7 +136,6 @@ struct AboutScreen: View {
         // 顶部滚动边缘：渐进模糊（.soft）。
         // Colo 3532：二级页统一用分组页底（显式按 colorScheme 取色）。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
-        .kazumiSettingsNavBacking()
         .navigationTitle("关于")
         .navigationBarTitleDisplayMode(.inline)
     }

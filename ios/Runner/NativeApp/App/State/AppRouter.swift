@@ -356,6 +356,11 @@ struct PlaybackSource: Hashable, Sendable {
 final class AppRouter {
     var selectedDestination: AppDestination = .popular
 
+    /// 强调色面板由外壳（KazumiTabShell）来弹，不在设置页自己弹（Colo 7614）：
+    /// 设置页在 `.id(themeRevision)` 那棵子树里，换一次色子树整体换身份，
+    /// 从里面弹出的面板会被一起拆掉——表现就是「点一下颜色面板就没了」。
+    var isShowingThemeColorSheet = false
+
     /// 每个目的地独立的导航栈，切换 Tab 时保留各自的页面。
     var popularPath: [AppRoute] = []
     var timelinePath: [AppRoute] = []
