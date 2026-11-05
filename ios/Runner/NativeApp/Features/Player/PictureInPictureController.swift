@@ -40,6 +40,11 @@ final class PictureInPictureController: NSObject {
     /// 等 `isPictureInPicturePossible` 变 true 的那次尝试。
     private var startTask: Task<Void, Never>?
 
+    /// 启动失败后等画面恢复、再拉一次小窗的那次尝试。
+    private var retryStartTask: Task<Void, Never>?
+    /// 这一次启动是否已经重试过：只重试一次，第二次失败就按真起不来处理。
+    private var didRetryStart = false
+
     /// 系统已经确认画中画窗口起来了。
     private(set) var isActive = false
     /// 用户从画中画点“返回 App”时，关闭小窗不能按后台关闭处理去暂停播放器。
@@ -149,6 +154,9 @@ final class PictureInPictureController: NSObject {
         self.engine = engine
         self.surface = surface
         didReportFailure = false
+        didRetryStart = false
+        retryStartTask?.cancel()
+        retryStartTask = nil
         // 每次都走一遍 prepare：引擎可能已经换过，钩子得装到当前这只上。
         // 取帧器要不要重建由 prepare 自己判断。
         prepare(engine: engine, surface: surface)
@@ -208,6 +216,8 @@ final class PictureInPictureController: NSObject {
     func teardown() {
         startTask?.cancel()
         startTask = nil
+        retryStartTask?.cancel()
+        retryStartTask = nil
         endBackgroundTaskIfNeeded()
         if pipController?.isPictureInPictureActive == true {
             pipController?.stopPictureInPicture()
@@ -339,6 +349,8 @@ final class PictureInPictureController: NSObject {
     private func finishStopping() {
         startTask?.cancel()
         startTask = nil
+        retryStartTask?.cancel()
+        retryStartTask = nil
         endBackgroundTaskIfNeeded()
         // 只停「自己驱动渲染」的那条节拍；喂帧本身继续留着。
         // 停了它，回前台之后图层就又没有新帧了，下一次退后台照样起不来小窗。
@@ -367,6 +379,8 @@ extension PictureInPictureController: @preconcurrency AVPictureInPictureControll
         _ pictureInPictureController: AVPictureInPictureController
     ) {
         // 系统自动起 PiP 时不会先走我们的 start()，这里补上取帧节拍。
+        retryStartTask?.cancel()
+        retryStartTask = nil
         beginCapture()
     }
 
@@ -388,7 +402,42 @@ extension PictureInPictureController: @preconcurrency AVPictureInPictureControll
         isActive = false
         log("画中画启动失败：\(error.localizedDescription)")
         finishStopping()
+        // 退后台那一瞬间 mpv 的硬解常被打断一下：连着几帧解不出来，取帧拿不到，
+        // 系统手里没画面就直接拒起小窗（真机日志里失败 0.7 秒后帧就恢复了）。
+        // 还在后台就等画面接上再拉一次，这时候再失败才算真起不来。
+        if UIApplication.shared.applicationState == .background, !didRetryStart {
+            didRetryStart = true
+            log("等画面恢复后再起一次")
+            beginCapture()
+            waitForFramesThenStart()
+            return
+        }
         reportFailure()
+    }
+
+    /// 启动失败后等取帧恢复（帧一般几百毫秒后就接上），再拉一次小窗；
+    /// 6 秒都不成、或者中途回了前台，才走原来的后台播放收尾。
+    private func waitForFramesThenStart() {
+        retryStartTask?.cancel()
+        retryStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var attemptsWithFrames = 0
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled, let controller = self.pipController else { return }
+                if controller.isPictureInPictureActive { return }
+                if UIApplication.shared.applicationState != .background {
+                    break
+                }
+                guard self.copier?.hasFreshFrame == true else { continue }
+                attemptsWithFrames += 1
+                controller.startPictureInPicture()
+                // 帧都有了还起不来，最多再试三次，别在这儿无限轮。
+                if attemptsWithFrames >= 3 { break }
+            }
+            self.finishStopping()
+            self.reportFailure()
+        }
     }
 
     func pictureInPictureControllerWillStopPictureInPicture(
@@ -557,6 +606,9 @@ private final class PiPFrameCopier {
     private var controlTimebase: CMTimebase?
     private var formatDescription: CMVideoFormatDescription?
     private var lastPTS = Double.nan
+
+    /// 取帧是否已经接上（失败重试用它判断画面有没有恢复）。
+    var hasFreshFrame: Bool { lastPTS.isFinite }
     private var lastCaptureHostTime = 0.0
     private var captureTask: Task<Void, Never>?
     private var didLogFirstFrame = false
