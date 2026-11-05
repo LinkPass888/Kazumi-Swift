@@ -399,6 +399,12 @@ extension PictureInPictureController: @preconcurrency AVPictureInPictureControll
         _ pictureInPictureController: AVPictureInPictureController,
         failedToStartPictureInPictureWithError error: Error
     ) {
+        // 多个启动请求可能在小窗已经起来之后才回报失败；再跑一遍收尾会把渲染锁掉，
+        // 画面就冻在第一帧。小窗已经起来了就当它成功。
+        if isActive || pipController?.isPictureInPictureActive == true {
+            log("小窗已起来，忽略这条迟到的失败")
+            return
+        }
         isActive = false
         log("画中画启动失败：\(error.localizedDescription)")
         finishStopping()
@@ -421,19 +427,18 @@ extension PictureInPictureController: @preconcurrency AVPictureInPictureControll
         retryStartTask?.cancel()
         retryStartTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            var attemptsWithFrames = 0
+            var didAttempt = false
             for _ in 0..<30 {
                 try? await Task.sleep(for: .milliseconds(200))
                 guard !Task.isCancelled, let controller = self.pipController else { return }
                 if controller.isPictureInPictureActive { return }
-                if UIApplication.shared.applicationState != .background {
-                    break
-                }
+                if UIApplication.shared.applicationState != .background { break }
                 guard self.copier?.hasFreshFrame == true else { continue }
-                attemptsWithFrames += 1
-                controller.startPictureInPicture()
-                // 帧都有了还起不来，最多再试三次，别在这儿无限轮。
-                if attemptsWithFrames >= 3 { break }
+                // 只发起一次：连发几条启动请求会叠出迟到的失败回调。
+                if !didAttempt {
+                    didAttempt = true
+                    controller.startPictureInPicture()
+                }
             }
             self.finishStopping()
             self.reportFailure()
@@ -474,10 +479,12 @@ extension PictureInPictureController: @preconcurrency AVPictureInPictureControll
         let restored = restoreAppWindow()
         isRestoringToApp = restored
         log(restored ? "从画中画返回播放器" : "从画中画返回失败：找不到播放器窗口")
-        stop()
+        // 关闭动作交给系统：在系统正要收小窗的回调里自己调 stopPictureInPicture()
+        // 会把小窗留在屏幕上。回前台那条 handleForeground() 本来就会收干净。
         completionHandler(restored)
         if !restored {
             isRestoringToApp = false
+            stop()
         }
     }
 }
