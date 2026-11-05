@@ -106,7 +106,7 @@ xcodebuild -project ios/Runner.xcodeproj -scheme Runner \
 
 ## 支持开发
 
-Kazumi 免费、开源、不插广告，也没有付费功能。用着顺手的话，可以请作者喝杯奶茶：
+Kazumi 免费、开源、不插广告，也没有付费功能。用着顺手的话，可以请作者喝杯咖啡：
 
 [爱发电](https://afdian.com/a/linkpass)
 
