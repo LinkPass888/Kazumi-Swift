@@ -155,7 +155,6 @@ struct SyncBackupScreen: View {
         .scrollContentBackground(.hidden)
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
-        .kazumiSettingsNavBacking()
         // 恢复确认用居中的对话框，跟原版 AlertDialog 一样落在屏幕正中
         //（LP 2517：之前用 confirmationDialog，iOS 26 会从表单某个位置弹出，位置不对）。
         .alert("恢复这些设置？", isPresented: $isShowingRestoreConfirm) {

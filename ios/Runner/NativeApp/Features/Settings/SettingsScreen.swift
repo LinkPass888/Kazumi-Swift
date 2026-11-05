@@ -237,7 +237,6 @@ struct SettingsScreen: View {
         .navigationBarTitleDisplayMode(isShortTier ? .inline : .large)
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
-        .kazumiSettingsNavBacking()
         .onGeometryChange(for: CGSize.self) { proxy in
             proxy.size
         } action: { size in

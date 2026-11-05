@@ -48,6 +48,11 @@ struct KazumiTabShell: View {
         }
         // LP 2586：上滑时缩不缩由界面设置里那个开关控制（默认缩）。
         .tabBarMinimizeBehavior(settings.tabBarShrinkOnScroll ? .onScrollDown : .never)
+        // Colo 7614：强调色面板挂在 TabView 上——它在每个标签页 `.id(themeRevision)`
+        // 那层之外，所以换色重建子树时面板不会被拆：选一个色面板不关，只有点「完成」才关。
+        .sheet(isPresented: themeColorSheetBinding) {
+            ThemeColorSheet(selection: themeColorBinding)
+        }
         .task {
             // 每次启动重排一遍更新提醒：上一轮排的会随系统清理，追番列表也可能变了。
             await environment.refreshUpdateNotifications()
@@ -66,6 +71,21 @@ struct KazumiTabShell: View {
     /// 胶囊会在重建瞬间滑一下（LP 报的「底部 tab 自己切换」）。
     private var themeRevision: String {
         "\(settings.themeColor.id)-\(settings.oledEnhance)-\(settings.themeMode.rawValue)"
+    }
+
+    /// 强调色面板的开关与选中值：都走设置页与外壳共用的状态（Colo 7614）。
+    private var themeColorSheetBinding: Binding<Bool> {
+        Binding(
+            get: { router.isShowingThemeColorSheet },
+            set: { router.isShowingThemeColorSheet = $0 }
+        )
+    }
+
+    private var themeColorBinding: Binding<KazumiThemeColor> {
+        Binding(
+            get: { settings.themeColor },
+            set: { settings.themeColor = $0 }
+        )
     }
 
     /// Tab 选中项与 AppDestination 的双向绑定。

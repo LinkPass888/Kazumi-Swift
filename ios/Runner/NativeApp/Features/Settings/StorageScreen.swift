@@ -134,7 +134,6 @@ struct StorageScreen: View {
         .scrollContentBackground(.hidden)
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
-        .kazumiSettingsNavBacking()
         .task { await refreshSize() }
         .confirmationDialog("清除图片缓存？", isPresented: $isConfirmingClear, titleVisibility: .visible) {
             Button("清除图片缓存", role: .destructive) {
