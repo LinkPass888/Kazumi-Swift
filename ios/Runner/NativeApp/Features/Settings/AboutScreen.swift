@@ -126,6 +126,8 @@ struct AboutScreen: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
+
+                MadeWithAirBuild(.compact)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)

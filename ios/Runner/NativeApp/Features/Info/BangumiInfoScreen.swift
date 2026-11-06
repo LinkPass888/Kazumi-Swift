@@ -26,7 +26,10 @@ struct BangumiInfoScreen: View {
     @State private var didFailToLoad = false
     @State private var isShowingSources = false
     @State private var selectedTab: InfoTab = .overview
-    @State private var scrollOffset: CGFloat = 0
+    /// 顶栏底边与大标题底边（同一个全局坐标里量）：两者相遇那一刻开始交接。
+    /// 都实测，不写字面量——标题行数、字号、宽窄档、横竖屏都由它自己带出来。
+    @State private var barBottom: CGFloat = 0
+    @State private var titleBottom: CGFloat = 0
     /// 浮起那颗「开始观看」的高度，量出来给正文底部留白用。
     @State private var startPlayingButtonHeight: CGFloat = 0
     @State private var toastMessage: String?
@@ -166,11 +169,6 @@ struct BangumiInfoScreen: View {
                 .scrollIndicators(.hidden)
                 // 顶部渐进模糊：只作用顶部那一条，不叠材质、不加底色。
                 .scrollEdgeEffectStyle(.soft, for: .top)
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    max(0, geometry.contentOffset.y)
-                } action: { _, newValue in
-                    scrollOffset = newValue
-                }
                 // 顶栏吸附在安全区（不再是 ScrollView 的兄弟节点）：内容从它下方滚过去，
                 // 顶部模糊才盖得住标题那一行；否则模糊只能铺在顶栏下面，内容滚上来是硬切一刀。
                 .safeAreaInset(edge: .top, spacing: 0) {
@@ -274,6 +272,12 @@ struct BangumiInfoScreen: View {
             .lineLimit(2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .opacity(1 - titleRevealProgress)
+            // 交接点按标题真实底边量（Colo 7983 §3.1）：宽窄档、行数、字号、横竖屏都会重测。
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .global).maxY
+            } action: { bottom in
+                titleBottom = bottom
+            }
     }
 
     /// 标签条 + 标签面板。宽档放进右栏（§6.5），窄档接在 hero 下面。
@@ -308,9 +312,8 @@ struct BangumiInfoScreen: View {
     /// 交接只发生在最后 10pt：大标题先随内容滚进顶部模糊里（不主动淡出），
     /// 滚过自身高度后顶栏那份在 10pt 行程内接上，中间不会有两份都半透明的帧。
     private var titleRevealProgress: CGFloat {
-        let handoffStart: CGFloat = 30
         let travel: CGFloat = 10
-        return min(1, max(0, (scrollOffset - handoffStart) / travel))
+        return min(1, max(0, (barBottom - titleBottom) / travel))
     }
 
     /// 正文底部留白：要够浮起那颗「开始观看」的高度加 12 点，
@@ -370,6 +373,12 @@ struct BangumiInfoScreen: View {
         .padding(.trailing, KazumiGlassMetrics.barEdgeInset)
         .padding(.top, 4)
         .padding(.bottom, 8)
+        // 栏底边（含下边距）就是内容顶：量给标题交接用。
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.frame(in: .global).maxY
+        } action: { bottom in
+            barBottom = bottom
+        }
     }
 
     /// 顶栏圆形玻璃按钮，尺寸与间距取自 KazumiGlassMetrics。

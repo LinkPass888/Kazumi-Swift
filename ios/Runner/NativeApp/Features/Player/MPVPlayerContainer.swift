@@ -220,6 +220,10 @@ final class PlayerSurfaceModel {
         wantsPlaying = false
     }
 
+    func markWantsPlaying() {
+        wantsPlaying = true
+    }
+
     /// 内核推来的一帧状态。
     func handle(snapshot: MPVSnapshot) {
         currentTime = max(0, snapshot.time)
@@ -699,6 +703,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
             }
             guard lastURL != url else { return }
             lastURL = url
+            surface?.markWantsPlaying()
             engine.load(url: url, referer: referer, userAgent: userAgent, cookie: cookie)
         }
     }

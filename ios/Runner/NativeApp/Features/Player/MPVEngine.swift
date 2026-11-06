@@ -5,6 +5,7 @@
 //  mpv 内核 + gpu-next / MoltenVK + Anime4K。
 //
 
+import AVKit
 import Foundation
 import ImageIO
 import Libmpv
@@ -81,6 +82,10 @@ final class MPVEngine {
     private var pump: MPVEventPump?
     private weak var metalView: MPVMetalView?
 
+    var playerScene: UIWindowScene? {
+        metalView?.window?.windowScene
+    }
+
     var onSnapshot: ((MPVSnapshot) -> Void)?
     /// 这一集已经拿到首份视频参数快照。
     /// 加载符号要靠它才能一直转到画面出来为止（LP 2026-10-28 第 4 条）。
@@ -90,6 +95,53 @@ final class MPVEngine {
     /// 解码开关与模式由容器传入，只在建内核时读取，重新打开播放器后生效。
     var hardwareDecodeEnabled = true
     var hardwareDecodeMode: HardwareDecodeMode = .videotoolbox
+
+    /// Effective decoder selected once at kernel creation. PiP needs CPU-copyable
+    /// decoded frames; never switch this value on a background transition.
+    private var effectiveHardwareDecode = "no"
+    private var pipFrameMissSince: Date?
+    private var pipFrameSourceLogged = false
+    private var pictureInPictureFrameFeedActive = false
+    private var pipWindowGeneration: UInt64 = 0
+    private var eventPumpGeneration: UInt64 = 0
+    private var pipWindowFirstCommandID: UInt64 = 1
+    // reply_userdata is an opaque UInt64 echoed by mpv; mark only window PiP shots.
+    private static let pipCommandMarker: UInt64 = 1 << 63
+    // Only outstanding commands and at most 64 timeout tombstones; no frame history.
+    private var pipRawShotSubmissions: [UInt64: (generation: UInt64, submittedAt: Double, timedOut: Bool)] = [:]
+    private var pipStatistics = (
+        submit: 0, reply: 0, success: 0, nilReply: 0, timeout: 0, late: 0,
+        submitFailed: 0, evictedTimeout: 0, evictedLate: 0, timedReplies: 0,
+        latencySum: 0.0, latencyMax: 0.0, eventSum: 0.0, eventMax: 0.0,
+        copySum: 0.0, copyMax: 0.0, mainActorSum: 0.0, mainActorMax: 0.0
+    )
+
+    /// Controller enables this only for starting/active/restoring cadence < 0.1s.
+    /// Inline/stopCapture restores the original 250ms fallback; repeated values do nothing.
+    func setPictureInPictureFrameFeedActive(_ active: Bool) {
+        guard active != pictureInPictureFrameFeedActive else { return }
+        pictureInPictureFrameFeedActive = active
+        if active {
+            pipWindowGeneration &+= 1
+            pipWindowFirstCommandID = nextCommandID
+            pipRawShotSubmissions.removeAll(keepingCapacity: true)
+            pipStatistics = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        }
+        pump?.setPictureInPictureFrameFeedActive(active, generation: pipWindowGeneration)
+        if !active {
+            reportPictureInPictureStatistics(final: true)
+            pipRawShotSubmissions.removeAll(keepingCapacity: true)
+        }
+    }
+
+    private func reportPictureInPictureStatistics(final: Bool) {
+        let stats = pipStatistics
+        let count = Double(max(1, stats.timedReplies))
+        let pending = pipRawShotSubmissions.values.filter { !$0.timedOut }.count
+        func milliseconds(_ value: Double) -> String { String(format: "%.2f", value * 1000) }
+        log("画中画取帧统计 \(final ? "最终" : "5s累计") window=\(pipWindowGeneration) submit=\(stats.submit) reply=\(stats.reply) success=\(stats.success) nilReply=\(stats.nilReply) timeout=\(stats.timeout) lateReply=\(stats.late) submitFailed=\(stats.submitFailed) pending=\(pending) evictedTimeout=\(stats.evictedTimeout) evictedLate=\(stats.evictedLate)")
+        log("画中画回执耗时 window=\(pipWindowGeneration) timedReplies=\(stats.timedReplies) submit->MainActor平均/最大ms=\(milliseconds(stats.latencySum / count))/\(milliseconds(stats.latencyMax)) submit->event平均/最大ms=\(milliseconds(stats.eventSum / count))/\(milliseconds(stats.eventMax)) copy平均/最大ms=\(milliseconds(stats.copySum / count))/\(milliseconds(stats.copyMax)) copy->MainActor平均/最大ms=\(milliseconds(stats.mainActorSum / count))/\(milliseconds(stats.mainActorMax))")
+    }
 
     /// 解复用缓存大小（字节）。进来之前由容器按低内存模式的档位算好；
     /// 之后档位或网络变了就调 `applyCacheSize(_:)` 立刻改，不用重建内核。
@@ -155,8 +207,19 @@ final class MPVEngine {
         setOption("gpu-api", "vulkan")
         setOption("gpu-context", "moltenvk")
         setOption("fbo-format", "rgba16hf")
-        setOption("vd-lavc-dr", "yes")
-        setOption("hwdec", Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode))
+        let pictureInPictureEnabled = AVPictureInPictureController.isPictureInPictureSupported()
+        // 画中画要的是可复制的解码帧；vd-lavc-dr=yes 会把帧留在 GPU 侧，
+        // 硬解丢参考帧时 screenshot-raw 一帧都回不来。只在内核创建时定一次。
+        setOption("vd-lavc-dr", pictureInPictureEnabled ? "no" : "yes")
+        let requestedHWDec = Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode)
+        effectiveHardwareDecode = Self.effectiveHWDec(
+            requested: requestedHWDec,
+            pictureInPictureEnabled: pictureInPictureEnabled
+        )
+        setOption("hwdec", effectiveHardwareDecode)
+        log("硬解选择（内核创建时固定）：requested=\(requestedHWDec) effective=\(effectiveHardwareDecode)")
+        log("画中画: BEFORE 帧源（旧实现）：vd-lavc-dr=yes 直通硬件帧，硬解丢参考帧时 screenshot-raw 回不了帧、20 秒兜底挂住节拍")
+        log("画中画: AFTER 帧源（新实现）：vd-lavc-dr=\(pictureInPictureEnabled ? "no" : "yes") copy 解码帧可复制，单次取帧 0.25 秒超时不再饿死 33ms 节拍")
         setOption("hwdec-codecs", "all")
 
         if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
@@ -207,6 +270,7 @@ final class MPVEngine {
             metalView = nil
             return
         }
+        log("硬解实际值（内核创建后）：requested=\(requestedHWDec) effective=\(effectiveHardwareDecode) actual=\(stringProperty("hwdec-current") ?? "未知")")
 
         // C API 只接受一个级别，不接受 msg-level 的分模块语法。
         // v 收集解码 / 色彩 / 渲染；接收端白名单、脱敏、限流，不开 HTTP debug。
@@ -223,19 +287,40 @@ final class MPVEngine {
     }
 
     private func setupEvents(_ mpv: OpaquePointer) {
+        eventPumpGeneration &+= 1
+        let generation = eventPumpGeneration
         let pump = MPVEventPump(mpv: mpv) { [weak self] snapshot in
-            Task { @MainActor in self?.apply(snapshot) }
+            Task { @MainActor in
+                guard let self, self.eventPumpGeneration == generation else { return }
+                self.apply(snapshot)
+            }
         } log: { [weak self] message in
             Task { @MainActor in self?.log(message) }
         }
-        pump.onCommandReply = { [weak self] id, error, rawFrame in
+        pump.onCommandReply = { [weak self] id, error, rawFrame, eventAt, copiedAt, window in
             Task { @MainActor in
-                self?.finishCommand(id: id, error: error)
-                self?.finishRawShot(id: id, frame: error >= 0 ? rawFrame : nil)
+                guard let self, self.eventPumpGeneration == generation else { return }
+                self.recordPictureInPictureReply(
+                    id: id, frame: error >= 0 ? rawFrame : nil,
+                    eventAt: eventAt, copiedAt: copiedAt, window: window
+                )
+                self.finishCommand(id: id, error: error)
+                self.finishRawShot(id: id, frame: error >= 0 ? rawFrame : nil)
+            }
+        }
+        pump.onPictureInPictureStatistics = { [weak self] window in
+            Task { @MainActor in
+                guard let self, self.eventPumpGeneration == generation,
+                      self.pictureInPictureFrameFeedActive,
+                      self.pipWindowGeneration == window else { return }
+                self.reportPictureInPictureStatistics(final: false)
             }
         }
         self.pump = pump
         pump.start()
+        if pictureInPictureFrameFeedActive {
+            pump.setPictureInPictureFrameFeedActive(true, generation: pipWindowGeneration)
+        }
     }
 
     private func apply(_ snapshot: MPVSnapshot) {
@@ -300,14 +385,27 @@ final class MPVEngine {
         #endif
     }
 
-    /// 兼容播放页的前后台回调。gpu-next 由 mpv 自己的渲染线程提交 Metal，
-    /// 不依赖 UIKit 重绘，所以这里只记录状态并在回前台时刷新 drawable 尺寸。
+    /// PiP 的 screenshot-raw 连续帧要求可复制 VideoToolbox 输出。手动按钮常驻，
+    /// 设备支持画中画时就固定按可复制帧建内核，自动开关关着也一样。
+    private static func effectiveHWDec(requested: String, pictureInPictureEnabled: Bool) -> String {
+        #if targetEnvironment(simulator)
+        return "no"
+        #else
+        guard pictureInPictureEnabled, requested != "no" else { return requested }
+        return HardwareDecodeMode.videotoolboxCopy.rawValue
+        #endif
+    }
+
+    /// Stops or restores the window VO. PiP frames come from screenshot-raw, so
+    /// replacing gpu-next with null stops CAMetalLayer presentation without
+    /// starving the sample-buffer window.
     private(set) var renderingLocked = false
 
     func setRenderingLocked(_ locked: Bool) {
         guard locked != renderingLocked else { return }
         renderingLocked = locked
-        log(locked ? "画面：进入后台" : "画面：回到前台")
+        setOptionForPlayback("options/vo", locked ? "null" : "gpu-next")
+        log(locked ? "画面：停止内嵌 Metal 输出" : "画面：恢复内嵌 Metal 输出")
         if !locked {
             requestRender()
         }
@@ -473,10 +571,11 @@ final class MPVEngine {
         if let url = raw.url { return (url, raw.note) }
         log(raw.note)
 
-        // 直通硬件帧不一定能由 screenshot-raw 下载成打包 RGB。只在这条取帧命令
-        // 失败时临时切到 copy 解码，取完立刻恢复；正常播放和画中画路径不受影响。
+        // 直通硬件帧不一定能由 screenshot-raw 下载成打包 RGB。这个切换只服务
+        // 用户主动截图；PiP 的 33ms feed 从不走本方法，且 PiP 开启的内核本来就
+        // 在创建时固定成 videotoolbox-copy。
         #if !targetEnvironment(simulator)
-        if hardwareDecodeEnabled, hardwareDecodeMode == .videotoolbox {
+        if effectiveHardwareDecode == HardwareDecodeMode.videotoolbox.rawValue {
             let viaCopy = await captureRawFrame(usingCopyDecoder: true)
             if let url = viaCopy.url { return (url, viaCopy.note) }
             log(viaCopy.note)
@@ -501,10 +600,7 @@ final class MPVEngine {
         }
         defer {
             if usingCopyDecoder {
-                setOptionForPlayback(
-                    "hwdec",
-                    Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode)
-                )
+                setOptionForPlayback("hwdec", effectiveHardwareDecode)
             }
         }
         guard let frame = await rawScreenshot() else {
@@ -544,9 +640,10 @@ final class MPVEngine {
     }
 
     /// 下发 `screenshot-raw video`，等回执里的那块帧。
-    private func rawScreenshot() async -> MPVRawFrame? {
+    private func rawScreenshot(timeout: Double = 20, pictureInPicture: Bool = false) async -> MPVRawFrame? {
         guard let handle else { return nil }
-        let id = nextCommandID
+        let countPictureInPicture = pictureInPicture && pictureInPictureFrameFeedActive
+        let id = countPictureInPicture ? (nextCommandID | Self.pipCommandMarker) : nextCommandID
         nextCommandID += 1
 
         // 参数是 node 数组：["screenshot-raw", "video"]。mpv 只在调用期间用这些字符串
@@ -565,6 +662,10 @@ final class MPVEngine {
         return await withCheckedContinuation { (continuation: CheckedContinuation<MPVRawFrame?, Never>) in
             rawShotWaiters[id] = continuation
             var status: Int32 = -1
+            if countPictureInPicture {
+                pipStatistics.submit += 1
+                pipRawShotSubmissions[id] = (pipWindowGeneration, ProcessInfo.processInfo.systemUptime, false)
+            }
             values.withUnsafeMutableBufferPointer { buffer in
                 // 参数表：node 数组。`mpv_command_node_async` 会在返回前把参数拷走，
                 // 所以这块栈上的东西出了作用域也能放。
@@ -581,21 +682,51 @@ final class MPVEngine {
                 }
             }
             if status < 0 {
+                if pipRawShotSubmissions.removeValue(forKey: id) != nil {
+                    pipStatistics.submitFailed += 1
+                }
                 log("取帧命令下发失败：\(String(cString: mpv_error_string(status)))")
                 finishRawShot(id: id, frame: nil)
                 return
             }
             // 跟其他异步命令一样的超时：放走等待者，不让截图那条任务挂死。
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(20))
+                try? await Task.sleep(for: .seconds(timeout))
+                if rawShotWaiters[id] != nil, var submission = pipRawShotSubmissions[id],
+                   pictureInPictureFrameFeedActive, submission.generation == pipWindowGeneration {
+                    pipStatistics.timeout += 1
+                    submission.timedOut = true
+                    pipRawShotSubmissions[id] = submission
+                    // Bound late-reply evidence even when mpv never replies.
+                    let expired = pipRawShotSubmissions.filter { $0.value.timedOut }
+                    if expired.count > 64, let oldest = expired.keys.min() {
+                        pipRawShotSubmissions.removeValue(forKey: oldest)
+                        pipStatistics.evictedTimeout += 1
+                    }
+                }
                 finishRawShot(id: id, frame: nil)
             }
         }
     }
 
     /// 画中画取帧：直接读解码后的原始帧，不依赖窗口或 Metal drawable。
+    /// 0.25 秒拿不到就放走本轮，不让慢回执把 33ms 节拍压到 4fps。
     func captureRawFrameForPictureInPicture() async -> MPVRawFrame? {
-        await rawScreenshot()
+        let frame = await rawScreenshot(timeout: 0.25, pictureInPicture: true)
+        guard let frame else {
+            if pipFrameMissSince == nil { pipFrameMissSince = Date() }
+            if !pipFrameSourceLogged,
+               let since = pipFrameMissSince,
+               Date().timeIntervalSince(since) >= 2 {
+                pipFrameSourceLogged = true
+                let actual = stringProperty("hwdec-current") ?? "未知"
+                log("画中画: BEFORE 帧源不稳：连续 2 秒取不到 screenshot-raw 帧（hwdec-current=\(actual)）")
+                log("画中画: AFTER 帧源收口：内核创建时已固定 copy 解码 + vd-lavc-dr=no，取帧超时 0.25 秒，喂帧不串行等回执")
+            }
+            return nil
+        }
+        pipFrameMissSince = nil
+        return frame
     }
 
     /// 画中画时间轴：直接读内核当前时间与暂停状态。
@@ -670,6 +801,8 @@ final class MPVEngine {
     // MARK: - 收尾
 
     func stop() {
+        setPictureInPictureFrameFeedActive(false)
+        eventPumpGeneration &+= 1
         pump?.stop()
         pump = nil
         // 引擎要没了，还等着的命令不能继续挂着。
@@ -769,6 +902,47 @@ final class MPVEngine {
         request.waiter.resume(error)
     }
 
+    /// Receipt is measured at MainActor delivery, not capture's optional result.
+    /// eventAt is dequeue-before-copy; copiedAt closes the event-owned node copy.
+    /// submit->event includes mpv work + pump wait, NOT a pure decoder timing.
+    private func recordPictureInPictureReply(
+        id: UInt64, frame: MPVRawFrame?, eventAt: Double, copiedAt: Double, window: UInt64
+    ) {
+        guard pictureInPictureFrameFeedActive, window == pipWindowGeneration,
+              (id & Self.pipCommandMarker) != 0,
+              (id & ~Self.pipCommandMarker) >= pipWindowFirstCommandID else { return }
+        pipStatistics.reply += 1
+        guard let submission = pipRawShotSubmissions.removeValue(forKey: id) else {
+            // mpv emits one reply per accepted command. An absent marked current-window
+            // ID has only lost its timeout timestamp: count late, but do not invent latency.
+            pipStatistics.late += 1
+            pipStatistics.evictedLate += 1
+            return
+        }
+        guard submission.generation == pipWindowGeneration else { return }
+        pipStatistics.timedReplies += 1
+        let receivedAt = ProcessInfo.processInfo.systemUptime
+        let elapsed = max(0, receivedAt - submission.submittedAt)
+        let eventElapsed = max(0, eventAt - submission.submittedAt)
+        let copyElapsed = max(0, copiedAt - eventAt)
+        let mainActorElapsed = max(0, receivedAt - copiedAt)
+        pipStatistics.latencySum += elapsed
+        pipStatistics.latencyMax = max(pipStatistics.latencyMax, elapsed)
+        pipStatistics.eventSum += eventElapsed
+        pipStatistics.eventMax = max(pipStatistics.eventMax, eventElapsed)
+        pipStatistics.copySum += copyElapsed
+        pipStatistics.copyMax = max(pipStatistics.copyMax, copyElapsed)
+        pipStatistics.mainActorSum += mainActorElapsed
+        pipStatistics.mainActorMax = max(pipStatistics.mainActorMax, mainActorElapsed)
+        if submission.timedOut {
+            pipStatistics.late += 1
+        } else if frame != nil {
+            pipStatistics.success += 1
+        } else {
+            pipStatistics.nilReply += 1
+        }
+    }
+
     /// 取帧回执落地：把原始帧交给等待者（没拿到就是 nil）。
     private func finishRawShot(id: UInt64, frame: MPVRawFrame?) {
         guard let waiter = rawShotWaiters.removeValue(forKey: id) else { return }
@@ -831,16 +1005,30 @@ private struct CommandRequest {
 
 /// 在 mpv 自己的线程上收事件，攒成快照再递回主线程。
 final class MPVEventPump: @unchecked Sendable {
-    nonisolated(unsafe) private static let queueKey = DispatchSpecificKey<Bool>()
+    nonisolated(unsafe) private static let queueKey = DispatchSpecificKey<ObjectIdentifier>()
     private let mpv: OpaquePointer
     private let queue = DispatchQueue(label: "kazumi.mpv.events", qos: .userInteractive)
     private let onSnapshot: @Sendable (MPVSnapshot) -> Void
     private let onLog: @Sendable (String) -> Void
     /// 异步命令的回执：`(reply_userdata, 错误码)`，错误码 >= 0 就是成了。
     /// 走 mpv 自己的线程，进来先跳回主线程再唤醒等待者。
-    var onCommandReply: (@Sendable (UInt64, Int32, MPVRawFrame?) -> Void)?
+    var onCommandReply: (@Sendable (UInt64, Int32, MPVRawFrame?, Double, Double, UInt64) -> Void)?
+    var onPictureInPictureStatistics: (@Sendable (UInt64) -> Void)?
     private var running = false
     private var ticker: DispatchSourceTimer?
+    // All timer/mode/statistics state is confined to the existing event queue.
+    private var pictureInPictureFrameFeedActive = false
+    private var pipWindowGeneration: UInt64 = 0
+    private var lastSnapshotAt = 0.0
+    private var pipLastSummaryAt = 0.0
+    private var pipLastPollAt: Double?
+    private var pipDrainStatistics = (
+        callback: 0, poll: 0, intervals: 0,
+        intervalSum: 0.0, intervalMin: Double.infinity, intervalMax: 0.0
+    )
+    private var pipReferenceCodec: String?
+    // Keys can only come from the fixed decoder-reference families below.
+    private var pipReferenceErrors: [String: Int] = [:]
     /// 最近一次加载失败的原因；成功起播后清掉。
     private var lastError: String?
     /// 只保存已脱敏的 error / fatal 摘要，报错提示也不能携带凭据。
@@ -862,10 +1050,20 @@ final class MPVEventPump: @unchecked Sendable {
         self.mpv = mpv
         self.onSnapshot = onSnapshot
         onLog = log
-        queue.setSpecific(key: Self.queueKey, value: true)
+        queue.setSpecific(key: Self.queueKey, value: ObjectIdentifier(queue))
     }
 
     func start() {
+        if DispatchQueue.getSpecific(key: Self.queueKey) == ObjectIdentifier(queue) {
+            startOnQueue()
+        } else {
+            queue.sync { startOnQueue() }
+        }
+    }
+
+    private func startOnQueue() {
+        guard !running else { return }
+        running = true
         // 这些属性一变就唤醒，醒来统一读一遍值，比逐个解析事件结构省事。
         for name in ["time-pos", "duration", "pause", "eof-reached", "core-idle", "video-params"] {
             let status = mpv_observe_property(mpv, 0, name, MPV_FORMAT_NONE)
@@ -882,14 +1080,13 @@ final class MPVEventPump: @unchecked Sendable {
             },
             Unmanaged.passUnretained(self).toOpaque()
         )
-        running = true
-        // 不依赖 mpv 的唤醒回调：实测这条回调在这套静态库里一次都不来，
-        // 改用固定节拍读属性。250ms 对进度条和暂停状态足够，也不费电。
+        // Wakeup remains the fast path; the same timer drains missing notifications.
+        // PiP changes ONLY fallback event drain to 16ms; full snapshots stay 250ms.
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(250))
         timer.setEventHandler { [weak self] in
             guard let self, self.running else { return }
-            self.drain()
+            self.drain(fromWakeup: false)
         }
         timer.resume()
         ticker = timer
@@ -899,20 +1096,143 @@ final class MPVEventPump: @unchecked Sendable {
     }
 
     func stop() {
+        // Timer cancellation and running must use the same queue as every drain.
+        // Queued wakeups/ticks then see false before the caller destroys mpv.
+        if DispatchQueue.getSpecific(key: Self.queueKey) == ObjectIdentifier(queue) {
+            stopOnQueue()
+        } else {
+            queue.sync { stopOnQueue() }
+        }
+    }
+
+    private func stopOnQueue() {
+        guard running else { return }
+        if pictureInPictureFrameFeedActive {
+            finishPictureInPictureWindow()
+        }
+        pictureInPictureFrameFeedActive = false
         running = false
+        ticker?.setEventHandler {}
         ticker?.cancel()
         ticker = nil
         mpv_set_wakeup_callback(mpv, nil, nil)
-        // 句柄随后就会被销毁，必须先等读事件的队列空下来；已经在队列上就不能等自己。
-        if DispatchQueue.getSpecific(key: Self.queueKey) == nil {
-            queue.sync {}
+    }
+
+    func setPictureInPictureFrameFeedActive(_ active: Bool, generation: UInt64) {
+        if DispatchQueue.getSpecific(key: Self.queueKey) == ObjectIdentifier(queue) {
+            setPictureInPictureFrameFeedActiveOnQueue(active, generation: generation)
+        } else {
+            queue.sync { setPictureInPictureFrameFeedActiveOnQueue(active, generation: generation) }
         }
+    }
+
+    private func setPictureInPictureFrameFeedActiveOnQueue(_ active: Bool, generation: UInt64) {
+        guard running, pictureInPictureFrameFeedActive != active else { return }
+        if active {
+            pipWindowGeneration = generation
+            pipLastSummaryAt = ProcessInfo.processInfo.systemUptime
+            pipLastPollAt = nil
+            pipDrainStatistics = (0, 0, 0, 0, .infinity, 0)
+            pipReferenceErrors.removeAll(keepingCapacity: true)
+            refreshPictureInPictureReferenceCodec()
+        } else {
+            finishPictureInPictureWindow()
+        }
+        pictureInPictureFrameFeedActive = active
+        let interval: DispatchTimeInterval = .milliseconds(active ? 16 : 250)
+        ticker?.schedule(deadline: .now() + interval, repeating: interval)
+    }
+
+    private func reportPictureInPictureDrainStatistics(final: Bool) {
+        let stats = pipDrainStatistics
+        let average = stats.intervalSum / Double(max(1, stats.intervals))
+        let minimum = stats.intervals > 0 ? stats.intervalMin : 0
+        log("画中画事件泵统计 \(final ? "最终" : "5s累计") window=\(pipWindowGeneration) callbackDrain=\(stats.callback) pollDrain=\(stats.poll) pollIntervals=\(stats.intervals) 实际poll间隔平均/最小/最大ms=\(String(format: "%.2f/%.2f/%.2f", average * 1000, minimum * 1000, stats.intervalMax * 1000))")
+    }
+
+    private func finishPictureInPictureWindow() {
+        reportPictureInPictureDrainStatistics(final: true)
+        reportPictureInPictureReferenceErrors(final: true)
+    }
+
+    private func reportPictureInPictureReferenceErrors(final: Bool) {
+        // Cumulative per mode window, INCLUDING the first printed occurrence.
+        // A 5s report never resets counts or prints the first event again.
+        for family in pipReferenceErrors.keys.sorted() {
+            log("画中画解码参考帧错误 \(final ? "最终" : "5s累计") window=\(pipWindowGeneration) class=\(family) total=\(pipReferenceErrors[family] ?? 0)（含首条）")
+        }
+    }
+
+    private func refreshPictureInPictureReferenceCodec() {
+        pipReferenceCodec = nil
+        guard let raw = mpv_get_property_string(mpv, "video-format") else { return }
+        defer { mpv_free(raw) }
+        let codec = String(cString: raw)
+        if codec == "hevc" || codec == "h264" { pipReferenceCodec = codec }
+    }
+
+    private func suppressRepeatedPictureInPictureReferenceError(
+        prefix: String, level: String, text: String
+    ) -> Bool {
+        guard pictureInPictureFrameFeedActive,
+              prefix == "ffmpeg/video", level == "error" else { return false }
+        // FFmpeg n9.0.2 decoder reference-frame/POC/RPS AV_LOG_ERROR families.
+        // Exact fixed text, or canonical %d only; arbitrary similar errors pass through.
+        let line = text.trimmingCharacters(in: .newlines)
+        let codec: String
+        let body: String
+        if line.hasPrefix("hevc: ") {
+            codec = "hevc"
+            body = String(line.dropFirst(6))
+        } else if line.hasPrefix("h264: ") {
+            codec = "h264"
+            body = String(line.dropFirst(6))
+        } else {
+            return false
+        }
+        func integerFamily(_ prefix: String, suffix: String = "") -> Bool {
+            guard body.hasPrefix(prefix), body.hasSuffix(suffix) else { return false }
+            let number = String(body.dropFirst(prefix.count).dropLast(suffix.count))
+            guard let value = Int32(number) else { return false }
+            return String(value) == number
+        }
+        let family: String
+        if codec == "hevc" {
+            switch body {
+            case "Error constructing the frame RPS.", "Zero refs in the frame RPS.",
+                 "Invalid reference index.":
+                family = body
+            default:
+                if integerFamily("Could not find ref with POC ") {
+                    family = "Could not find ref with POC"
+                } else if integerFamily("Duplicate POC in a sequence: ", suffix: ".") {
+                    family = "Duplicate POC in a sequence"
+                } else { return false }
+            }
+        } else {
+            switch body {
+            case "co located POCs unavailable", "mmco: unref short failure",
+                 "Discarding mismatching reference", "reference picture missing during reorder",
+                 "mismatching reference", "Missing reference picture":
+                family = body
+            default:
+                if integerFamily("Missing reference picture, default is ") {
+                    family = "Missing reference picture, default is"
+                } else { return false }
+            }
+        }
+        if pipReferenceCodec != codec { refreshPictureInPictureReferenceCodec() }
+        guard pipReferenceCodec == codec else { return false }
+        let key = "\(codec): \(family)"
+        pipReferenceErrors[key, default: 0] += 1
+        return pipReferenceErrors[key, default: 0] > 1
     }
 
     /// 引擎要开始新的一次加载了（换集 / 重试 / 换源）。
     func beginLoad() {
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.running else { return }
+            self.pipReferenceCodec = nil
             self.loadPhase = .opening
             self.firstFrameRendered = false
             self.loggedVideoInfo = false
@@ -925,7 +1245,7 @@ final class MPVEventPump: @unchecked Sendable {
     /// 第一份视频参数快照已经拿到（由引擎在主线程调）。
     func markFirstFrameRendered() {
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.running else { return }
             self.firstFrameRendered = true
             if self.loadPhase == .awaitingFirstFrame { self.loadPhase = .playing }
         }
@@ -934,11 +1254,36 @@ final class MPVEventPump: @unchecked Sendable {
     fileprivate func signal() {
         queue.async { [weak self] in
             guard let self, self.running else { return }
-            self.drain()
+            self.drain(fromWakeup: true)
         }
     }
 
-    private func drain() {
+    private func drain(fromWakeup: Bool) {
+        let drainAt = ProcessInfo.processInfo.systemUptime
+        if pictureInPictureFrameFeedActive {
+            if fromWakeup {
+                pipDrainStatistics.callback += 1
+            } else {
+                pipDrainStatistics.poll += 1
+                if let previous = pipLastPollAt {
+                    let interval = max(0, drainAt - previous)
+                    pipDrainStatistics.intervals += 1
+                    pipDrainStatistics.intervalSum += interval
+                    pipDrainStatistics.intervalMin = min(pipDrainStatistics.intervalMin, interval)
+                    pipDrainStatistics.intervalMax = max(pipDrainStatistics.intervalMax, interval)
+                }
+                pipLastPollAt = drainAt
+            }
+        }
+        defer {
+            let now = ProcessInfo.processInfo.systemUptime
+            if pictureInPictureFrameFeedActive, now - pipLastSummaryAt >= 5 {
+                pipLastSummaryAt = now
+                reportPictureInPictureDrainStatistics(final: false)
+                reportPictureInPictureReferenceErrors(final: false)
+                onPictureInPictureStatistics?(pipWindowGeneration)
+            }
+        }
         while true {
             guard let event = mpv_wait_event(mpv, 0) else { return }
             let id = event.pointee.event_id
@@ -947,12 +1292,17 @@ final class MPVEventPump: @unchecked Sendable {
             if id == MPV_EVENT_START_FILE {
                 // 开始打开文件：圈从现在开始转（LP 4818 第 2 条）。
                 loadPhase = .opening
+                pipReferenceCodec = nil
                 firstFrameRendered = false
                 loggedVideoInfo = false
                 lastCoreErrorText = nil
                 // beginLoad 已重置过就不再给一份配额；内核自行换文件仍需重置。
                 if !awaitingStartFile { diagnostics.resetPlayback() }
                 awaitingStartFile = false
+            }
+            if pictureInPictureFrameFeedActive,
+               id == MPV_EVENT_FILE_LOADED || id == MPV_EVENT_VIDEO_RECONFIG {
+                refreshPictureInPictureReferenceCodec()
             }
             if id == MPV_EVENT_FILE_LOADED {
                 // 文件打开了不等于有画面：不在这儿收圈，往后推到「等首帧」
@@ -986,8 +1336,11 @@ final class MPVEventPump: @unchecked Sendable {
                 let prefix = String(cString: message.pointee.prefix)
                 let level = String(cString: message.pointee.level)
                 let diagnostic = diagnostics.receive(prefix: prefix, level: level, text: text)
+                let suppress = suppressRepeatedPictureInPictureReferenceError(
+                    prefix: prefix, level: level, text: text
+                )
                 if let receipt = diagnostic.receipt { log(receipt) }
-                if let line = diagnostic.line { log(line) }
+                if let line = diagnostic.line, !suppress { log(line) }
                 if let errorText = diagnostic.errorText {
                     lastCoreErrorText = errorText
                 }
@@ -998,14 +1351,24 @@ final class MPVEventPump: @unchecked Sendable {
                 //
                 // 回执里还可能带一个 node（`screenshot-raw` 的原始帧就在里面）。
                 // 这个 node 只在处理事件这一刻有效，所以当场拷成 `MPVRawFrame`。
+                let eventAt = ProcessInfo.processInfo.systemUptime
                 var rawFrame: MPVRawFrame?
                 if event.pointee.error >= 0, let dataPointer = event.pointee.data {
                     let reply = UnsafeMutablePointer<mpv_event_command>(OpaquePointer(dataPointer))
                     rawFrame = MPVRawFrame(node: reply.pointee.result)
                 }
-                onCommandReply?(event.pointee.reply_userdata, event.pointee.error, rawFrame)
+                let copiedAt = ProcessInfo.processInfo.systemUptime
+                onCommandReply?(
+                    event.pointee.reply_userdata, event.pointee.error, rawFrame,
+                    eventAt, copiedAt, pictureInPictureFrameFeedActive ? pipWindowGeneration : 0
+                )
             }
         }
+        // Every drain entry empties events/replies, but full property reads and
+        // onSnapshot together are independently capped at 250ms, including wakeup.
+        let snapshotAt = ProcessInfo.processInfo.systemUptime
+        guard snapshotAt - lastSnapshotAt >= 0.25 else { return }
+        lastSnapshotAt = snapshotAt
         var snap = snapshot()
         // 「自动播放真的起来了」的两个判据，满足一个就算（LP 4820）：
         // 一是第一份视频参数快照已经到了，二是时间轴真的在推进（没暂停、time-pos 走起来了）。

@@ -137,6 +137,9 @@ final class PlayerVolumeControl {
     /// MPVolumeView 内部的音量滑杆；拿到之后系统音量就能直接写。
     weak var slider: UISlider?
 
+    /// 刚由我们写下去的那一拍：这期间观察到的音量变化是回声，不是按了键。
+    private(set) var isWriting = false
+
     var current: Double {
         if let slider = liveSlider() { return Double(slider.value) }
         return Double(AVAudioSession.sharedInstance().outputVolume)
@@ -146,6 +149,11 @@ final class PlayerVolumeControl {
         guard let slider = liveSlider() else { return }
         let clamped = Float(min(1, max(0, value)))
         slider.value = clamped
+        isWriting = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            isWriting = false
+        }
         // 两种事件都发：不同 iOS 版本认的不一样，只发一种常常写了不生效。
         slider.sendActions(for: .valueChanged)
         slider.sendActions(for: .touchUpInside)
@@ -219,19 +227,6 @@ private struct SystemVolumeHost: UIViewRepresentable {
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 
-/// 音量浮层里那条系统音量滑杆：直接用 `MPVolumeView`，不自绘。
-private struct SystemVolumeSlider: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let view = MPVolumeView()
-        view.showsRouteButton = false
-        view.showsVolumeSlider = true
-        view.tintColor = .white
-        return view
-    }
-
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
-}
-
 struct PlayerScreen: View {
     var bangumiID: Int
     var episode: Int
@@ -285,6 +280,8 @@ struct PlayerScreen: View {
     @State private var pausedByBackground = false
     /// 后台自动画中画。设置关着时一直是 nil：不建图层、不建控制器、不碰软件渲染。
     @State private var pictureInPicture: PictureInPictureController?
+    /// 投屏进行中：画中画与投屏互斥，这颗按钮置灰并给出读屏原因。
+    @State private var isCasting = false
     /// 「更多」/ 倍速面板：自己握开关，好让控制层知道菜单还开着。
     ///
     /// 系统菜单不把开合告诉代码，所以另挂了一个 `SystemMenuProbe` 看它在不在，
@@ -330,6 +327,8 @@ struct PlayerScreen: View {
     @State private var sawLandscape = false
     /// 亮度 / 音量的横条浮层：左半边调亮度、右半边调音量，都自己画。
     @State private var gestureHUD: GestureHUDValue?
+    /// 音量键的监听：它只当触发，画的是手势那条浮层（LP 2026-11-06）。
+    @State private var volumeObserver: NSKeyValueObservation?
     /// 横滑调进度时中间那朵「+15s」。
     @State private var seekHUD: Int?
     /// 双击中间那朵播放 / 暂停符号。
@@ -553,14 +552,13 @@ struct PlayerScreen: View {
             } else {
                 showControls()
             }
-            // 暂停着退后台不该自己弹小窗，起播了再放行自动起。
-            pictureInPicture?.allowsAutoStart = playing
+            pictureInPicture?.setPlaying(playing)
             // 用户亲手按的暂停不归「回前台自动播放」管。
             if playing {
                 // 切后台那一拍我们刚 pause()，内核还会有一两个快照报「还在走」，
                 // 那不是用户的意思：只有在前台真的播起来，才算「用户亲手按的暂停」
                 // 作废。不然这一拍会把 pausedByBackground 洗掉，回前台就不续播了。
-                if sceneIsActive { pausedByBackground = false }
+                if surface.engine?.playerScene?.activationState == .foregroundActive { pausedByBackground = false }
                 // 起播那一刻立即写一次：不然要等到下一个 2 秒节拍，
                 // 万一这期间出事，控制中心一次都没写出去过。
                 syncNowPlaying()
@@ -622,6 +620,9 @@ struct PlayerScreen: View {
         // 保留现有 UIScene 通知订阅和处理顺序。
         // 回调标记仅表示收到通知，不表明其触发来源。
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didEnterBackgroundNotification)) { notification in
+            guard let scene = notification.object as? UIScene,
+                  let playerScene = surface.engine?.playerScene,
+                  scene === playerScene else { return }
             sceneIsActive = false
             logLifecycleSnapshot("UIScene.didEnterBackgroundNotification.received", scene: notification.object as? UIScene)
             // 进后台 / 锁屏一律放弃常亮；回前台且还在播再重新判断。
@@ -631,6 +632,9 @@ struct PlayerScreen: View {
             handleBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { notification in
+            guard let scene = notification.object as? UIScene,
+                  let playerScene = surface.engine?.playerScene,
+                  scene === playerScene else { return }
             sceneIsActive = true
             logLifecycleSnapshot("UIScene.didActivateNotification.received", scene: notification.object as? UIScene)
             updateIdleTimer()
@@ -645,13 +649,11 @@ struct PlayerScreen: View {
         .onChange(of: settings.proxyUrl) { _, _ in
             refreshProxy()
         }
-        // 设置被关掉：画中画立刻收掉（连同窗口里那块图层），内联画面恢复。
         .onChange(of: settings.backgroundAutoPiP) { _, enabled in
             if enabled {
                 makePictureInPictureController(settingsStore: settings)
             } else {
-                pictureInPicture?.teardown()
-                pictureInPicture = nil
+                pictureInPicture?.setAutomaticStartAllowed(false)
             }
         }
         .onChange(of: isEditingSkipSeconds) { _, editing in
@@ -732,10 +734,13 @@ struct PlayerScreen: View {
             // 保留现有清理顺序。
             NowPlayingCenter.shared.clear()
             restoreAudioSessionAfterPlayer()
+            volumeObserver?.invalidate()
+            volumeObserver = nil
             // 离开播放器：屏幕常亮无论如何都要还回去，不能带出这个页面。
             UIApplication.shared.isIdleTimerDisabled = false
             // 先摘掉结束回调，避免关闭播放器时的 finish 又被当成「播完」触发连播。
             surface.onFinish = nil
+            surface.onPlaybackStarted = nil
             // 长按手势若被系统取消，松手回调不会来，退出时兜一次恢复。
             endTemporarySpeed()
             // 横屏直接离开时先明确请求竖屏；只放开方向集合不会触发旋转，
@@ -838,6 +843,7 @@ struct PlayerScreen: View {
         let library = environment.library
         danmakuEnabled = settingsStore.danmakuEnabled
         applyAudioSessionPolicy()
+        observeSystemVolume()
         playbackRate = Float(settingsStore.playSpeed)
         // 默认视频比例：设置页选的那一档作为这次播放的起点，
         // 播放器里再改只影响这一次（与原版一样不写回设置）。
@@ -901,6 +907,11 @@ struct PlayerScreen: View {
             // （真机日志里 `模式=AVAudioSessionModeMoviePlayback` 就是它盖的，LP 4993）。
             // 所以起播一稳定就立刻掰回 `.default`，不等 2 秒那一次轮询。
             PlayerAudioSession.shared.reapplyIfNeeded()
+            if settingsStore.backgroundAutoPiP,
+               pictureInPicture?.hasOngoingPictureInPicture != true,
+               surface.engine?.playerScene?.activationState == .foregroundActive {
+                makePictureInPictureController(settingsStore: settingsStore)
+            }
         }
         surface.onFinish = { [weak created] surface in
             guard let created else { return }
@@ -932,84 +943,101 @@ struct PlayerScreen: View {
         await created.start()
     }
 
-    /// 建（或复用）画中画控制器。只有设置开着时才会被调用。
+    /// 建（或复用）画中画控制器。
     private func makePictureInPictureController(settingsStore: SettingsStore) {
         if let pictureInPicture {
+            pictureInPicture.setAutomaticStartAllowed(settingsStore.backgroundAutoPiP)
+            pictureInPicture.setPlaying(surface.isPlaying)
             pictureInPicture.prepare(engine: surface.engine, surface: surface)
             return
         }
         let pip = PictureInPictureController()
         let backgroundPaused = $pausedByBackground
-        pip.onFailed = { [weak surface] in
-            // 小窗没起来，按「后台播放」这个设置收尾，别让设置关着却在后台一直出声。
-            // 关着就停下，但标成「因为切后台停的」，回前台那条会按设置接回来
-            // ——这正是「回来发现停着没接着播」的修法；不停播只是把设置破了。
+        let playerSceneActive = $sceneIsActive
+        pip.onSettlement = { [weak surface] settlement in
             guard let surface else { return }
-            KazumiLogBuffer.player("画中画: 启动失败，按后台播放设置收尾")
-            if settingsStore.backgroundPlayback {
-                // 开着后台播放：锁住 drawable 刷新（硬解不压，见 handleBackground）。
+            switch settlement {
+            case .active:
+                // PiP feed reads decoded frames directly; stop only the inline
+                // gpu-next/CAMetalLayer output while the system window is active.
                 surface.setRenderingLocked(true)
-            } else if surface.isPlaying {
-                backgroundPaused.wrappedValue = true
-                surface.pause()
+                if backgroundPaused.wrappedValue {
+                    backgroundPaused.wrappedValue = false
+                    if !surface.isPlaying { surface.play() }
+                }
+            case .backgroundFallback(let reason):
+                KazumiLogBuffer.player("画中画: 后台策略收口（\(reason)）")
+                applyBackgroundPlaybackPolicy(
+                    surface: surface,
+                    settingsStore: settingsStore,
+                    backgroundPaused: backgroundPaused
+                )
+            case .stoppedInBackground:
+                KazumiLogBuffer.player("画中画: 后台关闭小窗，按后台播放设置收口")
+                applyBackgroundPlaybackPolicy(
+                    surface: surface,
+                    settingsStore: settingsStore,
+                    backgroundPaused: backgroundPaused
+                )
+            case .foreground:
+                surface.setRenderingLocked(false)
+                let shouldResume = settingsStore.resumeOnForeground && backgroundPaused.wrappedValue
+                if shouldResume {
+                    backgroundPaused.wrappedValue = false
+                    if !surface.isPlaying { surface.play() }
+                }
+                let active = surface.engine?.playerScene?.activationState == .foregroundActive
+                playerSceneActive.wrappedValue = active
+                let keepAwake = surface.isPlaying && active
+                if UIApplication.shared.isIdleTimerDisabled != keepAwake {
+                    UIApplication.shared.isIdleTimerDisabled = keepAwake
+                }
             }
         }
-        pip.onStoppedInBackground = { [weak surface] in
-            // 用户从画中画窗口关掉画面、App 还在后台：没开后台音频就停声，
-            // 不开则继续当音频播放器用；开了后台音频也要回到只走声音的老策略。
-            guard let surface else { return }
-            if settingsStore.backgroundPlayback {
-                surface.setRenderingLocked(true)
-            } else if surface.isPlaying {
-                // 跟上面一条对齐：标成「切后台停的」，回前台照设置接回来。
-                backgroundPaused.wrappedValue = true
-                surface.pause()
-            }
+        pip.onActiveChanged = { [weak surface] active in
+            surface?.setRenderingLocked(active)
         }
         pictureInPicture = pip
-        // 建的那一刻就对齐当前播放状态：暂停着建的就不许自动起。
-        pip.allowsAutoStart = surface.isPlaying
+        pip.setAutomaticStartAllowed(settingsStore.backgroundAutoPiP)
+        pip.setPlaying(surface.isPlaying)
         pip.prepare(engine: surface.engine, surface: surface)
     }
 
-    /// 切后台时真正拉起画中画。返回 false 表示这次走不了，页面要退回原策略。
-    private func startPictureInPicture() -> Bool {
-        guard settings.backgroundAutoPiP else { return false }
-        makePictureInPictureController(settingsStore: settings)
-        guard let pictureInPicture else { return false }
-        return pictureInPicture.start(engine: surface.engine, surface: surface)
-    }
-
-    /// 切到后台这一刻要做的：先试画中画，起不来就收尾，收尾时一定关掉视频轨。
-    private func handleBackground() {
-        // 画中画优先：设置开着且正在播，就让画面在系统小窗里继续。
-        // 走成了就什么都不用做——PiP 要的正是解码后的帧，这时**不能**关视频轨。
-        let pipStarted = settings.backgroundAutoPiP && surface.isPlaying
-            ? startPictureInPicture()
-            : false
-        if let controller {
-            persistProgress(controller)
-        }
-        guard !pipStarted else { return }
-
-        // 小窗没起来：后台就把渲染锁上（LP 4978 第 2 条）。锁上以后不再刷新
-        // MoltenVK drawable，VideoToolbox 就不会被窗口输出持续拉帧。
-        //
-        // **不再在后台切 `hwdec`（LP 4984 第 1 条）**：上一版切后台压 `hwdec=no`、
-        // 回前台切回硬件解码，每次都让 FFmpeg 销毁重建 H.264 解码器，
-        // 在新 IDR 帧之前缺参考帧（真机日志：`co located POCs unavailable`、
-        // `mmco: unref short failure`），mpv 那一秒进 `空闲=是` 等音画同步——就是
-        // LP 报的「切后台/回前台像在加载一秒」。现在只靠渲染锁，解码器全程不重建。
-        //
-        // 画中画真的起来了就走不到这里（上面 `guard !pipStarted` 已经返回），
-        // 它的帧还得靠这条渲染路径出，所以这时絕不锁。
+    private func applyBackgroundPlaybackPolicy(
+        surface: PlayerSurfaceModel,
+        settingsStore: SettingsStore,
+        backgroundPaused: Binding<Bool>
+    ) {
+        // No decoder switch: the fallback only locks the window renderer and,
+        // when background audio is disabled, pauses with the existing resume marker.
         surface.setRenderingLocked(true)
-        // 没开后台播放：连声音一起停。标成「因为切后台停的」，
-        // 回前台那条会按设置接回来，不再出现「回来发现停着、也没接着播」。
-        if !settings.backgroundPlayback, surface.isPlaying {
-            pausedByBackground = true
+        if !settingsStore.backgroundPlayback, surface.isPlaying {
+            backgroundPaused.wrappedValue = true
+            KazumiLogBuffer.player("画中画: 静默暂停来源：后台兜底")
             surface.pause()
         }
+    }
+
+    /// 切到后台只转发 transition；PiP 有资格启动时绝不在这里同步锁渲染或暂停。
+    /// 控制器会在 bounded start window 最终失败、且仍在后台时发唯一政策事件。
+    private func handleBackground() {
+        if pictureInPicture?.hasOngoingPictureInPicture == true {
+            KazumiLogBuffer.player("画中画: 后台沿用当前小窗周期，不重新准备")
+            pictureInPicture?.handleBackground(engine: surface.engine, surface: surface)
+        } else if settings.backgroundAutoPiP {
+            makePictureInPictureController(settingsStore: settings)
+            pictureInPicture?.handleBackground(engine: surface.engine, surface: surface)
+        } else if let pictureInPicture {
+            pictureInPicture.handleBackground(engine: surface.engine, surface: surface)
+        } else {
+            // PiP 设置关闭，本来就没有启动窗口；直接沿用后台播放策略。
+            applyBackgroundPlaybackPolicy(
+                surface: surface,
+                settingsStore: settings,
+                backgroundPaused: $pausedByBackground
+            )
+        }
+        if let controller { persistProgress(controller) }
     }
 
     /// 读一次代理交给播放内核（LP 5331）。
@@ -1026,20 +1054,20 @@ struct PlayerScreen: View {
         ))
     }
 
-    /// 回前台：收回画中画、解开渲染锁、按设置自动续播。
+    /// 回前台只转发一次；后续 didStop 在控制器里走同一收口且不再回调。
     private func handleForeground() {
-        // 先收回画中画：Metal 画面在同一时间点接管，不 seek、不重启。
-        pictureInPicture?.stop()
-        // 只解渲染锁（解锁会立刻补一次重绘）。硬解全程没动过，没有要接回来的东西
-        // （LP 4984 第 1 条：不再在后台压 `hwdec`）。
-        surface.setRenderingLocked(false)
-        // 「回到前台自动播放」：只接回因切后台停下的那一集。
-        let shouldResume = settings.resumeOnForeground && pausedByBackground
-        if shouldResume {
-            pausedByBackground = false
-            if !surface.isPlaying { surface.play() }
+        if let pictureInPicture {
+            pictureInPicture.handleForeground()
+        } else {
+            // 设置关闭时没有 PiP owner，保留原有回前台策略。
+            surface.setRenderingLocked(false)
+            let shouldResume = settings.resumeOnForeground && pausedByBackground
+            if shouldResume {
+                pausedByBackground = false
+                if !surface.isPlaying { surface.play() }
+            }
+            logLifecycleSnapshot("handleForeground.completed")
         }
-        logLifecycleSnapshot("handleForeground.completed", details: "shouldResume=\(shouldResume)")
     }
 
     // MARK: - 播放区
@@ -1149,9 +1177,8 @@ struct PlayerScreen: View {
             // 按播放器可视高度算，不按窗口高。
             if let gestureHUD {
                 hudAtQuarter { gestureOverlay(gestureHUD) }
-            }
-            if let seekHUD {
-                hudAtQuarter { seekOverlay(seekHUD) }
+            } else if let seekHUD {
+                hudAtQuarter { seekOverlay(seekHUD, target: seekDragTarget) }
             }
             if let superResolutionHUD {
                 hudAtQuarter {
@@ -1166,7 +1193,7 @@ struct PlayerScreen: View {
                 .transition(.opacity)
             }
             // 双击的播放 / 暂停也摆在这一条线上（LP 4687），小符号 + 文字，跟动作结果同一款气泡。
-            if let playPauseHUD {
+            if let playPauseHUD, gestureHUD == nil, seekHUD == nil {
                 hudAtQuarter { playPauseBubble(playPauseHUD) }
                     .transition(.opacity)
             }
@@ -1195,6 +1222,9 @@ struct PlayerScreen: View {
                 .transition(.opacity)
             }
         }
+        // 画面、控制栏、HUD 这一层强制深色（LP 2026-11-06）：玻璃按深色渲染，
+        // 不跟系统浅色走。竖屏的选集 / 评论面板不在这棵树里，保持原样。
+        .environment(\.colorScheme, .dark)
         .modifier(PlayerBoxModifier(fillsWindow: isFullscreen,
                                     aspectRatio: boxAspectRatio))
         // 横屏画面铺满整个窗口（874×402）：上下安全区都忽略掉。
@@ -1253,8 +1283,8 @@ struct PlayerScreen: View {
                         ExclusiveGesture(SpatialTapGesture(count: 2), SpatialTapGesture(count: 1))
                             .onEnded { value in
                                 switch value {
-                                case .first:
-                                    handleSurfaceDoubleTap()
+                                case .first(let tap):
+                                    handleSurfaceDoubleTap(at: tap.location.x, width: surfaceSize.width)
                                 case .second:
                                     handleSurfaceTap()
                                 }
@@ -1386,7 +1416,7 @@ struct PlayerScreen: View {
                         gestureHUD = GestureHUDValue(kind: .brightness, value: target)
                     } else {
                         PlayerVolumeControl.shared.set(target)
-                        gestureHUD = GestureHUDValue(kind: .volume, value: target)
+                        showVolumeHUD(target)
                     }
                 case .ignored, .none:
                     break
@@ -1443,22 +1473,17 @@ struct PlayerScreen: View {
             // 画面左右两侧的快退 / 快进：秒数取设置里「快进快退时长」（doubleTapSkipTime，默认 15）。
             // 双击两侧的快进已经删掉（LP 3593），快进快退只从这两颗走。
             if controlsShown {
-                // 位置按 LP 2026-10-27：画面的 1/4 与 3/4 处，不顶到左右边缘，
-                // 也不要挤在正中——中间留给画面。
-                GeometryReader { proxy in
-                    HStack(spacing: 0) {
-                        sideSkipButton(isForward: false)
-                            .frame(width: proxy.size.width / 2, alignment: .center)
-                        sideSkipButton(isForward: true)
-                            .frame(width: proxy.size.width / 2, alignment: .center)
-                    }
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    // 最边缘那两颗（LP 2026-10-28 第 4 条）：锁定在左、截图在右，
-                    // 距边 16、44×44；overlay 默认竖向居中，就跟快退 / 快进同一行。
-                    .overlay(alignment: .leading) { lockButton.padding(.leading, 16) }
-                    .overlay(alignment: .trailing) { screenshotButton.padding(.trailing, 16) }
-                }
-                .transition(.opacity)
+                // 最边缘那两颗（LP 2026-10-28 第 4 条）：锁定在左、截图在右，
+                // 距边 16、44×44。画面两侧的快退 / 快进两颗已删（LP 2026-11-06），
+                // 改由双击左 30 / 右 30 承担。
+                lockButton
+                    .padding(.leading, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .transition(.opacity)
+                screenshotButton
+                    .padding(.trailing, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                    .transition(.opacity)
             }
 
             if !controlsShown {
@@ -1673,31 +1698,6 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 左右两侧那颗：快退 / 快进「快进快退时长」那么多秒（LP 3643：用 15 秒那档，
-    /// 不是顶栏长按那颗的 80 秒）。
-    /// 规格（Colo 3599）：竖向居中、距左右边 16、44×44，箭头环里写秒数，
-    /// 跟控制层一起显隐；点一下闪一次秒数。
-    private func sideSkipButton(isForward: Bool) -> some View {
-        let seconds = settings.doubleTapSkipTime
-        return Button {
-            if isForward {
-                surface.skipForward(seconds: Double(seconds))
-                flashSeekHUD(seconds)
-            } else {
-                surface.seek(to: max(0, surface.currentTime - Double(seconds)))
-                flashSeekHUD(-seconds)
-            }
-            noteInteraction()
-            showControlsBriefly()
-        } label: {
-            skipButton(seconds: seconds, isForward: isForward)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(PlayerPressStyle())
-        .accessibilityLabel(isForward ? String(localized: "快进 \(String(describing: seconds)) 秒") : String(localized: "快退 \(String(describing: seconds)) 秒"))
-    }
-
     /// 两侧跳转钮：快进 / 快退那颗符号，数字由**系统符号自带**（LP 2026-10-28）。
     ///
     /// 秒数在系统有对应符号的那几档（10/15/30/45/60/75/90，`goforward.15` 这种）时
@@ -1895,19 +1895,23 @@ struct PlayerScreen: View {
         markOrientationDirty(controller.presentedViewController)
     }
 
-    /// 双击：中间三分之二是播放 / 暂停，左右两侧分别是快退与快进（秒数走设置，
-    /// 默认 15 秒）。三种都让控制层浮出来 1.2 秒再淡出，是 iOS 自己的节奏。
-    /// 双击画面：任何位置都是播放 / 暂停。
-    ///
-    /// 以前是左三分之一快退、右三分之一快进、中间播放暂停（照原版
-    /// `player_item.dart` 的 `_handleDoubleTap` 其实也只是播放暂停，
-    /// 两侧快进是我们自己加的）。LP 3593：两侧的快进快退改由画面左右那两颗按钮做，
-    /// 双击就只留播放暂停，点哪儿都一样。
-    private func handleSurfaceDoubleTap() {
+    /// 双击：左 30% 快退、中 40% 播放 / 暂停、右 30% 快进（LP 2026-11-06 改回分区；
+    /// 秒数走设置里「快进快退时长」）。即时反馈复用 1/4 线上那条浮层，不另画。
+    private func handleSurfaceDoubleTap(at x: CGFloat, width: CGFloat) {
         // 锁着时双击也不生效：这把锁就是防误触的（LP 2026-10-28 第 4 条）。
         guard !isSurfaceLocked else { return }
-        surface.togglePlay()
-        flashPlayPauseHUD()
+        let seconds = settings.doubleTapSkipTime
+        let ratio = width > 0 ? x / width : 0.5
+        if ratio < 0.3 {
+            surface.seek(to: max(0, surface.currentTime - Double(seconds)))
+            flashSeekHUD(-seconds)
+        } else if ratio > 0.7 {
+            surface.skipForward(seconds: Double(seconds))
+            flashSeekHUD(seconds)
+        } else {
+            surface.togglePlay()
+            flashPlayPauseHUD()
+        }
         showControlsBriefly()
     }
 
@@ -2033,7 +2037,8 @@ struct PlayerScreen: View {
     /// 屏幕常亮：只在「真的在播」且 App 在前台时开；暂停、缓冲、播完、退后台、离开播放器全部恢复默认，
     /// 免得暂停一晚上屏幕还亮着。锁手势不影响——那时内核照样在播，就照样常亮。
     private func updateIdleTimer() {
-        let keepAwake = surface.isPlaying && sceneIsActive
+        let active = surface.engine?.playerScene?.activationState == .foregroundActive
+        let keepAwake = surface.isPlaying && active
         if UIApplication.shared.isIdleTimerDisabled != keepAwake {
             UIApplication.shared.isIdleTimerDisabled = keepAwake
         }
@@ -2159,6 +2164,7 @@ struct PlayerScreen: View {
             // 就会把其中一颗压成 0 宽——表现出来是「收藏按钮没了」
             // （LP 2026-10-28；跟 Colo 3300 记的那次同一个毛病）。
             HStack(spacing: 8) {
+                pipEnterButton
                 // 跳过那颗在收藏左边（LP 2026-10-28 第 6 条）。
                 skipForwardButton
                 collectButton
@@ -2172,6 +2178,45 @@ struct PlayerScreen: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
+        .onAppear { isCasting = Self.hasExternalVideoRoute }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
+            isCasting = Self.hasExternalVideoRoute
+        }
+    }
+
+    private static var hasExternalVideoRoute: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains {
+            $0.portType == .airPlay || $0.portType == .HDMI
+        }
+    }
+
+    /// 顶栏手动画中画：单符号 pip.enter，只有可用／不可用两态。
+    /// 用户手势直接走控制器的单次启动，不经过自动那条 possible 门控。
+    @ViewBuilder
+    private var pipEnterButton: some View {
+        if AVPictureInPictureController.isPictureInPictureSupported() {
+            let button = Button {
+                if pictureInPicture == nil {
+                    makePictureInPictureController(settingsStore: settings)
+                }
+                pictureInPicture?.startFromUserTap(engine: surface.engine, surface: surface)
+            } label: {
+                Image(systemName: "pip.enter")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PlayerPressStyle())
+            .opacity(isCasting ? 0.4 : 1)
+            .disabled(isCasting)
+            .accessibilityLabel(String(localized: "开启画中画"))
+            if isCasting {
+                button.accessibilityHint(String(localized: "投屏时不能用"))
+            } else {
+                button
+            }
+        }
     }
 
     /// 横屏底栏的视频比例：点开直接选，当前项系统打勾。
@@ -3640,17 +3685,29 @@ struct PlayerScreen: View {
         .transition(.opacity)
     }
 
-    /// 横滑 / 两侧跳转的秒数：玻璃胶囊，1.2 秒后自己淡出。
-    private func seekOverlay(_ seconds: Int) -> some View {
-        Text(seconds > 0 ? "+\(seconds)s" : "\(seconds)s")
-            .font(.system(size: 20, weight: .semibold).monospacedDigit())
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .playerGlass(in: Capsule(style: .continuous))
-            .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
-            .allowsHitTesting(false)
-            .transition(.opacity)
+    /// 横滑 / 两侧跳转的进度：横滑显示目标时间与偏移，双击只显示偏移。
+    private func seekOverlay(_ seconds: Int, target: Double?) -> some View {
+        HStack(spacing: 8) {
+            if let target {
+                Text(timeText(target))
+                    .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.white)
+                Text(seconds > 0 ? "+\(seconds)s" : "\(seconds)s")
+                    .font(.system(size: 13, weight: .regular).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.7))
+            } else {
+                Text(seconds > 0 ? "+\(seconds)s" : "\(seconds)s")
+                    .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.white)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .playerGlass(in: Capsule(style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .transition(.opacity)
     }
 
     /// 双击中间那朵播放 / 暂停：小符号 + 「播放」/「暂停」，跟倍速、收藏、定时关闭
@@ -3700,18 +3757,36 @@ struct PlayerScreen: View {
         scheduleHUDHide()
     }
 
+    /// 音量浮层**只有这一条路径**：手势竖滑和音量键都走这里，画的都是 `gestureOverlay`
+    /// 同一条横条、同一个位置、同一份玻璃（LP 2026-11-06）。
+    private func showVolumeHUD(_ value: Double) {
+        gestureHUD = GestureHUDValue(kind: .volume, value: max(0, min(1, value)))
+    }
+
+    /// 音量键只当触发器：值直接读回调里这个会话的当前音量（按键已经把它写进去了），
+    /// 画出跟手势一模一样的那条。自己写音量引起的回声不算按键。
+    private func observeSystemVolume() {
+        volumeObserver?.invalidate()
+        volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { session, _ in
+            Task { @MainActor in
+                guard !PlayerVolumeControl.shared.isWriting else { return }
+                showVolumeHUD(Double(session.outputVolume))
+                scheduleHUDHide()
+            }
+        }
+    }
+
     /// 手指离开后淡出（默认 0.6 秒），0.2 秒 easeOut；三朵浮层共用这一个定时器。
     private func scheduleHUDHide(after seconds: Double = 0.6) {
         hudHideTask?.cancel()
         hudHideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
-            // 暂停时那朵留着，直到重新播起来（LP 4802「就是只调文字」，这条没动）。
-            if playPauseHUD != nil, !surface.isPlaying { return }
+            let keepsPausedIndicator = playPauseHUD != nil && !surface.isPlaying
             withAnimation(.easeOut(duration: 0.2)) {
                 gestureHUD = nil
                 seekHUD = nil
-                playPauseHUD = nil
+                if !keepsPausedIndicator { playPauseHUD = nil }
             }
         }
     }
@@ -3720,11 +3795,14 @@ struct PlayerScreen: View {
     private var temporarySpeedCapsule: some View {
         Text(PlaybackSpeed.label(Double(surface.desiredRate)))
             .font(.footnote.weight(.semibold))
+            .monospacedDigit()
             .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .frame(height: 28)
-            .background(Capsule().fill(.black.opacity(0.6)))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(minWidth: 48, minHeight: 24)
+            .playerGlass(in: Capsule(style: .continuous))
             .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     /// 提示挂在哪：顶部那条是说明性的话，画面 1/4 那条是动作结果（LP 4668）。
@@ -4786,6 +4864,7 @@ struct PlayerPressStyle: ButtonStyle {
 
 /// 播放器浮层的玻璃底：iOS 26 用 SwiftUI 原生 `glassEffect`；
 /// 低版本退回 `GlassBackdrop`，两边都能编译、观感一致。
+/// 一律钉成深色（LP 2026-11-06）：播放器底下永远是画面，不跟系统浅色走。
 private struct PlayerGlassShapeModifier<S: Shape>: ViewModifier {
     let shape: S
 
@@ -4816,6 +4895,7 @@ struct GlassBackdrop: UIViewRepresentable {
         let view = UIVisualEffectView(effect: effect)
         view.backgroundColor = .clear
         view.clipsToBounds = true
+        view.overrideUserInterfaceStyle = .dark
         return view
     }
 

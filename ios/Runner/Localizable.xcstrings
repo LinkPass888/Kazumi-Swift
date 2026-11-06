@@ -1,6 +1,17 @@
 {
   "sourceLanguage":"zh-Hans",
   "strings":{
+    "Made with AirBuild":{
+      "comment":"Credit at the bottom of Settings. Keep the name AirBuild as is.",
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"Made with AirBuild"
+          }
+        }
+      }
+    },
     " · 已选 %@ 天":{
       "extractionState":"manual",
       "localizations":{
@@ -5169,6 +5180,16 @@
         }
       }
     },
+    "开启画中画":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"開啟子母畫面"
+          }
+        }
+      }
+    },
     "开启隐身模式后不保留观看记录":{
       "localizations":{
         "zh-Hant":{
@@ -6138,6 +6159,16 @@
           "stringUnit":{
             "state":"translated",
             "value":"把同步帳號、WebDAV 與代理密碼一起匯出，請只存放在自己可信的地方"
+          }
+        }
+      }
+    },
+    "投屏时不能用":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"遠端投放時無法使用"
           }
         }
       }

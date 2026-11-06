@@ -16,18 +16,27 @@ final class MPVMetalLayer: CAMetalLayer {
         get { super.drawableSize }
         set {
             guard newValue.width > 1, newValue.height > 1 else { return }
-            super.drawableSize = newValue
+            if Thread.isMainThread {
+                super.drawableSize = newValue
+            } else {
+                performSelector(onMainThread: #selector(applyDrawableSize(_:)), with: NSValue(cgSize: newValue), waitUntilDone: false)
+            }
         }
+    }
+
+    @objc private func applyDrawableSize(_ value: NSValue) {
+        drawableSize = value.cgSizeValue
     }
 }
 
 final class MPVMetalView: UIView {
-    override class var layerClass: AnyClass { MPVMetalLayer.self }
+    /// 不把 metalLayer 当 UIView 的 backing layer：mpv 的 vo 线程会直接改它的
+    /// drawableSize，退场时 CoreAnimation 会在 vo 线程提交残留的布局事务，
+    /// 进而从 vo 线程调进 UIView 的 layoutSubviews，撞上 MainActor 检查。
+    /// 作为无 delegate 的独立 sublayer，那条事务不会再进入任何 UIView。
+    private let videoLayer = MPVMetalLayer()
 
-    var metalLayer: MPVMetalLayer {
-        // layerClass 已固定为 MPVMetalLayer。
-        layer as! MPVMetalLayer
-    }
+    var metalLayer: MPVMetalLayer { videoLayer }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -43,8 +52,10 @@ final class MPVMetalView: UIView {
         backgroundColor = .black
         isOpaque = true
 
-        let metalLayer = metalLayer
-        metalLayer.device = MTLCreateSystemDefaultDevice()
+        videoLayer.delegate = nil
+        layer.addSublayer(videoLayer)
+        videoLayer.frame = bounds
+        videoLayer.device = MTLCreateSystemDefaultDevice()
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
         metalLayer.isOpaque = true
@@ -54,6 +65,10 @@ final class MPVMetalView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        videoLayer.frame = bounds
+        CATransaction.commit()
         updateDrawableSize()
     }
 
