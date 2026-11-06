@@ -121,6 +121,7 @@ Kazumi 免费、开源、不插广告，也没有付费功能。用着顺手的�
 - [trace.moe](https://trace.moe) —— 以图搜番
 - [Fuzi](https://github.com/cezheng/Fuzi)、libxml2 —— XPath 解析
 - [AniList](https://anilist.co) —— 播出时刻与集数
+- [AirBuild](https://air.build/) —— 应用的界面与实现
 
 应用图标由本项目制作。
 
