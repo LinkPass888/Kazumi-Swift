@@ -131,10 +131,10 @@ struct ProfileScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 14)
         // 两块各自念成一件事：「12，看过番剧」。
-        // 数字用 verbatim、名字用 Text(title) 各自解析，不能拼进同一个插值里——
-        // 那样 LocalizedStringKey 会被当成参数描述念出来。
+        // 数字用 verbatim、名字用 Text(title) 各自解析，不能拼成同一个字符串——
+        // 那样本地化名会被当成参数描述念出来。iOS 26 弃用了 `Text + Text`，改用插值合并。
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: value + "，") + Text(title))
+        .accessibilityLabel(Text("\(Text(verbatim: value + "，"))\(Text(title))"))
     }
 
     // MARK: - 内容与偏好

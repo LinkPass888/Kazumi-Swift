@@ -1396,7 +1396,10 @@ struct PlayerScreen: View {
     private func surfaceDragGesture(width: CGFloat, height: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: Self.directionLockThreshold, coordinateSpace: .global)
             .onChanged { value in
-                let window = UIScreen.main.bounds
+                // 手势坐标是 `.global`（窗口坐标），安全区和倍率都按本场景的窗口算。
+                // iOS 26 起 `UIScreen.main` 已弃用：分屏 / iPhone 镜像 / 外接屏里，
+                // 主屏尺寸也不等于这个窗口的尺寸。
+                let window = hostWindowSize(fallback: CGSize(width: width, height: height))
                 // 按住倍速已经起来了：这一路拖动什么都不做——不调进度、不碰亮度音量，
                 // 倍速继续到松手（LP 2026-10-29「按住倍速时不应该还能触发音量亮度
                 // 进度调节等手势」）。所以这里不能走下面那段「拖出容差就结束倍速」。
@@ -1429,7 +1432,7 @@ struct PlayerScreen: View {
                         return
                     } else if value.startLocation.x < window.width / 2 {
                         dragAxis = .brightness
-                        dragValueStart = Double(UIScreen.main.brightness)
+                        dragValueStart = Double(Self.hostScreen?.brightness ?? 0)
                     } else {
                         dragAxis = .volume
                         dragValueStart = PlayerVolumeControl.shared.current
@@ -1469,7 +1472,7 @@ struct PlayerScreen: View {
                     let delta = Double(-value.translation.height) / level
                     let target = min(1, max(0, start + delta))
                     if dragAxis == .brightness {
-                        UIScreen.main.brightness = CGFloat(target)
+                        Self.hostScreen?.brightness = CGFloat(target)
                         gestureHUD = GestureHUDValue(kind: .brightness, value: target)
                     } else {
                         PlayerVolumeControl.shared.set(target)
@@ -1883,7 +1886,31 @@ struct PlayerScreen: View {
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
         guard let scene else { return false }
-        return scene.interfaceOrientation.isLandscape
+        // `UIWindowScene.interfaceOrientation` 在 iOS 26 弃用，改看有效几何里的那一个。
+        return scene.effectiveGeometry.interfaceOrientation.isLandscape
+    }
+
+    /// 本场景的窗口。手势坐标是 `.global`（窗口坐标），安全区和尺寸都按它算：
+    /// iOS 26 起 `UIScreen.main` 弃用，而分屏 / 镜像 / 外接屏里窗口比主屏小。
+    private var hostWindow: UIWindow? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        guard let scene else { return nil }
+        return scene.windows.first { $0.isKeyWindow } ?? scene.windows.first
+    }
+
+    /// 窗口尺寸。窗口还没就绪（拖动时不会发生，窗口不在就收不到手势）时退回画面自己的尺寸。
+    private func hostWindowSize(fallback: CGSize) -> CGSize {
+        guard let bounds = hostWindow?.bounds, bounds.width > 0, bounds.height > 0 else { return fallback }
+        return bounds.size
+    }
+
+    /// 本场景所在的那块屏。`UIScreen.brightness` 只有主屏支持，而 iOS 26 起不能再写
+    /// `UIScreen.main`，只能从场景里取（iPhone 上场景的屏就是主屏）。
+    private static var hostScreen: UIScreen? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        return scene?.screen
     }
 
     private func exitFullscreen() {
@@ -1950,7 +1977,7 @@ struct PlayerScreen: View {
                     lastOrientationResult = failure
                 }
                 // 已经到了就收工，别再多发。
-                if scene.interfaceOrientation.isLandscape == wantsLandscape {
+                if scene.effectiveGeometry.interfaceOrientation.isLandscape == wantsLandscape {
                     if attempt > 0 {
                     }
                     lastOrientationResult = String(localized: "已转过去")
@@ -2655,7 +2682,7 @@ struct PlayerScreen: View {
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
         let current: String
-        switch scene?.interfaceOrientation {
+        switch scene?.effectiveGeometry.interfaceOrientation {
         case .landscapeLeft: current = "横左"
         case .landscapeRight: current = "横右"
         case .portrait, .portraitUpsideDown: current = "竖"

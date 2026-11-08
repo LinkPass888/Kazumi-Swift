@@ -197,8 +197,11 @@ final class TimelineController {
             await adopt(cached, date: date, collectTypes: collectTypes)
         }
 
-        // 冷缓存时这一步要够到季度文件，比日历接口贵，必须跟它并行。
-        async let airTime: Void = BangumiAirTimeService.shared.ensureLoaded(forSeasonOf: date)
+        // 季度时刻表（github.io 上那份季度文件，冷缓存时要一路走到网络）只影响卡片上的
+        // 「HH:mm 更新」胶囊和时间排序，不该把日历本身挡在门外：以前这里 `await airTime`
+        // 排在铺屏之前，日历 300ms 就回来了也得等它，网络差的时候首屏一慢十几秒。
+        // 现在让它自己跑，日历一到就铺屏，时刻回来再重排一次。
+        let airTimeTask = Task { await BangumiAirTimeService.shared.ensureLoaded(forSeasonOf: date) }
 
         var calendar: [[BangumiItem]]
         if isCurrent {
@@ -208,7 +211,6 @@ final class TimelineController {
             calendar = await seasonCalendar(start: range.start, end: range.end)
         }
 
-        await airTime
         // 这期间用户可能已经点了别的季度，那一轮的结果不能再盖上去。
         guard selectedDate == date else { return }
 
@@ -224,6 +226,13 @@ final class TimelineController {
         let merged = await mergeCustomEntries(into: groupedBaseCalendar(), collectTypes: collectTypes)
         bangumiCalendar = applySort(merged)
         isTimeOut = bangumiCalendar.allSatisfy(\.isEmpty)
+
+        // 时刻表到位后重排一次：默认顺序按当天时刻从早到晚，卡片上的「HH:mm 更新」
+        // 胶囊也来自它。这时候列表早就在屏幕上了，用户看到的是顺序微调，不是白等。
+        await airTimeTask.value
+        guard selectedDate == date else { return }
+        let timed = await mergeCustomEntries(into: groupedBaseCalendar(), collectTypes: collectTypes)
+        bangumiCalendar = applySort(timed)
 
         // 季度表拿到 MAL id 之后，再用 AniList 补一轮实测时刻：只查还没到
         // 下一集播出时刻的那些番，按 25 部一批，请求量与当季番数无关。
@@ -321,9 +330,40 @@ final class TimelineController {
         guard !weekdays.isEmpty else { return calendar }
 
         // 手动添加的条目：日历里没有的番要单独拉一次详情，拉不到的跳过。
+        //
+        // 两处改动（冷启动首屏）：先用本地条目缓存——详情页看过一次就有，够铺卡片；
+        // 剩下的才发请求，且分批并发。原来是「一条接一条地 await」，手动加了十几部番
+        // 就是十几轮串行往返，首屏能生生慢十几秒。
+        var missing: [Int] = []
         for bangumiID in weekdays.keys where items[bangumiID] == nil {
-            if let item = await BangumiAPI.info(id: bangumiID) {
-                items[bangumiID] = item
+            if let cached = BangumiSubjectCache.shared.item(for: bangumiID) {
+                items[bangumiID] = cached
+            } else {
+                missing.append(bangumiID)
+            }
+        }
+        if !missing.isEmpty {
+            let batchSize = 6
+            var start = 0
+            while start < missing.count {
+                let batch = Array(missing[start..<min(start + batchSize, missing.count)])
+                let fetched = await withTaskGroup(
+                    of: (Int, BangumiItem?).self,
+                    returning: [Int: BangumiItem].self
+                ) { group in
+                    for bangumiID in batch {
+                        group.addTask { (bangumiID, await BangumiAPI.info(id: bangumiID)) }
+                    }
+                    var collected: [Int: BangumiItem] = [:]
+                    for await (bangumiID, item) in group {
+                        if let item { collected[bangumiID] = item }
+                    }
+                    return collected
+                }
+                for (bangumiID, item) in fetched {
+                    items[bangumiID] = item
+                }
+                start += batchSize
             }
         }
 

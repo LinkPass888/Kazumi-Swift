@@ -88,8 +88,8 @@ final class AppEnvironment {
 
     /// Application Support/hive 对应原工程的存储根目录；原生版改为 Application Support/Kazumi。
     static func prepareStorageDirectories() throws {
-        // 图片解码要按屏幕倍率算目标像素，而 UIScreen 只能在主线程读：启动时写一次。
-        KazumiImageLoader.screenScale = UIScreen.main.scale
+        // 图片解码要的屏幕倍率由场景代理在窗口就绪时写入（`KazumiImageLoader.screenScale`）：
+        // iOS 26 起 `UIScreen.main` 已弃用，倍率要从窗口所在的场景里取，启动这一刻还没有场景。
         let manager = FileManager.default
         let support = try manager.url(
             for: .applicationSupportDirectory,

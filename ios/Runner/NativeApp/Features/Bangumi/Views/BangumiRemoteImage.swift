@@ -139,7 +139,6 @@ struct KazumiAvatar: View {
         self.url = url
         self.size = size
         self.focus = focus
-        let key = KazumiImageLoader.cacheKey(for: url)
         let pixels = KazumiImageLoader.pixelSize(for: CGSize(width: size, height: size))
         _image = State(initialValue: KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixels))
     }

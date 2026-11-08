@@ -218,7 +218,7 @@ enum AniSkipClient {
     private static func read(_ url: URL) -> [Int: Int]? {
         guard
             let data = try? Data(contentsOf: url),
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) != nil
         else { return nil }
         let map = parseMap(data)
         return map.isEmpty ? nil : map

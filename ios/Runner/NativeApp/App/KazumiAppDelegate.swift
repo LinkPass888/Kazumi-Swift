@@ -253,6 +253,9 @@ final class KazumiSceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         PlaybackLifecycleDiagnostics.log("scene.willConnectTo", scene: scene)
         guard let windowScene = scene as? UIWindowScene else { return }
+        // 图片解码的屏幕倍率：从窗口所在的场景取 trait（`UIScreen.main` 在 iOS 26 已弃用，
+        // 分屏 / iPhone 镜像 / 外接屏里主屏也不一定是本场景这块）。
+        KazumiImageLoader.screenScale = windowScene.traitCollection.displayScale
         let window = UIWindow(windowScene: windowScene)
         let launch = AppEnvironment.makeAtLaunch()
         environment = launch.environment
@@ -301,6 +304,10 @@ final class KazumiSceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         PlaybackLifecycleDiagnostics.log("scene.didBecomeActive", scene: scene)
+        // 场景换到另一块屏（镜像、外接屏）后倍率会变：回来时按当前场景重写一次。
+        if let windowScene = scene as? UIWindowScene {
+            KazumiImageLoader.screenScale = windowScene.traitCollection.displayScale
+        }
         // 保留现有的设置刷新通知。
         NotificationCenter.default.post(name: .kazumiAppDidBecomeActive, object: nil)
         processPendingLink()

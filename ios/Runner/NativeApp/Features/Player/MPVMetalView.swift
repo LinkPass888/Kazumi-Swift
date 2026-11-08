@@ -83,7 +83,9 @@ final class MPVMetalView: UIView {
     }
 
     func updateDrawableSize() {
-        let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        // 倍率走 trait collection（iOS 26 起 `UIScreen.main` 弃用，而且 displayScale 变化时
+        // 系统会自动再走一次布局，不用自己盯屏）。
+        let scale = traitCollection.displayScale
         let scaleValue = scale > 0 ? scale : 1
         if metalLayer.contentsScale != scaleValue {
             metalLayer.contentsScale = scaleValue
