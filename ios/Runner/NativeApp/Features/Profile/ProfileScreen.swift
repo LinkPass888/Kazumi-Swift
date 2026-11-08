@@ -282,7 +282,7 @@ struct ProfileScreen: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            Text("\(record.bangumiName)，\(episodeLine(for: record))，\(statusText(for: record))")
+            Text(verbatim: "\(record.bangumiName)，\(episodeLine(for: record))，\(statusTextString(for: record))")
         )
         .accessibilityAddTraits(.isButton)
     }
@@ -293,6 +293,13 @@ struct ProfileScreen: View {
         if record.isFinished { return "已看完" }
         // positionText 是算出来的进度（「12:34」这种），查不到译文就原样显示。
         return LocalizedStringKey(record.positionText ?? "继续观看")
+    }
+
+    /// 无障碍标签用的同一句话，但返回 String。
+    /// 不能把 `LocalizedStringKey` 插值进字符串里——那样拿到的是 debug 描述，不是译文。
+    private func statusTextString(for record: WatchRecord) -> String {
+        if record.isFinished { return String(localized: "已看完") }
+        return record.positionText ?? String(localized: "继续观看")
     }
 
     /// 「第 1 集」或「第 1 集 · 标题」，跟观看历史页同一份写法。

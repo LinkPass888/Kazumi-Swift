@@ -488,7 +488,6 @@ final class NowPlayingCenter {
     @available(iOS 27.0, *)
     private func makeModernPublisher() -> (any NowPlayingModernPublishing)? {
         #if canImport(NowPlaying)
-        guard #available(iOS 27.0, *) else { return nil }
         // 遥控键继续用同一个盒子：新接口和旧接口打到的必须是同一批闭包。
         let box = commands
         let publisher = NowPlayingSessionPublisher { next, previous in

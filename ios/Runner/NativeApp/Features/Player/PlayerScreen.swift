@@ -197,7 +197,6 @@ final class PlayerVolumeControl {
         for window in windows where window.isKeyWindow {
             didInstallFallbackView = true
             let view = MPVolumeView(frame: CGRect(x: -20, y: -20, width: 1, height: 1))
-            view.showsRouteButton = false
             view.alpha = 0.01
             window.addSubview(view)
             return findSlider(in: view)
@@ -229,7 +228,6 @@ final class PlayerVolumeControl {
 private struct SystemVolumeHost: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
         let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
-        view.showsRouteButton = false
         view.alpha = 0.01
         // 滑杆不一定直接是第一层子视图，交给统一的递归查找（可能晚一两拍才装上，重试几次）。
         for delay in [0, 0.15, 0.4, 0.9] {
@@ -294,8 +292,6 @@ struct PlayerScreen: View {
     @State private var pausedByBackground = false
     /// 后台自动画中画。设置关着时一直是 nil：不建图层、不建控制器、不碰软件渲染。
     @State private var pictureInPicture: PictureInPictureController?
-    /// 投屏进行中：画中画与投屏互斥，这颗按钮置灰并给出读屏原因。
-    @State private var isCasting = false
     /// 「更多」/ 倍速面板：自己握开关，好让控制层知道菜单还开着。
     ///
     /// 系统菜单不把开合告诉代码，所以另挂了一个 `SystemMenuProbe` 看它在不在，
@@ -1133,8 +1129,6 @@ struct PlayerScreen: View {
     /// 竖屏里这条就是页面最上面那一块；横屏全屏时铺满。
     @ViewBuilder
     private func playerArea(_ controller: PlayerController) -> some View {
-        // 在这里读一次：视频尺寸变化要让整个播放区重算（控制层矩形也跟着变）。
-        let videoSize = surface.videoSize
         ZStack {
             // 上下两条压暗：压在**画面之上、控制层之下**（LP 2026-10-28 第 3 条）。
             // 挂成画面的 overlay 而不是 ZStack 里的一层：overlay 不参与布局，
@@ -1176,12 +1170,7 @@ struct PlayerScreen: View {
 
             // 控制层只铺在画面矩形里：横屏两侧的黑边留空，顶栏 / 进度条 /
             // 两侧 15 秒钮都跟画面左右边缘对齐（DEFECT 4）。
-            // 视频尺寸还没拿到时 videoRect 回落到整块画面，不会先缩一下再跳。
             GeometryReader { proxy in
-                let videoRect = aspectRatioMode.fillMode.videoRect(
-                    in: CGRect(origin: .zero, size: proxy.size),
-                    videoSize: videoSize
-                )
                 // 两条压暗的长度按画面高算（Colo 2026-10-28 4295 的公式）。
                 let maskFades = Self.maskFadeLengths(
                     videoHeight: proxy.size.height,
@@ -2286,7 +2275,6 @@ struct PlayerScreen: View {
             // HStack 一有富余空间被压，就会把其中一颗压成 0 宽——表现出来是
             // 「收藏按钮没了」（LP 2026-10-28；跟 Colo 3300 记的那次同一个毛病）。
             HStack(spacing: 6) {
-                pipEnterButton
                 // 跳过那颗在收藏左边（LP 2026-10-28 第 6 条）。
                 skipForwardButton
                 collectButton
@@ -2298,43 +2286,10 @@ struct PlayerScreen: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, isFullscreen ? Self.landscapePlayerTopInset : Self.playerTopInset)
-        .onAppear { isCasting = Self.hasExternalVideoRoute }
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
-            isCasting = Self.hasExternalVideoRoute
-        }
     }
 
-    private static var hasExternalVideoRoute: Bool {
-        AVAudioSession.sharedInstance().currentRoute.outputs.contains {
-            $0.portType == .airPlay || $0.portType == .HDMI
-        }
-    }
-
-    /// 顶栏手动画中画：单符号 pip.enter，只有可用／不可用两态。
-    /// 用户手势直接走控制器的单次启动，不经过自动那条 possible 门控。
-    @ViewBuilder
-    private var pipEnterButton: some View {
-        if AVPictureInPictureController.isPictureInPictureSupported() {
-            let button = PlayerIconButton {
-                if pictureInPicture == nil {
-                    makePictureInPictureController(settingsStore: settings)
-                }
-                pictureInPicture?.startFromUserTap(engine: surface.engine, surface: surface)
-            } content: {
-                Image(systemName: "pip.enter")
-                    .playerIcon()
-                    .foregroundStyle(.white)
-            }
-            .opacity(isCasting ? 0.4 : 1)
-            .disabled(isCasting)
-            .accessibilityLabel(String(localized: "开启画中画"))
-            if isCasting {
-                button.accessibilityHint(String(localized: "投屏时不能用"))
-            } else {
-                button
-            }
-        }
-    }
+    /// 顶栏手动画中画按钮已删除：自动画中画（设置里那颗开关）覆盖了切后台的场景，
+    /// 而这颗键占着顶栏右侧、正好压在「跳过片头」的点击范围上，误触代价比收益大。
 
     /// 横屏底栏的视频比例：点开直接选，当前项系统打勾。
     private var aspectRatioButton: some View {
@@ -4308,12 +4263,12 @@ struct PlayerScreen: View {
                                 Button {
                                     let number = index + 1
                                     if isChoosingDownloads {
-                                        // 选择态：点一下是勾选，不是切集。已下载 / 已加进下载的点不动。
+                                        // 选择态：点一下是勾选，不是切集。已下载 / 已加进下载（含排队中）的点不动。
                                         let lite = environment.downloads.liteStatus(
                                             recordKey: downloadRecordKey(controller),
                                             number: number
                                         )
-                                        guard lite != .downloaded && !lite.isDownloading else { return }
+                                        guard lite != .downloaded, lite != .queued, !lite.isDownloading else { return }
                                         if downloadSelection.contains(number) {
                                             downloadSelection.remove(number)
                                         } else {
@@ -4372,8 +4327,6 @@ struct PlayerScreen: View {
         // 选择态里正在播改成描边，不然跟「已选」分不清（Colo 5090）。
         let isSelected = isChoosingDownloads && downloadSelection.contains(number)
         let lite = environment.downloads.liteStatus(recordKey: downloadRecordKey(controller), number: number)
-        // 已下载 / 已加进下载的格子在选择态里点不动（不重复选），颜色不变浅。
-        let locked = lite == .downloaded || lite == .queued || lite.isDownloading
         // 在线列表没抓到、退回下载记录时，没下好的集是空格子（Colo v3 第 9 条）。
         let missing = controller.isOfflineEpisodeList
             && !(controller.episodes.indices.contains(index) && !controller.episodes[index].isEmpty)

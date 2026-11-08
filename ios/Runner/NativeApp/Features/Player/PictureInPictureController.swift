@@ -340,47 +340,8 @@ final class PictureInPictureController: NSObject {
 
     // MARK: - One start driver
 
-    /// PlayerScreen's pip.enter button. One user gesture = one start attempt;
-    /// it never goes through handleBackground/driveStart.
-    func startFromUserTap(engine: MPVEngine?, surface: PlayerSurfaceModel) {
-        guard !hasOngoingPictureInPicture, !pendingControllerStop else {
-            log("手动按钮：starting/active/restoring 或待停止，忽略重复点击")
-            return
-        }
-        guard AVPictureInPictureController.isPictureInPictureSupported() else {
-            log("AFTER 手动按钮：这台设备不支持画中画")
-            return
-        }
-        guard let engine, engine.handle != nil else {
-            log("AFTER 手动按钮：mpv 句柄未就绪")
-            return
-        }
-        phase = .inline
-        prepare(engine: engine, surface: surface)
-        guard ensureController(), attachHostIfNeeded(), copier != nil else {
-            log("AFTER 手动按钮：画中画内容源不可用")
-            return
-        }
-        beginCycle(source: "manual")
-        let currentCycle = cycle
-        phase = .starting(currentCycle)
-        isActive = false
-        contentIsPrimaryAndPlaying = surface.isPlaying
-        setAutomaticStart(false, reason: "手动启动")
-        setCaptureCadence(1.0 / 30.0, reason: "手动启动")
-        copier?.driveSynchronizer(engine: engine)
-        pipController?.invalidatePlaybackState()
-        log("BEFORE 手动按钮起小窗：possible=\(pipController?.isPictureInPicturePossible == true) active=否 帧年龄=\(frameAgeText)s；用户手势直接起，不等 possible")
-        startOnce(cycle: currentCycle, reason: "手动按钮", manual: true, warmup: 0)
-    }
-
-    func stopFromUserTap() {
-        log("BEFORE 手动按钮关小窗：active=\(isActive)")
-        stopController(reason: "手动关闭")
-    }
-
-    /// Automatic: 150ms system-first, then bounded possible checks. Manual:
-    /// a single immediate user-gesture request, without a possible gate.
+    /// Automatic: 150ms system-first, then bounded possible checks.
+    /// `manual` 那条分支是早先顶栏手动画中画按钮用的，按钮已删；参数留着不动状态机。
     private func startOnce(cycle currentCycle: Int, reason: String, manual: Bool, warmup: Double) {
         guard contentIsPrimaryAndPlaying else {
             finishStartFailure(reason: "内容未在播放", cycle: currentCycle)

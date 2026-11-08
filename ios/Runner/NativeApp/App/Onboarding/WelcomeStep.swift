@@ -93,10 +93,8 @@ struct WelcomeStep: View {
         Button {
             isShowingAgreement = true
         } label: {
-            (
-                Text("继续即表示你已阅读并同意《")
-                    + Text("使用约定").foregroundStyle(KazumiPalette.accent(for: colorScheme))
-                    + Text("》")
+            Text(
+                "\(Text("继续即表示你已阅读并同意《"))\(Text("使用约定").foregroundStyle(KazumiPalette.accent(for: colorScheme)))\(Text("》"))"
             )
             .font(.footnote)
             .multilineTextAlignment(.center)
