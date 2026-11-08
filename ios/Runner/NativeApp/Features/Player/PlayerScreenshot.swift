@@ -29,8 +29,9 @@ enum PlayerScreenshot {
             return String(localized: "截图保存失败：截图文件不见了（\(String(describing: fileURL.lastPathComponent))）")
         }
         do {
-            // 显式写 isolation: nil：这条闭包不能被绑到任何 actor 上。
-            try await withCheckedThrowingContinuation(isolation: nil) { (cont: CheckedContinuation<Void, Error>) in
+            // 不写 `isolation:`：这条闭包不能被绑到任何 actor 上，走的是
+            // Swift 6.2 起默认的 nonisolated(nonsending) 重载。
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 PHPhotoLibrary.shared().performChanges(
                     {
                         // 从文件 URL 建，不把整张 PNG 读进内存（LP 4695 第 6 条）。

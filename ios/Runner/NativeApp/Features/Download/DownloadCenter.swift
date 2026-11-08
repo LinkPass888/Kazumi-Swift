@@ -487,7 +487,7 @@ final class DownloadCenter {
         )) ?? []
         var total = targetSize
         for item in items where item.lastPathComponent.hasPrefix(prefix + "-") {
-            total += (try? item.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0 ?? 0) } ?? 0
+            total += (try? item.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0
         }
         return total
     }

@@ -110,7 +110,7 @@ final class PlayerAudioSession {
         if options.contains(.mixWithOthers) { flags.append("mixWithOthers") }
         if options.contains(.duckOthers) { flags.append("duckOthers") }
         if options.contains(.interruptSpokenAudioAndMixWithOthers) { flags.append("mixSpoken") }
-        if options.contains(.allowBluetooth) { flags.append("hfp") }
+        if options.contains(.allowBluetoothHFP) { flags.append("hfp") }
         if options.contains(.allowBluetoothA2DP) { flags.append("a2dp") }
         if options.contains(.allowAirPlay) { flags.append("airplay") }
         KazumiLogBuffer.player(

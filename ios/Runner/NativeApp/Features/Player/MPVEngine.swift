@@ -1248,7 +1248,7 @@ private struct CommandRequest {
 
 /// 在 mpv 自己的线程上收事件，攒成快照再递回主线程。
 final class MPVEventPump: @unchecked Sendable {
-    nonisolated(unsafe) private static let queueKey = DispatchSpecificKey<ObjectIdentifier>()
+    private static let queueKey = DispatchSpecificKey<ObjectIdentifier>()
     private let mpv: OpaquePointer
     private let queue = DispatchQueue(label: "kazumi.mpv.events", qos: .userInteractive)
     private let onSnapshot: @Sendable (MPVSnapshot) -> Void

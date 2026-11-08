@@ -197,7 +197,6 @@ final class PlayerVolumeControl {
         for window in windows where window.isKeyWindow {
             didInstallFallbackView = true
             let view = MPVolumeView(frame: CGRect(x: -20, y: -20, width: 1, height: 1))
-            view.showsRouteButton = false
             view.alpha = 0.01
             window.addSubview(view)
             return findSlider(in: view)
@@ -229,7 +228,6 @@ final class PlayerVolumeControl {
 private struct SystemVolumeHost: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
         let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
-        view.showsRouteButton = false
         view.alpha = 0.01
         // 滑杆不一定直接是第一层子视图，交给统一的递归查找（可能晚一两拍才装上，重试几次）。
         for delay in [0, 0.15, 0.4, 0.9] {
@@ -1176,12 +1174,7 @@ struct PlayerScreen: View {
 
             // 控制层只铺在画面矩形里：横屏两侧的黑边留空，顶栏 / 进度条 /
             // 两侧 15 秒钮都跟画面左右边缘对齐（DEFECT 4）。
-            // 视频尺寸还没拿到时 videoRect 回落到整块画面，不会先缩一下再跳。
             GeometryReader { proxy in
-                let videoRect = aspectRatioMode.fillMode.videoRect(
-                    in: CGRect(origin: .zero, size: proxy.size),
-                    videoSize: videoSize
-                )
                 // 两条压暗的长度按画面高算（Colo 2026-10-28 4295 的公式）。
                 let maskFades = Self.maskFadeLengths(
                     videoHeight: proxy.size.height,
@@ -4308,12 +4301,12 @@ struct PlayerScreen: View {
                                 Button {
                                     let number = index + 1
                                     if isChoosingDownloads {
-                                        // 选择态：点一下是勾选，不是切集。已下载 / 已加进下载的点不动。
+                                        // 选择态：点一下是勾选，不是切集。已下载 / 已加进下载（含排队中）的点不动。
                                         let lite = environment.downloads.liteStatus(
                                             recordKey: downloadRecordKey(controller),
                                             number: number
                                         )
-                                        guard lite != .downloaded && !lite.isDownloading else { return }
+                                        guard lite != .downloaded, lite != .queued, !lite.isDownloading else { return }
                                         if downloadSelection.contains(number) {
                                             downloadSelection.remove(number)
                                         } else {
@@ -4372,8 +4365,6 @@ struct PlayerScreen: View {
         // 选择态里正在播改成描边，不然跟「已选」分不清（Colo 5090）。
         let isSelected = isChoosingDownloads && downloadSelection.contains(number)
         let lite = environment.downloads.liteStatus(recordKey: downloadRecordKey(controller), number: number)
-        // 已下载 / 已加进下载的格子在选择态里点不动（不重复选），颜色不变浅。
-        let locked = lite == .downloaded || lite == .queued || lite.isDownloading
         // 在线列表没抓到、退回下载记录时，没下好的集是空格子（Colo v3 第 9 条）。
         let missing = controller.isOfflineEpisodeList
             && !(controller.episodes.indices.contains(index) && !controller.episodes[index].isEmpty)
