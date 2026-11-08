@@ -199,8 +199,8 @@ targets:
         DANDAN_APP_SECRET: ""
         # 版本号：3.0.0 起（Ato 7411）。仓库已无 Dart 工程，pubspec.yaml 不存在了，
         # 版本唯一来源就是这里 + CHANGELOG.md 顶部条目。
-        MARKETING_VERSION: "3.0.3"
-        CURRENT_PROJECT_VERSION: "30003"
+        MARKETING_VERSION: "3.0.4"
+        CURRENT_PROJECT_VERSION: "30004"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
         INFOPLIST_FILE: Runner/Info.plist
