@@ -102,23 +102,45 @@ final class TimelineCache {
     ///
     /// 为什么验季：缓存存的是「当季」这一份，跨季那天它还躺在那儿，
     /// 不验就会把上一季的番铺成这一季（LP 5055）。
-    func currentRawDays(seasonStart: String) -> [JSONValue]? {
+    ///
+    /// 读盘与解析放后台线程：冷启动第一帧走的就是这条路径，几百 KB 的 JSON
+    /// 在主线程上读一遍、解一遍，首屏要多等一截。
+    func currentRawDays(seasonStart: String) async -> [JSONValue]? {
         if let memoryText,
            let days = Self.decodeDays(memoryText, expectedSeason: seasonStart) {
             return days
         }
-        guard let data = try? Data(contentsOf: fileURL(currentSeason: true, seasonStart: nil)) else {
-            return nil
-        }
-        let text = String(decoding: data, as: UTF8.self)
-        guard let days = Self.decodeDays(text, expectedSeason: seasonStart) else {
+        let url = fileURL(currentSeason: true, seasonStart: nil)
+        let read = await Task.detached(priority: .userInitiated) {
+            Self.readDays(at: url, seasonStart: seasonStart)
+        }.value
+        switch read {
+        case let .ok(text, days):
+            memoryText = text
+            return days
+        case .stale:
             // 跨季了：旧那份已经没用，不要留着占内存、也不要每次启动再试一次。
             memoryText = nil
-            try? FileManager.default.removeItem(at: fileURL(currentSeason: true, seasonStart: nil))
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        case .missing:
             return nil
         }
-        memoryText = text
-        return days
+    }
+
+    /// 读盘结果：`stale` 是「文件在、但不是这一季」（要清掉），`missing` 是根本没有。
+    private enum DiskRead: Sendable {
+        case missing
+        case stale
+        case ok(text: String, days: [JSONValue])
+    }
+
+    /// 读盘 + 解析。不碰实例状态，所以可以放后台线程。
+    nonisolated private static func readDays(at url: URL, seasonStart: String) -> DiskRead {
+        guard let data = try? Data(contentsOf: url) else { return .missing }
+        let text = String(decoding: data, as: UTF8.self)
+        guard let days = decodeDays(text, expectedSeason: seasonStart) else { return .stale }
+        return .ok(text: text, days: days)
     }
 
     /// 快捷指令只读磁盘快照，不刷新、不删除跨季缓存，也不把读取时刻冒充保存时刻。
@@ -144,7 +166,7 @@ final class TimelineCache {
     }
 
     /// 解析 `{ season, days }`。`expectedSeason` 为 nil 时只验结构，不验季。
-    private static func decodeDays(_ text: String, expectedSeason: String?) -> [JSONValue]? {
+    nonisolated private static func decodeDays(_ text: String, expectedSeason: String?) -> [JSONValue]? {
         guard case let .object(root)? = try? JSONValue.decode(text),
               case let .array(days)? = root["days"],
               days.count == 7
