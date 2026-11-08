@@ -159,6 +159,8 @@ final class TimelineController {
     ///   * 季度时刻表跟日历并行拉——两者互不依赖，串着等是白等一个来回；
     ///   * 日历一到就先铺列表，AniList 那轮实测时刻到了再排一次序。
     func loadSeason(_ date: Date, collectTypes: [Int: CollectType] = [:]) async {
+        // 冷启动首屏排查用的起点；下面每一步都打一条 `时间表·…` 的耗时日志。
+        let t0 = Date()
         guard !isLoading else { return }
         isLoading = true
         isTimeOut = false
@@ -192,9 +194,11 @@ final class TimelineController {
                     }
                 }
         }
+        trace("缓存读取", since: t0, detail: cached.map { "\($0.reduce(0) { $0 + $1.count }) 条" } ?? "无缓存")
         if bangumiCalendar.allSatisfy(\.isEmpty), let cached, !cached.allSatisfy(\.isEmpty) {
             // 有缓存：先画出来，用户这时已经能看了。
             await adopt(cached, date: date, collectTypes: collectTypes)
+            trace("缓存铺屏", since: t0)
         }
 
         // 季度时刻表（github.io 上那份季度文件，冷缓存时要一路走到网络）只影响卡片上的
@@ -204,12 +208,14 @@ final class TimelineController {
         let airTimeTask = Task { await BangumiAirTimeService.shared.ensureLoaded(forSeasonOf: date) }
 
         var calendar: [[BangumiItem]]
+        let tCalendar = Date()
         if isCurrent {
             calendar = await BangumiAPI.calendar()
         } else {
             let range = AnimeSeason.seasonRange(for: date)
             calendar = await seasonCalendar(start: range.start, end: range.end)
         }
+        trace("日历请求", since: tCalendar)
 
         // 这期间用户可能已经点了别的季度，那一轮的结果不能再盖上去。
         guard selectedDate == date else { return }
@@ -226,10 +232,12 @@ final class TimelineController {
         let merged = await mergeCustomEntries(into: groupedBaseCalendar(), collectTypes: collectTypes)
         bangumiCalendar = applySort(merged)
         isTimeOut = bangumiCalendar.allSatisfy(\.isEmpty)
+        trace("日历铺屏", since: t0, detail: "\(calendar.reduce(0) { $0 + $1.count }) 条")
 
         // 时刻表到位后重排一次：默认顺序按当天时刻从早到晚，卡片上的「HH:mm 更新」
         // 胶囊也来自它。这时候列表早就在屏幕上了，用户看到的是顺序微调，不是白等。
         await airTimeTask.value
+        trace("时刻表到位", since: t0)
         guard selectedDate == date else { return }
         let timed = await mergeCustomEntries(into: groupedBaseCalendar(), collectTypes: collectTypes)
         bangumiCalendar = applySort(timed)
@@ -242,6 +250,17 @@ final class TimelineController {
         // 其余排序不依赖时刻，重算一遍结果不变。
         let refreshed = await mergeCustomEntries(into: groupedBaseCalendar(), collectTypes: collectTypes)
         bangumiCalendar = applySort(refreshed)
+        trace("AniList 到位", since: t0)
+    }
+
+    /// 冷启动计时打点：`时间表·<阶段> <耗时>ms <详情>`，设置页「日志 · 网络」里能看到。
+    /// 排查「进时间表一片灰占位卡片」时，看哪一段最费时间就知道卡在哪儿。
+    private func trace(_ stage: String, since start: Date, detail: String = "") {
+        let ms = Int(Date().timeIntervalSince(start) * 1000)
+        KazumiLogBuffer.shared.append(
+            "时间表·\(stage) \(ms)ms\(detail.isEmpty ? "" : " \(detail)")",
+            category: .network
+        )
     }
 
     /// 把缓存那份先铺上去（`baseCalendar` 随后会被网络那轮盖掉）。
@@ -343,6 +362,7 @@ final class TimelineController {
             }
         }
         if !missing.isEmpty {
+            let tFetch = Date()
             let batchSize = 6
             var start = 0
             while start < missing.count {
@@ -365,6 +385,7 @@ final class TimelineController {
                 }
                 start += batchSize
             }
+            trace("补拉详情", since: tFetch, detail: "\(missing.count) 部")
         }
 
         var merged: [[BangumiItem]] = calendar.map { day in
