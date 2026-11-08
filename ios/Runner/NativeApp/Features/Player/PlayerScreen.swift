@@ -145,6 +145,13 @@ final class PlayerVolumeControl {
         return Double(AVAudioSession.sharedInstance().outputVolume)
     }
 
+    /// 给「音量键浮层」KVO 用的滑杆：现找一个活着的，找不到就按需挂宿主（只挂一次）。
+    /// 加载 / 缓冲 / 暂停时系统把音量键记在媒体音量上，会话音量不一定报变化，
+    /// 这条才是那几个阶段唯一能看到按键的地方（LP 2026-11-08）。
+    func sliderForKeys() -> UISlider? {
+        liveSlider()
+    }
+
     func set(_ value: Double) {
         guard let slider = liveSlider() else { return }
         let clamped = Float(min(1, max(0, value)))
@@ -171,7 +178,7 @@ final class PlayerVolumeControl {
         return found
     }
 
-    /// 在窗口里找 MPVolumeView 的滑杆；一个都没有就自己挂一个再找。
+    /// 在窗口里找 MPVolumeView 的滑杆；一个都没有就自己挂一个再找（**只挂一次**）。
     static func searchSlider() -> UISlider? {
         let windows = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
@@ -182,7 +189,13 @@ final class PlayerVolumeControl {
             }
         }
         // 视图树里没有：往 key window 上挂一个（1×1、几乎透明），下次就能找到。
+        //
+        // 只挂一次（LP 2026-11-08）：这个函数会被页面出现、手势起手、音量键观察
+        // 反复调用，每失败一次就再加一个 MPVolumeView，窗口里的视图会越堆越多
+        // ——那既吃内存，也会让主线程在每次布局时多走几百个子视图。
+        guard !didInstallFallbackView else { return nil }
         for window in windows where window.isKeyWindow {
+            didInstallFallbackView = true
             let view = MPVolumeView(frame: CGRect(x: -20, y: -20, width: 1, height: 1))
             view.showsRouteButton = false
             view.alpha = 0.01
@@ -191,6 +204,9 @@ final class PlayerVolumeControl {
         }
         return nil
     }
+
+    /// 上面那个兜底宿主只挂一次就够，标记留在进程里。
+    private static var didInstallFallbackView = false
 
     private static func findVolumeView(in view: UIView) -> MPVolumeView? {
         if let volume = view as? MPVolumeView { return volume }
@@ -271,8 +287,6 @@ struct PlayerScreen: View {
     // 本批新增：画面比例、控制栏自动隐藏、锁定、长按临时倍速。
     @State private var aspectRatioMode: PlayerAspectRatioMode = .automatic
     @State private var controlsVisible = true
-    /// 「正在播放」的节拍计数：250 毫秒一轮，凑到 8 轮（2 秒）同步一次。
-    @State private var nowPlayingTick = 0
     /// 上一次看到的「别的 App 占着音频会话吗」。只在变了的时候写一行日志（LP 4976）。
     @State private var lastOtherAudioPlaying: Bool?
     /// 这一集是「因为切到后台才停下的」吗——只有这种暂停才在回前台时自动接上，
@@ -328,7 +342,17 @@ struct PlayerScreen: View {
     /// 亮度 / 音量的横条浮层：左半边调亮度、右半边调音量，都自己画。
     @State private var gestureHUD: GestureHUDValue?
     /// 音量键的监听：它只当触发，画的是手势那条浮层（LP 2026-11-06）。
+    /// 两个来源同时盯：会话音量（`AVAudioSession.outputVolume`）和 MPVolumeView
+    /// 滑杆（媒体音量）。加载 / 缓冲 / 暂停时前者常常一整个阶段都不报变化，
+    /// 只有滑杆会动，所以不能只挂会话那一个（LP 2026-11-08 第 3 条）。
     @State private var volumeObserver: NSKeyValueObservation?
+    @State private var volumeSliderObserver: NSKeyValueObservation?
+    /// 这一页还在盯音量吗：`onDisappear` 关掉，晚到的那几拍重试看见它就放弃，
+    /// 别给已经离开的页面挂一个永远拆不掉的 KVO。
+    @State private var isObservingVolume = false
+    /// 上一次画出来的音量值：两个来源会重复报同一个值，按它去重，
+    /// 免得一下按键把浮层重排两遍、定时器互相顶掉。
+    @State private var lastShownVolume: Double = -1
     /// 横滑调进度时中间那朵「+15s」。
     @State private var seekHUD: Int?
     /// 双击中间那朵播放 / 暂停符号。
@@ -342,6 +366,9 @@ struct PlayerScreen: View {
     @State private var seekDragTarget: Double?
     /// 浮层淡出的定时器，下一次滑动会把它作废重排。
     @State private var hudHideTask: Task<Void, Never>?
+    /// 画面 1/4 处那句话的重排序号：同一句文案连着来两次（比如连着标两集）
+    /// 要重新计时，不能沿用上一条的 2 秒（LP 2026-11-08）。
+    @State private var hudToastSerial = 0
     /// 最近一次长按触发的时间：长按松手后系统仍会补一次短按，用它挡掉。
     @State private var lastLongPressAt: Date?
     /// 画面下面那片选中的页。
@@ -372,8 +399,6 @@ struct PlayerScreen: View {
     /// 横屏选集：从右侧滑进来的玻璃窗口（LP 3637 要的，不再是铺满整屏的面板）。
     @State private var showsEpisodesPanel = false
     /// 定时关闭：还剩多少秒，nil 就是没定。
-    /// 侧滑返回时页面跟着手走多少点。
-    /// 这一次拖动是不是从左边边缘起手、按侧滑返回处理。
     @State private var sleepTimerRemaining: Int?
     @State private var sleepTimerChosenMinutes: Int?
     @State private var sleepTimerTask: Task<Void, Never>?
@@ -505,10 +530,15 @@ struct PlayerScreen: View {
         // 弹幕拉不到的时候说一句原因（Ato：对不上号 / 接口失败要说，
         // 「这集本来就没弹幕」是正常情况，安静地不显示）。
         // 「看到 90% 自动标为看过」成了也说一句，跟倍速/收藏同一处（1/4 那条线）。
-        .onChange(of: environment.bangumiProgress.markedNotice) { _, message in
-            if let message, !message.isEmpty {
-                surface.hudToastMessage = message
-            }
+        //
+        // 文案永远是同一句「已标记本集看过」：以前服务端只存这句字符串，连标两集
+        // 值没变，`onChange` 就不再触发——只有第一集有提示，后面全没有，
+        // 而 Bangumi 上其实每集都标上了（LP 2026-11-08）。服务端现在带序号，
+        // 这里再抬一次 `hudToastSerial`，让同一句也能把 2 秒重新计时。
+        .onChange(of: environment.bangumiProgress.markedNotice) { _, notice in
+            guard let notice else { return }
+            hudToastSerial &+= 1
+            surface.hudToastMessage = notice.message
         }
         // 下载失败说一句带原因的（LP 5115）：格子上不再挂红点，改成弹一下。
         .onChange(of: environment.downloads.failureNotice) { _, message in
@@ -584,6 +614,9 @@ struct PlayerScreen: View {
             configureNowPlayingCommands()
             // 一进页面就把代理读一次：开关本来就开着的那次播放不靠别的时机。
             refreshProxy()
+            // 节拍计数只活在这个循环里：写进 @State 会让整个播放页每 250ms
+            // 重新求值一次，白白增加 SwiftUI 的 body 开销。
+            var nowPlayingTick = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled else { return }
@@ -595,6 +628,7 @@ struct PlayerScreen: View {
                     skipPill.segments = settings.aniSkipLookup ? controller.skipSegments : .empty
                     skipPill.hasNextEpisode = controller.currentEpisode < controller.episodes.count
                 }
+                skipPill.isPlaybackReady = surface.hasStartedPlayback
                 skipPill.position = surface.currentTime
                 skipPill.duration = surface.duration
                 skipPill.isScrubbing = isScrubbing
@@ -719,6 +753,16 @@ struct PlayerScreen: View {
         .task {
             await bootstrapPlaybackIfNeeded()
         }
+        // 音量键监听跟画面有没有起播无关（LP 2026-11-08 第 3 条）：只要人还在播放页，
+        // 按音量键就该出那条横条。单独一条 task 装，不挂在起播流程里——
+        // 那条流程在解析阶段就返回了，晚装的监听要等下一集才有。
+        .task {
+            observeSystemVolume()
+        }
+        // 音量键到 0（再按减）/ 100（再按加）那两下系统不给任何信号：
+        // 值没变，`AVAudioSession.outputVolume` 与 MPVolumeView 滑杆都不报，
+        // 私有那条 `AVSystemController_...` 通知在本机也不发。公开 API 没有
+        // 「按了但没变」的钩子，这条就此作罢（LP 2026-11-08：做不到就不做）。
         .task {
             // 播放期间定期落一次进度；退出与播完时还会各写一次。
             while !Task.isCancelled {
@@ -736,6 +780,9 @@ struct PlayerScreen: View {
             restoreAudioSessionAfterPlayer()
             volumeObserver?.invalidate()
             volumeObserver = nil
+            volumeSliderObserver?.invalidate()
+            volumeSliderObserver = nil
+            isObservingVolume = false
             // 离开播放器：屏幕常亮无论如何都要还回去，不能带出这个页面。
             UIApplication.shared.isIdleTimerDisabled = false
             // 先摘掉结束回调，避免关闭播放器时的 finish 又被当成「播完」触发连播。
@@ -843,7 +890,6 @@ struct PlayerScreen: View {
         let library = environment.library
         danmakuEnabled = settingsStore.danmakuEnabled
         applyAudioSessionPolicy()
-        observeSystemVolume()
         playbackRate = Float(settingsStore.playSpeed)
         // 默认视频比例：设置页选的那一档作为这次播放的起点，
         // 播放器里再改只影响这一次（与原版一样不写回设置）。
@@ -1113,7 +1159,13 @@ struct PlayerScreen: View {
                surface.errorMessage == nil,
                controller.playbackURL != nil {
                 loadingAtCenterLine {
-                    PlayerLoadingHUD(bytesPerSecond: surface.downloadSpeed)
+                    PlayerLoadingHUD(
+                        bytesPerSecond: surface.downloadSpeed,
+                        info: playbackLoadingInfo,
+                        // 没有速度读数时不要再挂一行「— KB/s」；上面那行已经
+                        // 说清楚是在连接还是在缓冲，避免用户猜这个横线是什么。
+                        reservesSpeedLine: false
+                    )
                 }
                 .transition(.opacity)
             }
@@ -1169,7 +1221,8 @@ struct PlayerScreen: View {
             }
             // 这一层几何本身要铺到窗口边：控制层（和它的遮罩）原来排在安全区里，
             // 遮罩就从安全区下沿起画、离窗口顶差那一点（LP 2026-10-28 反复报的）。
-            // 顶栏自己有 padding(.top, containerInsets.top)，按钮不会顶到刘海下面。
+            // 顶栏自己有 padding(.top, playerTopInset)，按钮不会顶到刘海下面；
+            // 横屏用 landscapePlayerTopInset = 0，直接贴窗口顶。
             .ignoresSafeArea(.container, edges: isFullscreen ? [.top, .bottom] : [])
 
             // HUD 一律放在画面从上往下 1/4 处、水平居中（LP 2026-10-28 第 11 条 / Colo）：
@@ -1216,8 +1269,12 @@ struct PlayerScreen: View {
             // 跟长按倍速胶囊同一个高度；顶部那条留给说明性的话。
             if let message = surface.hudToastMessage {
                 hudAtQuarter {
-                    toastBubble(message)
-                        .task(id: message) { await hideToast(message, slot: .hud) }
+                    hudToastBubble(message)
+                        // 序号 + 文案一起当 id：同一句话再来一次（连着标两集）
+                        // 也要重新计 2 秒，不然会被上一条的淡出提前收走。
+                        .task(id: "\(hudToastSerial)|\(message)") {
+                            await hideToast(message, slot: .hud)
+                        }
                 }
                 .transition(.opacity)
             }
@@ -1442,8 +1499,10 @@ struct PlayerScreen: View {
 
     /// 控制层是不是该露面。
     ///
-    /// 暂停、播放失败：控制层和左上返回一直在，这时候用户最可能想退出去（Colo 3307）。
-    /// 加载中按正常状态处理，跟正在播放一样随控制条自动隐藏、点一下唤回来。
+    /// 暂停、播放失败、**整段加载 / 解析**：控制层和左上返回一直在，这时候用户最可能
+    /// 想退出去（Colo 3307）。加载那一段以前跟播放一样自动隐藏，看上去就是「卡在
+    /// 正在解析播放地址、退不出去」（LP 2026-11-08 第 1 条）：解析慢的时候顶上那颗
+    /// 返回得一直够得着，不能等人先点一下画面才出现。
     private var controlsShown: Bool {
         // 锁着时控制层一律不露面：暂停也不再钉住（LP 2026-10-28 第 4 条）。
         guard !isSurfaceLocked else { return false }
@@ -1451,8 +1510,15 @@ struct PlayerScreen: View {
     }
 
     private var pinsControls: Bool {
-        if case .failed = controllerPhase { return true }
-        return controllerPhase == .ready && !surface.isPlaying
+        switch controllerPhase {
+        case .failed:
+            return true
+        // 还没拿到播放地址（查源 / 抓剧集 / 解析地址）：钉住，留一条退路。
+        case .idle, .searchingSource, .resolvingChapters, .parsingMedia:
+            return true
+        case .ready:
+            return !surface.isPlaying
+        }
     }
 
     /// 控制层：顶一行、底一行，都浮在画面上；几秒不碰淡出，点一下回来。
@@ -1474,7 +1540,7 @@ struct PlayerScreen: View {
             // 双击两侧的快进已经删掉（LP 3593），快进快退只从这两颗走。
             if controlsShown {
                 // 最边缘那两颗（LP 2026-10-28 第 4 条）：锁定在左、截图在右，
-                // 距边 16、44×44。画面两侧的快退 / 快进两颗已删（LP 2026-11-06），
+                // 距边 16、40×40 热区。画面两侧的快退 / 快进两颗已删（LP 2026-11-06），
                 // 改由双击左 30 / 右 30 承担。
                 lockButton
                     .padding(.leading, 16)
@@ -1517,6 +1583,26 @@ struct PlayerScreen: View {
     }
 
 
+    /// 竖屏顶栏离画面上沿的距离（原 12，按「上移现在距离的一半」收到 6）。
+    private static let playerTopInset: CGFloat = 6
+    /// 横屏再往上收一档：第一次只从 12 收到 6，视觉上看不出来；横屏没有刘海，
+    /// 直接贴到窗口顶（0），顶栏才真的上移。
+    private static let landscapePlayerTopInset: CGFloat = 0
+    /// 竖屏底栏离画面下沿的距离（原 12，按「下移现在距离的一半」收到 6）。
+    private static let portraitTransportBottomInset: CGFloat = 6
+    /// 横屏进度条轨道在 44pt 触控区里下移的量：轨道原来居中，离下方按钮行
+    /// 还有约 20pt；下移一半（10pt）让轨道靠近按钮行，触控区不动。
+    private static let landscapeProgressDrop: CGFloat = 10
+    /// 横屏时间标签离轨道的间距：收到 0，再配合下移量让它贴着轨道。
+    private static let landscapeTimeLabelGap: CGFloat = 0
+    /// 横屏时间标签的下移量：轨道在 44pt 触控区里下移 10 后，顶部约在 30pt；
+    /// 标签高约 14pt，下移 28pt 后底边离轨道只剩约 2pt，视觉上就是贴着。
+    private static let landscapeTimeLabelDrop: CGFloat = 28
+    /// 竖屏底栏最高内容（进度时间）到底边的距离，底渐变按它收边。
+    private static let portraitBottomShadowContent: CGFloat = 36
+    /// 横屏底栏最高内容（进度时间）到底边的距离。
+    private static let landscapeBottomShadowContent: CGFloat = 90
+
     /// 顶条只往上多画这么多点：画在屏幕外，专门吃「跟窗口顶之间那几个点」的缝。
     private static let maskTopOvershoot: CGFloat = 16
 
@@ -1540,12 +1626,31 @@ struct PlayerScreen: View {
         isFullscreen: Bool
     ) -> (top: CGFloat, bottom: CGFloat) {
         guard videoHeight > 0 else { return (0, 0) }
-        // 栏高按代码里的实际值（@developer3 2026-10-28 4300）：顶栏 56（44 的钮
-        // ＋12）；底栏横屏约 115（时间行＋进度条＋48 的钮行＋12），竖屏 64（52＋12）。
-        let topBar: CGFloat = 56
-        let bottomBar: CGFloat = isFullscreen ? 115 : 64
-        var top = min(96, videoHeight * 0.25)
-        var bottom = min(200, videoHeight * 0.45)
+        // 栏高按代码里的实际值（@developer3 2026-10-28 4300）：顶栏横屏 44（贴窗口顶）、
+        // 竖屏 50（44 的钮＋6）；底栏横屏 118（时间行＋进度条＋48 的钮行＋12），
+        // 竖屏 52（HStack 的固定高度）。
+        let topBar: CGFloat = 44 + (isFullscreen ? Self.landscapePlayerTopInset : Self.playerTopInset)
+        let bottomBar: CGFloat = isFullscreen ? 118 : 52
+        // 竖屏画面只有 16:9 那么高，原来按「栏高之外再分渐隐」算，会把顶条压到
+        // 34 点——顶栏自己的 50 点都盖不满，纯白画面上白字就看不见了。
+        // 竖屏顶条按画面高给到 64–72，底条只包住时间文字那一截，中间仍留透明画面。
+        if !isFullscreen {
+            let fade = max(
+                0,
+                min(72, min(max(64, videoHeight * 0.33), videoHeight * 0.45))
+                    - Self.playerTopInset
+            )
+            // 顶栏仍有 50 点要压，底栏最高只有时间文字：底渐变别跟顶一样高，
+            // 否则会盖过时间文字上方很远。
+            return (fade, min(fade, Self.portraitBottomShadowContent + 6))
+        }
+        var top = max(0, min(96, videoHeight * 0.25) - Self.playerTopInset)
+        // 底渐变只包住底栏里真正有字/有控件的那一段，再往上 6pt 收边。
+        // 原来的 45% 画面高会一直盖到时间上方很远，底栏像压在一整块黑上。
+        var bottom = min(
+            min(200, videoHeight * 0.45),
+            Self.landscapeBottomShadowContent + 6
+        )
         let available = videoHeight - topBar - bottomBar
         if available > 0, top + bottom > available {
             let scale = available / (top + bottom)
@@ -1556,8 +1661,8 @@ struct PlayerScreen: View {
     }
 
     /// 顶部压暗：最黑那一档贴在这块几何的顶边（横屏就是窗口顶），往下渐隐到全透明。
-    /// 顶栏自己那条底不加：0.8 起头已经压得住栏里的字（@developer3 2026-10-28 4297）；
-    /// 真要改成 y=0 就透明，才需要给顶栏补一条底（Colo 4295）。
+    /// 横竖屏用同一组 stops——竖屏原来那组在 0.62 处还有 0.72，几乎是一块实心黑，
+    /// 看不出渐隐；这里统一成横屏那组，靠下面那半段自然淡出。
     private func topMask(fadeHeight: CGFloat) -> some View {
         LinearGradient(
             stops: [
@@ -1588,18 +1693,15 @@ struct PlayerScreen: View {
     }
 
     /// 左边缘那颗：锁画面（LP 2026-10-28 第 4 条）。
-    /// 规格跟快退 / 快进一样是 44×44、白色符号 20 号，收起时一起隐。
+    /// 规格跟其余 HUD 按钮一样：40×40 热区、18pt Medium 白色符号，收起时一起隐。
     private var lockButton: some View {
-        Button {
+        PlayerIconButton {
             toggleSurfaceLock()
-        } label: {
+        } content: {
             Image(systemName: isSurfaceLocked ? "lock" : "lock.open")
-                .font(.system(size: 20, weight: .regular))
+                .playerIcon()
                 .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
         .accessibilityLabel(isSurfaceLocked ? "解锁画面" : "锁定画面")
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
@@ -1607,16 +1709,13 @@ struct PlayerScreen: View {
     /// 右边缘那颗：抓当前这一帧存进相册（LP 2026-10-28 第 4 条）。
     /// 抓的是 mpv 自己出的那一帧，超分滤镜在，弹幕和控件不在（Colo 3667）。
     private var screenshotButton: some View {
-        Button {
+        PlayerIconButton {
             takeScreenshot()
-        } label: {
+        } content: {
             Image(systemName: "camera")
-                .font(.system(size: 20, weight: .regular))
+                .playerIcon()
                 .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
         .accessibilityLabel("截图")
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
@@ -1705,26 +1804,26 @@ struct PlayerScreen: View {
     /// 只有秒数落在档位外（老数据、别的入口）才回退成「箭头＋自己叠的数字」，
     /// 免得画出一个没数字的空箭头。
     private func skipButton(seconds: Int, isForward: Bool) -> some View {
-        ZStack {
-            Image(systemName: Self.skipSymbolName(seconds: seconds, isForward: isForward))
-                .font(.system(size: 20, weight: .regular))
-                .foregroundStyle(.white)
-            // 系统符号自带数字时不再叠一层，叠上去会重影。
-            if !SettingsStore.skipSecondTiers.contains(seconds) {
-            Text("\(seconds)")
-                // 10 号（LP 2026-10-28：先「快进快退和跳过 80 的数字都小一号」→ 11，
-                // 再「跳过时长 80 的数字再小一号」→ 10）。符号 20 不动；
-                // 叠数字这条只有 80 这种不在档位里的秒数才走得到，快进快退那两颗
-                // 用的是系统自带数字的符号，不受这里影响。
-                .font(.system(size: 10, weight: .regular).monospacedDigit())
-                .foregroundStyle(.white)
-                // 数字压在符号正中偏下（LP 2026-10-28 第 8 条，两次各 0.5，累计 1.0）：
-                // 符号那圈弧下半截更宽，正中对齐看着偏上。只动数字，符号不动。
-                .offset(y: 1.0)
+        PlayerIconButton {
+            ZStack {
+                Image(systemName: Self.skipSymbolName(seconds: seconds, isForward: isForward))
+                    .playerIcon(optical: .detailed)
+                    .foregroundStyle(.white)
+                // 系统符号自带数字时不再叠一层，叠上去会重影。
+                if !SettingsStore.skipSecondTiers.contains(seconds) {
+                    Text("\(seconds)")
+                        // 10 号（LP 2026-10-28：先「快进快退和跳过 80 的数字都小一号」→ 11，
+                        // 再「跳过时长 80 的数字再小一号」→ 10）。符号仍是 18pt 基准；
+                        // 叠数字这条只有 80 这种不在档位里的秒数才走得到，快进快退那两颗
+                        // 用的是系统自带数字的符号，不受这里影响。
+                        .font(.system(size: 10, weight: .regular).monospacedDigit())
+                        .foregroundStyle(.white)
+                        // 数字压在符号正中偏下（LP 2026-10-28 第 8 条，两次各 0.5，累计 1.0）：
+                        // 符号那圈弧下半截更宽，正中对齐看着偏上。只动数字，符号不动。
+                        .offset(y: 1.0)
+                }
             }
         }
-        .frame(width: 44, height: 44)
-        .contentShape(Rectangle())
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 
@@ -2123,18 +2222,15 @@ struct PlayerScreen: View {
     }
 
     private func topBar(_ controller: PlayerController) -> some View {
-        HStack(spacing: 8) {
-            Button {
+        HStack(spacing: 6) {
+            PlayerIconButton {
                 logLifecycleSnapshot("returnButton.tapped")
                 dismiss()
-            } label: {
+            } content: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 20, weight: .regular))
+                    .playerIcon()
                     .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(PlayerPressStyle())
             .accessibilityLabel("返回")
 
             if isFullscreen {
@@ -2148,36 +2244,33 @@ struct PlayerScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // main 竖屏顶栏不放标题（标题在画面下面那块），这里只留出 40 高，
-            // 免得后面几颗按钮被顶到左边（Colo 3599）。
+            // 竖屏顶栏不放标题（标题在画面下面那块），留一个可压缩 Spacer
+            // 把右边那组推到屏幕右缘；横屏由标题自己占满中间。
             if !isFullscreen {
-                Spacer(minLength: 40)
+                Spacer(minLength: 0)
             }
 
             // 横屏底栏已经有弹幕开关，顶栏这颗藏起来，不然两个开关
             // （LP 2026-10-27）。竖屏没有底栏开关，照旧留着。
             if !isFullscreen {
-                danmakuButton()
+                danmakuButton
             }
             // 右边这一组整体锁死宽度：这几颗都是 UIKit 菜单按钮，
-            // 横屏多摆了投屏 / 比例 / 定时关闭之后，HStack 一有富余空间被压，
-            // 就会把其中一颗压成 0 宽——表现出来是「收藏按钮没了」
-            // （LP 2026-10-28；跟 Colo 3300 记的那次同一个毛病）。
-            HStack(spacing: 8) {
+            // HStack 一有富余空间被压，就会把其中一颗压成 0 宽——表现出来是
+            // 「收藏按钮没了」（LP 2026-10-28；跟 Colo 3300 记的那次同一个毛病）。
+            HStack(spacing: 6) {
                 pipEnterButton
                 // 跳过那颗在收藏左边（LP 2026-10-28 第 6 条）。
                 skipForwardButton
                 collectButton
-                // 横屏：定时关闭在收藏右边（LP 2026-10-28 第 7 条）。
-                if isFullscreen {
-                    sleepTimerButton
-                }
+                // 定时关闭横竖屏都放顶栏，实时倒数直接挂在这颗上。
+                sleepTimerButton
                 moreMenu
             }
             .fixedSize()
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
+        .padding(.top, isFullscreen ? Self.landscapePlayerTopInset : Self.playerTopInset)
         .onAppear { isCasting = Self.hasExternalVideoRoute }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
             isCasting = Self.hasExternalVideoRoute
@@ -2195,19 +2288,16 @@ struct PlayerScreen: View {
     @ViewBuilder
     private var pipEnterButton: some View {
         if AVPictureInPictureController.isPictureInPictureSupported() {
-            let button = Button {
+            let button = PlayerIconButton {
                 if pictureInPicture == nil {
                     makePictureInPictureController(settingsStore: settings)
                 }
                 pictureInPicture?.startFromUserTap(engine: surface.engine, surface: surface)
-            } label: {
+            } content: {
                 Image(systemName: "pip.enter")
-                    .font(.system(size: 20, weight: .regular))
+                    .playerIcon()
                     .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(PlayerPressStyle())
             .opacity(isCasting ? 0.4 : 1)
             .disabled(isCasting)
             .accessibilityLabel(String(localized: "开启画中画"))
@@ -2221,66 +2311,78 @@ struct PlayerScreen: View {
 
     /// 横屏底栏的视频比例：点开直接选，当前项系统打勾。
     private var aspectRatioButton: some View {
-        SystemMenuButton(
-            selection: .init(options: PlayerAspectRatioMode.allCases.map { mode in
-                .init(title: mode.label, isSelected: aspectRatioMode == mode) {
-                    aspectRatioMode = mode
-                }
-            }),
-            title: nil,
-            symbol: "aspectratio",
-            accessibilityLabel: String(localized: "视频比例"),
-            tint: .white,
-            onOpen: { pinControlsWhileMenuOpen() }
-        )
-        .frame(width: 44, height: 44)
+        PlayerIconButton {
+            SystemMenuButton(
+                selection: .init(options: PlayerAspectRatioMode.allCases.map { mode in
+                    .init(title: mode.label, isSelected: aspectRatioMode == mode) {
+                        aspectRatioMode = mode
+                    }
+                }),
+                title: nil,
+                symbol: "aspectratio",
+                accessibilityLabel: String(localized: "视频比例"),
+                tint: .white,
+                symbolOptical: .standard,
+                onOpen: { pinControlsWhileMenuOpen() }
+            )
+        }
     }
 
-    /// 横屏顶栏的定时关闭（LP 2026-10-28 第 7 条）。
+    /// 顶栏的定时关闭（横竖屏都在这一组里）。
     ///
-    /// 倒数一开始符号换成 `moon.zzz.fill`（LP 4669）：顶栏那颗、菜单那一项都是这个。
-    /// 勾看 `sleepTimerMinutes`（定的是哪一档）而不是「剩余刚好等于这一档」——倒数中
-    /// 剩余每秒都在变，用后者的话一开始倒数勾就没了，等于看不出选了哪个。
+    /// 计时仍按原来的方式放在菜单里：选中的那一档标题实时显示 mm:ss。
+    /// 定时关闭现在是顶层菜单，不再藏在「更多」的子菜单里，所以每秒更新
+    /// 不会再把用户刚展开的子菜单收掉。
+    /// 没定时是 `timer`，倒数一开始换 `moon.zzz.fill`。
+    /// 两个都缩一档，但理由不同：`timer` 是**圆形轮廓**，同字号下圆的视觉占位最大，
+    /// 跟旁边方/细的符号并排会显得大一圈；`moon.zzz.fill` 是实心块。
+    /// （LP 2026-11-08：计时器符号用 `timer`，睡着的那颗才表示正在倒计时；
+    /// 月亮别放大，反倒是圆形的 timer 该收一点。）
     private var sleepTimerButton: some View {
-        SystemMenuButton(
-            selection: .init(options: [SystemMenuButton.Selection.Option(
-                title: String(localized: "不开启"),
-                isSelected: sleepTimerMinutes == nil
-            ) {
-                cancelSleepTimer()
-            }] + [15, 30, 60, 90].map { minutes in
-                SystemMenuButton.Selection.Option(
-                    title: sleepTimerItemTitle(minutes),
-                    isSelected: sleepTimerMinutes == minutes
+        let isRunning = sleepTimerRemaining != nil
+        return PlayerIconButton {
+            SystemMenuButton(
+                selection: .init(options: [SystemMenuButton.Selection.Option(
+                    title: String(localized: "不开启"),
+                    isSelected: sleepTimerMinutes == nil
                 ) {
-                    startSleepTimer(minutes: minutes)
-                }
-            }),
-            title: nil,
-            symbol: sleepTimerRemaining == nil ? "moon.zzz" : "moon.zzz.fill",
-            accessibilityLabel: String(localized: "定时关闭"),
-            tint: .white,
-            onOpen: { pinControlsWhileMenuOpen() }
-        )
-        .frame(width: 44, height: 44)
+                    cancelSleepTimer()
+                }] + [15, 30, 60, 90].map { minutes in
+                    SystemMenuButton.Selection.Option(
+                        title: sleepTimerItemTitle(minutes),
+                        isSelected: sleepTimerMinutes == minutes
+                    ) {
+                        startSleepTimer(minutes: minutes)
+                    }
+                }),
+                title: nil,
+                symbol: isRunning ? "moon.zzz.fill" : "timer",
+                accessibilityLabel: String(localized: "定时关闭"),
+                tint: .white,
+                symbolOptical: isRunning ? .solid : .round,
+                onOpen: { pinControlsWhileMenuOpen() }
+            )
+        }
     }
 
     /// 收藏钮（LP 2026-10-28「顶栏收藏按钮改加号，收藏了才是实心」／Colo 3926、3929）：
-    /// 未收藏是 `plus`、收藏了是实心 `heart.fill`，一律白色 20pt——播放器里不用主题色，
+    /// 未收藏是 `plus`、收藏了是实心 `heart.fill`，一律白色 18pt Medium——播放器里不用主题色，
     /// 靠实心与否区分，不靠颜色。
     ///
     /// 点一下只弹菜单，不改状态、不震动：五项状态和「取消追番」都在里面。
     /// 菜单交给 UIKit 持有，避免播放中 SwiftUI 刷新后菜单变成点不动的旧副本。
     private var collectButton: some View {
-        SystemMenuButton(
-            items: collectMenuItems,
-            title: nil,
-            symbol: collectSymbolName,
-            accessibilityLabel: "追番状态",
-            tint: .white,
-            onOpen: { pinControlsWhileMenuOpen() }
-        )
-        .frame(width: 44, height: 44)
+        PlayerIconButton {
+            SystemMenuButton(
+                items: collectMenuItems,
+                title: nil,
+                symbol: collectSymbolName,
+                accessibilityLabel: "追番状态",
+                tint: .white,
+                symbolOptical: collectSymbolOptical,
+                onOpen: { pinControlsWhileMenuOpen() }
+            )
+        }
     }
 
     private var collectMenuItems: [SystemMenuButton.Item] {
@@ -2316,6 +2418,14 @@ struct PlayerScreen: View {
         case .onHold: "hourglass"
         case .watched: "checkmark"
         case .dropped: "heart.slash.fill"
+        }
+    }
+
+    /// 实心状态符号视觉偏大，按光学补偿缩一档。
+    private var collectSymbolOptical: PlayerIconOptical {
+        switch currentCollectType {
+        case .watching, .wish, .dropped: .solid
+        default: .standard
         }
     }
 
@@ -2400,20 +2510,15 @@ struct PlayerScreen: View {
         return true
     }
 
-    /// 正在倒数时显示主菜单行右侧的 mm:ss。
-    private var sleepTimerValue: String {
-        guard let remaining = sleepTimerRemaining else { return "不开启" }
-        return String(format: "%02d:%02d", remaining / 60, remaining % 60)
-    }
-
     /// 用户选的那一档（选中的勾看它，不跟着倒数变）。
     private var sleepTimerMinutes: Int? {
         sleepTimerChosenMinutes
     }
 
-    /// 档位保持固定；正在倒数的那一项额外显示 mm:ss。
+    /// 档位保持固定；正在倒数的那一项标题实时显示 mm:ss（原来菜单里的计时）。
     private func sleepTimerItemTitle(_ minutes: Int) -> String {
-        if sleepTimerChosenMinutes == minutes, let remaining = sleepTimerRemaining {
+        if sleepTimerChosenMinutes == minutes,
+           let remaining = sleepTimerRemaining {
             return String(format: "%02d:%02d", remaining / 60, remaining % 60)
         }
         return String(localized: "\(String(describing: minutes)) 分钟")
@@ -2451,22 +2556,16 @@ struct PlayerScreen: View {
         sleepTimerChosenMinutes = nil
     }
 
-    /// 远程投屏：把系统那粒 AirPlay 按钮摆出来，点它选设备。
+    /// 远程投屏：AirPlay / DLNA 二选一，版面见 `CastSheet`（design-cast.md）。
     private var airPlaySheet: some View {
-        VStack(spacing: 16) {
-            Text("远程投屏")
-                .font(.headline)
-            Text("选一台支持隔空播放的设备，画面会转到那台电视上。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            AirPlayRoutePicker()
-                .frame(width: 44, height: 44)
-            Button("完成") { activeSheet = nil }
-                .buttonStyle(.borderedProminent)
-        }
-        .padding(24)
-        .presentationDetents([.height(240)])
+        CastSheet(
+            mediaURL: controllerURLString,
+            onPlay: { surface.play() },
+            onPause: { surface.pause() },
+            onSeek: { surface.seek(to: $0) },
+            position: surface.currentTime,
+            duration: surface.duration
+        )
     }
 
     /// 外部播放：把这一集的地址交给系统分享面板，装了 VLC、Infuse 这类播放器就能在那里打开。
@@ -2522,7 +2621,16 @@ struct PlayerScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { activeSheet = nil }
+                    Button {
+                        activeSheet = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundStyle(Color.primary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("关闭")
                 }
             }
         }
@@ -2637,22 +2745,17 @@ struct PlayerScreen: View {
         return text
     }
 
-    /// 弹幕开关：白符号直接压画面，不套底（工具行的第一格）。
-    /// 弹幕开关。顶栏里是 44 见方，横屏那条输入行里矮一点（33），尺寸由外面给。
-    private func danmakuButton(width: CGFloat = 44, height: CGFloat = 44) -> some View {
-        Button {
+    /// 弹幕开关：关是 `text.bubble`，开是 `text.bubble.fill`；横竖屏都用统一的
+    /// 40×40 热区、18pt Medium。开/关两态保持同一视觉尺寸，避免切换时跳一下。
+    private var danmakuButton: some View {
+        PlayerIconButton {
             noteInteraction()
             handleDanmakuButton()
-        } label: {
-            // 符号统一成 captions.bubble：开启用 .fill 表示（LP 2026-10-27 定，
-            // 不用强调色），颜色一律白。尺寸 20pt，跟其余图标同一档。
-            Image(systemName: danmakuEnabled ? "captions.bubble.fill" : "captions.bubble")
-                .font(.system(size: 20, weight: .regular))
+        } content: {
+            Image(systemName: danmakuEnabled ? "text.bubble.fill" : "text.bubble")
+                .playerIcon()
                 .foregroundStyle(.white)
-                .frame(width: width, height: height)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
         .accessibilityLabel(danmakuEnabled ? "关闭弹幕" : "打开弹幕")
     }
 
@@ -2699,8 +2802,7 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 弹幕设置的图标：`captions.bubble` 20pt 打底，右下角叠一颗 12pt 的
-    /// `gearshape.fill`，圆心压在气泡外框的右下角上（Colo 2026-10-27）。
+    /// 弹幕设置的图标：20×18 画布里两条横线，右下角压一颗 8pt 齿轮。
     /// 按钮用 SwiftUI 叠，系统菜单里用这张 UIImage——两边同一套尺寸。
     /// 渲好的图按深浅色各存一张：颜色跟着当前外观定，切外观不会用错那张。
     private nonisolated(unsafe) static var cachedDanmakuSettingsIcons: [String: UIImage] = [:]
@@ -2716,32 +2818,29 @@ struct PlayerScreen: View {
     }
 
     private static func renderDanmakuSettingsIcon(scheme: ColorScheme) -> UIImage {
-        // 菜单里那颗跟播放器里是同一个 View，只按深浅色写死两个分支（Colo 2026-10-28）：
-        // 浅色＝气泡空心黑 + 齿轮实心黑；深色＝气泡实心白 + 齿轮实心白。
-        // 不交给系统自动取色——自动取的那份和菜单底色对不上时就看不见了。
+        // 菜单里那颗跟播放器里是同一个 View；渲成模板图后由系统统一 tint。
+        // 颜色只影响渲染时的 alpha 形状，最终显示颜色跟旁边 SF Symbols 一致。
         let dark = scheme == .dark
         let renderer = ImageRenderer(
-            content: DanmakuSettingsGlyph(
-                color: dark ? .white : .black,
-                bubbleFilled: dark
-            )
-            .environment(\.colorScheme, scheme)
+            content: DanmakuSettingsGlyph(color: dark ? .white : .black)
+                .environment(\.colorScheme, scheme)
         )
         renderer.scale = 3
-        return renderer.uiImage ?? UIImage()
+        // 菜单里的图标必须走模板色，跟同一菜单里的 SF Symbols 用同一份 tint；
+        // 否则渲染图自带黑白，浅色/深色下都会比旁边的符号偏一档。
+        return (renderer.uiImage ?? UIImage()).withRenderingMode(.alwaysTemplate)
     }
 
-    /// 弹幕设置：同一颗 `captions.bubble` 打底，右下角叠一颗小齿轮——
-    /// 两个符号占一个符号位，命中仍是 44×44（LP 2026-10-27）。
+    /// 弹幕设置：跟横屏开关同一套两条横线符号，右下角多一颗小齿轮——
+    /// 两个符号占一个符号位，命中仍是 40×40（LP 2026-10-27）。
     private func danmakuSettingsButton() -> some View {
-        Button {
+        PlayerIconButton {
             openSheet(.danmakuSettings)
-        } label: {
+        } content: {
             // 跟「更多 → 弹幕设置」那条用同一张图：一份实现画出来，两边不可能再走样
             // （LP 2026-10-28「横屏和竖屏更多菜单的要一起改，不要只改一个」）。
-            DanmakuSettingsGlyph(color: .white, bubbleFilled: true)
+            DanmakuSettingsGlyph(color: .white)
         }
-        .buttonStyle(PlayerPressStyle())
         .accessibilityLabel("弹幕设置")
     }
 
@@ -2756,15 +2855,17 @@ struct PlayerScreen: View {
     /// 「更多」：点一下弹系统菜单。
     /// UIKit 自己持有菜单和动作；播放状态刷新不会把屏幕上的菜单换成无主副本。
     private var moreMenu: some View {
-        SystemMenuButton(
-            items: moreMenuItems,
-            title: nil,
-            symbol: "ellipsis",
-            accessibilityLabel: "更多选项",
-            tint: .white,
-            onOpen: { pinControlsWhileMenuOpen() }
-        )
-        .frame(width: 44, height: 44)
+        PlayerIconButton {
+            SystemMenuButton(
+                items: moreMenuItems,
+                title: nil,
+                symbol: "ellipsis",
+                accessibilityLabel: "更多选项",
+                tint: .white,
+                symbolOptical: .detailed,
+                onOpen: { pinControlsWhileMenuOpen() }
+            )
+        }
     }
 
     private var moreMenuItems: [SystemMenuButton.Item] {
@@ -2839,24 +2940,6 @@ struct PlayerScreen: View {
                 })
             ) {}
         ]
-        let sleepTimerItem = SystemMenuButton.Item(
-            title: "定时关闭",
-            symbol: sleepTimerRemaining == nil ? "moon.zzz" : "moon.zzz.fill",
-            subtitle: sleepTimerValue,
-            selection: .init(options: [SystemMenuButton.Selection.Option(
-                title: "不开启",
-                isSelected: sleepTimerMinutes == nil
-            ) {
-                cancelSleepTimer()
-            }] + [15, 30, 60, 90].map { minutes in
-                SystemMenuButton.Selection.Option(
-                    title: sleepTimerItemTitle(minutes),
-                    isSelected: sleepTimerMinutes == minutes
-                ) {
-                    startSleepTimer(minutes: minutes)
-                }
-            })
-        ) {}
         return items + [
             SystemMenuButton.Item(title: "播放信息", symbol: "info.circle") {
                 closeMenu()
@@ -2867,14 +2950,12 @@ struct PlayerScreen: View {
                 closeMenu()
                 openSheet(.externalPlay)
             },
-            // 一起看这颗比别的项小一档（LP 2026-10-28：15pt）。
-            SystemMenuButton.Item(title: "一起看", symbol: "person.2.wave.2", symbolPointSize: 15) {
+            SystemMenuButton.Item(title: "一起看", symbol: "person.2.wave.2") {
                 closeMenu()
                 openSheet(.syncPlay)
             },
-            // 横屏顶栏也有一颗定时关闭（LP 2026-10-28 第 7 条），
-            // 「更多」里就不再重复一份（LP 4749）。
-        ] + (isFullscreen ? [] : [sleepTimerItem])
+            // 定时关闭已经统一放顶栏，「更多」里不再重复一份。
+        ]
     }
 
     /// 「更多 → 追番状态」的子菜单：五项状态 + 取消追番，勾在现在这一项上。
@@ -2903,9 +2984,6 @@ struct PlayerScreen: View {
         // 数字放进符号里、不带单位（LP 2026-10-28 第 9 条）：跟两侧那两颗
         // 快进快退同一个画法，一眼就知道是多少秒，也不用再写「秒」字。
         skipButton(seconds: settings.buttonSkipTime, isForward: true)
-        .frame(minWidth: 44, minHeight: 44)
-        .contentShape(Rectangle())
-            .contentShape(Capsule(style: .continuous))
             // 单击与长按必须互斥：两个手势各挂一次时，长按松手会再触发
             // 一次单击，用户点开「跳过秒数」的同时画面已经快进了。
             .gesture(
@@ -2953,8 +3031,16 @@ struct PlayerScreen: View {
     }
 
     private func statusOverlay(_ controller: PlayerController) -> some View {
+        // 全屏下的失败要能点（重新加载 / 看原因），所以放在 `loadingAtCenterLine`
+        // 外面——那一层是 `allowsHitTesting(false)` 的，只给纯提示用。
+        if case .failed(let message) = controller.phase, isFullscreen {
+            return AnyView(
+                errorContent(message, controller: controller)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            )
+        }
         // 圈跟加载信息、集数一起从正中那条线往下排（LP 4913）。
-        loadingAtCenterLine {
+        return AnyView(loadingAtCenterLine {
         VStack(spacing: 10) {
             switch controller.phase {
             case .idle, .searchingSource, .resolvingChapters, .parsingMedia:
@@ -2979,12 +3065,13 @@ struct PlayerScreen: View {
             case .failed:
                 // 失败提示不压在画面正中间：挪到下面「选集」那一块里
                 // （平时列剧集的位置），跟页面一起推进来（LP 3286 / Colo 3287）。
+                // 全屏那一份在上面单独处理（那一块不画）。
                 EmptyView()
             case .ready:
                 EmptyView()
             }
         }
-        }
+        })
     }
 
     private func phaseTitle(_ phase: PlayerController.Phase) -> String {
@@ -3031,32 +3118,36 @@ struct PlayerScreen: View {
 
     private var portraitTransport: some View {
         HStack(spacing: 8) {
-            playPauseButton(size: 44)
-            scrubber
+            playPauseButton
+            scrubber()
             timeLabel
             fullscreenButton
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .padding(.bottom, Self.portraitTransportBottomInset)
         .frame(height: 52)
     }
 
-    /// 横屏：时间文字在进度条上方（左 10、下 10），进度条左右各 10，
-    /// 再下面一行按钮（左右各 10）。按钮行按 Colo 3613 的精简版：手机横屏放不下十颗。
+    /// 横屏：时间文字贴着进度条上方（左 16、底边离轨道约 2pt），
+    /// 进度条左右各 16、在 44pt 触控区里下移 10，再下面一行按钮（左右各 16）。
+    /// 按钮行按 Colo 3613 的精简版：手机横屏放不下十颗。
     private func landscapeTransport(_ controller: PlayerController) -> some View {
         VStack(spacing: 0) {
             timeLabel
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 16)
-                .padding(.bottom, 8)
+                .padding(.bottom, Self.landscapeTimeLabelGap)
+                // 时间贴着轨道下移；标签压进 44pt 触控区，但不吃拖动。
+                .offset(y: Self.landscapeTimeLabelDrop)
+                .allowsHitTesting(false)
 
-            scrubber
+            scrubber(trackOffset: Self.landscapeProgressDrop)
                 .padding(.horizontal, 16)
 
             HStack(spacing: 8) {
-                playPauseButton(size: 44)
-                nextEpisodeButton(controller, size: 44)
-                danmakuButton(width: 44, height: 44)
+                playPauseButton
+                nextEpisodeButton(controller)
+                danmakuButton
                 // 横屏两棵弹幕键并排：开关 + 设置（LP 2026-10-27）。
                 danmakuSettingsButton()
                 danmakuField
@@ -3082,112 +3173,104 @@ struct PlayerScreen: View {
             .fixedSize()
     }
 
-    private func playPauseButton(size: CGFloat) -> some View {
-        Button {
+    private var playPauseButton: some View {
+        PlayerIconButton {
             surface.togglePlay()
             // 跟双击中间那一朵共用同一个指示器（LP 4689）：两种按法都出同一句话、
             // 同一个位置，不分开各画一套。
             flashPlayPauseHUD()
             noteInteraction()
-        } label: {
+        } content: {
             Image(systemName: surface.isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: 20, weight: .regular))
+                .playerIcon(optical: .solid)
                 .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
         .accessibilityLabel(surface.isPlaying ? "暂停" : "播放")
     }
 
     private var fullscreenButton: some View {
-        Button {
+        PlayerIconButton {
             toggleFullscreen()
-        } label: {
+        } content: {
             // 符号跟着当前状态走：进全屏是放大，退出是全屏箭头收回。
             Image(systemName: isFullscreen
                 ? "arrow.down.right.and.arrow.up.left"
                 : "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 20, weight: .regular))
+                .playerIcon(optical: .detailed)
                 .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
         .accessibilityLabel(isFullscreen ? "退出全屏" : "全屏")
     }
 
     /// 下一集：没有下一集时灰掉。
-    private func nextEpisodeButton(_ controller: PlayerController, size: CGFloat) -> some View {
+    private func nextEpisodeButton(_ controller: PlayerController) -> some View {
         let hasNext = controller.currentEpisode < controller.episodes.count
-        return Button {
+        return PlayerIconButton {
             guard hasNext else { return }
             noteInteraction()
             Task { await controller.selectEpisode(controller.currentEpisode + 1) }
-        } label: {
+        } content: {
             Image(systemName: "forward.end.fill")
-                .font(.system(size: 20, weight: .regular))
+                .playerIcon(optical: .solid)
                 .foregroundStyle(.white.opacity(hasNext ? 1 : 0.35))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
         .disabled(!hasNext)
         .accessibilityLabel("下一集")
     }
 
     /// 横屏那颗超分辨率：点开就是模式列表，当前项系统打勾（Colo 2026-10-28）。
     private var superResolutionButton: some View {
-        SystemMenuButton(
-            selection: .init(options: SuperResolutionMode.allCases.map { mode in
-                .init(title: mode.title, isSelected: settings.playbackSuperResolutionMode == mode) {
-                    applySuperResolution(mode)
-                }
-            }),
-            title: nil,
-            symbol: "wand.and.stars",
-            accessibilityLabel: String(localized: "超分辨率 \(String(describing: settings.playbackSuperResolutionMode.title))"),
-            onOpen: { pinControlsWhileMenuOpen() }
-        )
-        .frame(minWidth: 44, minHeight: 40)
+        PlayerIconButton {
+            SystemMenuButton(
+                selection: .init(options: SuperResolutionMode.allCases.map { mode in
+                    .init(title: mode.title, isSelected: settings.playbackSuperResolutionMode == mode) {
+                        applySuperResolution(mode)
+                    }
+                }),
+                title: nil,
+                symbol: "wand.and.stars",
+                accessibilityLabel: String(localized: "超分辨率 \(String(describing: settings.playbackSuperResolutionMode.title))"),
+                symbolOptical: .detailed,
+                onOpen: { pinControlsWhileMenuOpen() }
+            )
+        }
     }
 
     /// 横屏那颗倍速：底栏只放符号，当前值点开菜单看（Colo 2026-10-28）。
     private var speedButton: some View {
-        SystemMenuButton(
-            selection: .init(options: PlaybackSpeed.all.map { rate in
-                .init(
-                    title: speedText(rate),
-                    isSelected: abs(playbackRate - Float(rate)) < 0.01
-                ) {
-                    applySpeed(Float(rate))
-                    noteInteraction()
-                }
-            }),
-            title: nil,
-            symbol: "speedometer",
-            accessibilityLabel: String(localized: "倍速 \(String(describing: speedText(Double(playbackRate))))"),
-            onOpen: { pinControlsWhileMenuOpen() }
-        )
-        .frame(minWidth: 44, minHeight: 40)
+        PlayerIconButton {
+            SystemMenuButton(
+                selection: .init(options: PlaybackSpeed.all.map { rate in
+                    .init(
+                        title: speedText(rate),
+                        isSelected: abs(playbackRate - Float(rate)) < 0.01
+                    ) {
+                        applySpeed(Float(rate))
+                        noteInteraction()
+                    }
+                }),
+                title: nil,
+                symbol: "speedometer",
+                accessibilityLabel: String(localized: "倍速 \(String(describing: speedText(Double(playbackRate))))"),
+                symbolOptical: .standard,
+                onOpen: { pinControlsWhileMenuOpen() }
+            )
+        }
     }
 
     private var episodesButton: some View {
-        Button {
+        PlayerIconButton {
             // 再点一次收起（Colo §7）。
             if showsEpisodesPanel {
                 closeEpisodesPanel()
             } else {
                 openEpisodesPanel()
             }
-        } label: {
+        } content: {
             Image(systemName: "list.bullet")
-                .font(.system(size: 20, weight: .semibold))
+                .playerIcon()
                 .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
         .accessibilityLabel("选集")
     }
 
@@ -3237,7 +3320,9 @@ struct PlayerScreen: View {
     /// 横屏底栏里的发弹幕：白 38% 底、圆角、13 号、hint 照原版，右边一颗「发送」。
     /// 弹幕关着时整个框灰掉并挡住输入——发了也看不见，不如先说清楚。
     private var danmakuField: some View {
-        HStack(spacing: 6) {
+        // 发送键从输入框右端切出一块深色区：输入区和按钮共用同一个圆角底，
+        // 按钮自己的底色贴满上下、右边跟外框同圆角，文字左右各留 12pt，视觉居中。
+        HStack(spacing: 0) {
             TextField(
                 "",
                 text: $danmakuDraft,
@@ -3248,9 +3333,12 @@ struct PlayerScreen: View {
             .foregroundStyle(.white)
             .tint(.white)
             .focused($danmakuFieldFocused)
+            // 回车恢复成「发送」；取消由右边那颗按钮在键盘弹起时承担。
             .submitLabel(.send)
             .onSubmit { sendDanmaku() }
             .disabled(!danmakuEnabled)
+            .padding(.leading, 10)
+            .padding(.trailing, 10)
             .onChange(of: danmakuFieldFocused) { _, focused in
                 if focused {
                     // 只在真播着时停：本来暂停的不动。
@@ -3269,22 +3357,40 @@ struct PlayerScreen: View {
                 }
             }
 
+            // 键盘弹起时这颗按钮变成「取消」：只收键盘、不动已输入的文字；
+            // 收起后回到「发送」。回车仍然是发送，行为不藏。
             Button {
-                sendDanmaku()
+                if danmakuFieldFocused {
+                    endDanmakuInput()
+                } else {
+                    sendDanmaku()
+                }
             } label: {
-                Text("发送")
+                Text(danmakuFieldFocused ? String(localized: "取消") : String(localized: "发送"))
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(canSendDanmaku ? .white : .white.opacity(0.45))
-                    .padding(.horizontal, 6)
-                    .frame(height: 33)
+                    .foregroundStyle(
+                        danmakuFieldFocused || canSendDanmaku
+                            ? .white
+                            : .white.opacity(0.55)
+                    )
+                    .padding(.horizontal, 12)
+                    .frame(maxHeight: .infinity)
+                    .background {
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 0,
+                            bottomLeadingRadius: 0,
+                            bottomTrailingRadius: 10,
+                            topTrailingRadius: 10,
+                            style: .continuous
+                        )
+                        .fill(.black.opacity(danmakuEnabled ? 0.18 : 0.10))
+                    }
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlayerPressStyle())
-            .disabled(!canSendDanmaku)
-            .accessibilityLabel("发送弹幕")
+            .disabled(!danmakuFieldFocused && !canSendDanmaku)
+            .accessibilityLabel(danmakuFieldFocused ? String(localized: "取消") : String(localized: "发送弹幕"))
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 2)
         .frame(height: 33)
         .background(.white.opacity(danmakuEnabled ? 0.38 : 0.18),
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -3292,6 +3398,13 @@ struct PlayerScreen: View {
 
     private var canSendDanmaku: Bool {
         danmakuEnabled && !danmakuDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 只收起键盘，不清草稿——键盘弹起时那颗「取消」的语义。
+    private func endDanmakuInput() {
+        danmakuFieldFocused = false
+        noteInteraction()
+        showControlsBriefly()
     }
 
     /// 发出去：只在本地画布上补一条（原版 `_sendDanmaku` 也不调接口），清空、收键盘。
@@ -3305,11 +3418,10 @@ struct PlayerScreen: View {
         showControlsBriefly()
     }
 
-    /// 进度条：交给系统 `Slider`（原生轨道与拇指），不再自绘。
-    /// 拖动中读本地 `scrubValue` 预览，松手才真 seek——画面不跟着每一帧抖。
     /// 进度条：只有轨道，没有拇指。未播白 30%、已播纯白，靠色差看进度
     /// （LP 2026-10-27「胶囊白块除了占空毫无意义」）。交互不删：整条 44 高都能拖。
-    private var scrubber: some View {
+    /// `trackOffset` 只挪可见轨道，不挪 44pt 的触控区。
+    private func scrubber(trackOffset: CGFloat = 0) -> some View {
         let total = max(surface.duration, 0.001)
         let current = min(max(isScrubbing ? scrubValue : surface.currentTime, 0), total)
         let progress = total > 0 ? min(max(current / total, 0), 1) : 0
@@ -3319,12 +3431,18 @@ struct PlayerScreen: View {
             let bubbleWidth: CGFloat = 72
             let bubbleX = min(max(scrubFingerX - bubbleWidth / 2, 0), max(width - bubbleWidth, 0))
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.3))
-                    .frame(height: 4)
-                Capsule()
-                    .fill(.white)
-                    .frame(width: width * progress, height: 4)
+                Group {
+                    Capsule()
+                        .fill(.white.opacity(0.3))
+                        .frame(height: 4)
+                    Capsule()
+                        .fill(.white)
+                        .frame(width: width * progress, height: 4)
+                }
+                .offset(y: trackOffset)
+                // 触控区固定铺满 44pt，不跟着轨道下移。
+                Color.clear
+                    .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -3343,7 +3461,7 @@ struct PlayerScreen: View {
                 if isScrubbing {
                     scrubTimeBubble
                         .frame(width: bubbleWidth)
-                        .offset(x: bubbleX, y: -22)
+                        .offset(x: bubbleX, y: -22 + trackOffset)
                         .allowsHitTesting(false)
                 }
             }
@@ -3600,10 +3718,6 @@ struct PlayerScreen: View {
 
     // MARK: - 提示
 
-    /// 竖滑浮层：亮度仍是小胶囊（`sun.max` + 系统玻璃）；
-    /// 音量交给系统的 `MPVolumeView`，不再自绘第二条滑杆。
-    @ViewBuilder
-    /// 把一朵 HUD 摆在画面高度 1/4 的位置（水平居中）。
     /// 加载符号该不该出现。
     ///
     /// 三件事都算「在加载」：起播还没真正开始、中途卡住（网卡缓冲）、正在 seek。
@@ -3615,6 +3729,25 @@ struct PlayerScreen: View {
         // 缓冲 / 拖进度：短暂提示，跟首帧那套逻辑分开（LP 4818 第 7 条）。
         if surface.isSeeking || surface.isStalled { return true }
         return surface.isLoadingFirstFrame
+    }
+
+    /// 加载圈下面那行「到底在等什么」。
+    ///
+    /// 速度没出来时以前是「— KB/s」，看不出是在连源、等首帧还是卡在缓冲。
+    /// 这里按状态说人话；速度出来后 HUD 会多一行实时速率。
+    private var playbackLoadingInfo: String? {
+        if surface.isSeeking {
+            return String(localized: "正在跳转…")
+        }
+        if surface.isStalled {
+            return String(localized: "正在缓冲…")
+        }
+        if surface.isLoadingFirstFrame {
+            return surface.downloadSpeed > 0
+                ? String(localized: "正在缓冲…")
+                : String(localized: "正在连接播放源…")
+        }
+        return nil
     }
 
     /// 加载符号的**圆心**钉在画面正中那条线上——跟两侧快进快退同一水平，
@@ -3662,12 +3795,14 @@ struct PlayerScreen: View {
                 .contentTransition(.symbolEffect(.replace))
 
             // 轨道：底是 30% 白，填充是纯白，从左往右长。
+            // 0 就别留底子：以前 `max(6, ...)` 兜了个最小宽度，拖到 0 / 按到 0
+            // 填充条上还挂着一小截白点，看着像没清空（LP 2026-11-08 第 2 条）。
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(.white.opacity(0.3))
                 Capsule()
                     .fill(.white)
-                    .frame(width: max(6, 120 * value))
+                    .frame(width: 120 * value)
             }
             // 横向胶囊：宽 120、高 8。
             .frame(width: 120, height: 8)
@@ -3724,10 +3859,8 @@ struct PlayerScreen: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
+        // 跟倍速 HUD 同一套玻璃底；胶囊的尺寸和圆角都不动。
+        .playerGlass(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .allowsHitTesting(false)
         .transition(.opacity)
     }
@@ -3760,20 +3893,67 @@ struct PlayerScreen: View {
     /// 音量浮层**只有这一条路径**：手势竖滑和音量键都走这里，画的都是 `gestureOverlay`
     /// 同一条横条、同一个位置、同一份玻璃（LP 2026-11-06）。
     private func showVolumeHUD(_ value: Double) {
-        gestureHUD = GestureHUDValue(kind: .volume, value: max(0, min(1, value)))
+        let clamped = max(0, min(1, value))
+        // 记下来给自己去重：两个观察源会重复报同一个值。
+        lastShownVolume = clamped
+        gestureHUD = GestureHUDValue(kind: .volume, value: clamped)
     }
 
-    /// 音量键只当触发器：值直接读回调里这个会话的当前音量（按键已经把它写进去了），
+    /// 音量键只当触发器：值直接读当前音量（按键已经把它写进去了），
     /// 画出跟手势一模一样的那条。自己写音量引起的回声不算按键。
+    ///
+    /// **两个来源都要挂**（LP 2026-11-08 第 3 条：加载 / 缓冲 / 暂停时按音量键不出浮层）：
+    /// * `AVAudioSession.outputVolume`——出声时最准；
+    /// * MPVolumeView 的滑杆——那几个阶段会话音量不一定报变化，系统却把按键记在
+    ///   媒体音量上，滑杆会动。
+    /// 所以这个监听挂在页面出现时就装，不与「有没有拿到播放地址」「在不在播」绑。
     private func observeSystemVolume() {
         volumeObserver?.invalidate()
+        volumeObserver = nil
+        volumeSliderObserver?.invalidate()
+        volumeSliderObserver = nil
+        lastShownVolume = -1
+        isObservingVolume = true
         volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { session, _ in
-            Task { @MainActor in
-                guard !PlayerVolumeControl.shared.isWriting else { return }
-                showVolumeHUD(Double(session.outputVolume))
-                scheduleHUDHide()
-            }
+            let value = Double(session.outputVolume)
+            Task { @MainActor in self.publishVolumeHUD(value) }
         }
+        observeVolumeSlider()
+    }
+
+    /// 滑杆可能晚一两拍才装进窗口（`SystemVolumeHost` 那边也会重试几次找），
+    /// 这里自己补几拍：找到就挂 KVO，找不到就放弃（会话那条仍然在）。
+    private func observeVolumeSlider(attempt: Int = 0) {
+        guard isObservingVolume else { return }
+        if let slider = PlayerVolumeControl.shared.sliderForKeys() {
+            volumeSliderObserver?.invalidate()
+            volumeSliderObserver = slider.observe(\.value, options: [.new]) { _, change in
+                // 读 `change.newValue` 而不是滑杆：`UISlider.value` 是主线程隔离的，
+                // 在 KVO 的 Sendable 闭包里直接读会报警告。
+                guard let reported = change.newValue else { return }
+                Task { @MainActor in self.publishVolumeHUD(Double(reported)) }
+            }
+            return
+        }
+        guard attempt < 8 else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, self.isObservingVolume else { return }
+            self.observeVolumeSlider(attempt: attempt + 1)
+        }
+    }
+
+    /// 一次音量变化画出来。同一个值重复到达（两个来源都报了）只画一次，
+    /// 免得浮层被重排两遍、隐藏定时器互相顶掉。
+    private func publishVolumeHUD(_ value: Double) {
+        guard !PlayerVolumeControl.shared.isWriting else { return }
+        // 正在竖滑调音量：系统会把我们写进去的整步值回播一次，画出来会让横条
+        // 从连续值跳成 1/16 的台阶。拖动期间一律不接回声（手势那条自己会画）。
+        guard dragAxis != .volume else { return }
+        let clamped = max(0, min(1, value))
+        guard abs(clamped - lastShownVolume) > 0.0001 else { return }
+        showVolumeHUD(clamped)
+        scheduleHUDHide()
     }
 
     /// 手指离开后淡出（默认 0.6 秒），0.2 秒 easeOut；三朵浮层共用这一个定时器。
@@ -3822,6 +4002,20 @@ struct PlayerScreen: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(.ultraThinMaterial)
             )
+    }
+
+    /// 画面 1/4 处那句动作结果（倍速 / 收藏 / 定时关闭 / 已标记本集看过）。
+    ///
+    /// 玻璃跟其它 HUD 走同一个 `playerGlass` 入口：`ultraThinMaterial` 在深色画面上
+    /// 偏灰发亮，跟旁边倍速胶囊、播放暂停气泡并排就露馅（LP 2026-11-08）。
+    /// 形状和 14pt 圆角照旧，只换材质。
+    private func hudToastBubble(_ message: String) -> some View {
+        Text(message)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .playerGlass(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     /// 2 秒后自己收；task 以文案为 id，快速连点时上一条定时器自然作废。
@@ -4751,18 +4945,6 @@ private struct PlayerBoxModifier: ViewModifier {
     }
 }
 
-/// 系统那粒隔空播放按钮，塞进投屏浮层里用。
-private struct AirPlayRoutePicker: UIViewRepresentable {
-    func makeUIView(context: Context) -> AVRoutePickerView {
-        let view = AVRoutePickerView()
-        view.prioritizesVideoDevices = true
-        view.tintColor = .white
-        return view
-    }
-
-    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
-}
-
 /// 系统分享面板：把媒体地址交给别的 App（VLC、Infuse 之类）打开。
 private struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
@@ -4816,7 +4998,16 @@ private struct SyncPlaySheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { showingSyncPlay = false }
+                    Button {
+                        showingSyncPlay = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundStyle(Color.primary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("关闭")
                 }
             }
         }
@@ -4828,28 +5019,50 @@ private struct SyncPlaySheet: View {
 /// 别用 `.clear`——画面一动，上面的白字就没地方站。
 /// 播放页按钮的按压反馈：按下缩到 0.92、松开弹回，100ms easeOut。
 /// 不加底色、不变色、不动投影，也不震——iOS 原生按钮本来就不震。
-/// 弹幕设置的图标：`captions.bubble` 20pt 打底、右下角压一颗 12pt 的 `gearshape.fill`，
-/// 白色、`.regular`，44×44 只是命中区，**不裁**（一裁齿轮就断、气泡就变小——
-/// LP 2026-10-28「怎么还出界了」「怎么小了」两回都是裁出来的）。
-/// 横屏底栏直接用这个 View，「更多 → 弹幕设置」把它渲成图，两处同一份。
+/// 播放器横竖屏共用的弹幕符号：圆角框里两条错落横线代表飞过的弹幕，
+/// 右下角压一颗小齿轮（设置版）。不写汉字，简繁体、字号糊不糊都不用管。
+/// 外框 18.5×15.5、线宽 1.6，跟 18pt Medium 的 `speedometer` / `sidebar.left`
+/// 墨水高度 15~16pt、线宽 1.5~1.7pt 对齐；整张画布仍锁 20×18 装下齿轮。
 struct DanmakuSettingsGlyph: View {
-    /// 颜色和空心/实心都由调用方定，组件里不写死（LP / Colo 2026-10-28）：
-    /// 播放器里两个都白、气泡实心；「更多」菜单里气泡空心黑、齿轮实心黑。
+    /// 颜色由调用方定：播放器里白色，「更多」菜单渲成模板图后跟系统 tint。
     var color: Color = .white
-    /// 气泡用实心还是空心。
-    var bubbleFilled: Bool = true
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Image(systemName: bubbleFilled ? "captions.bubble.fill" : "captions.bubble")
-                .font(.system(size: 20, weight: .regular))
+        ZStack {
+            // 主体框：可视高 15.5pt、宽 18.5pt，线宽 1.6pt。
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .strokeBorder(lineWidth: 1.6)
+                .frame(width: 18.5, height: 15.5)
+                .overlay {
+                    // 两条错落的胶囊横线＝弹幕，免去一切中文字体和简繁问题。
+                    VStack(spacing: 2.5) {
+                        Capsule()
+                            .frame(width: 9, height: 1.6)
+                            .offset(x: -1.5)
+                        Capsule()
+                            .frame(width: 7, height: 1.6)
+                            .offset(x: 2)
+                    }
+                }
+                .offset(x: -1, y: -1)
+                .overlay(alignment: .bottomTrailing) {
+                    // 齿轮位置的镂空避让圆，避免框线和齿轮叠在一起。
+                    Circle()
+                        .frame(width: 9.5, height: 9.5)
+                        .offset(x: 1, y: 1)
+                        .blendMode(.destinationOut)
+                }
+                .compositingGroup()
+
+            // 右下角小齿轮：8pt，精致但不抢主体。
             Image(systemName: "gearshape.fill")
-                .font(.system(size: 12, weight: .regular))
-                // 圆心压在气泡外框的右下角上；比 6 再往左上 0.6（LP 2026-10-28）。
-                .offset(x: 5.4, y: 5.4)
+                .font(.system(size: 8, weight: .bold))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .offset(x: 0.5, y: 0.5)
         }
         .foregroundStyle(color)
-        .frame(width: 44, height: 44)
+        // 严格锁死 20×18，绝不撑大外面的按钮。
+        .frame(width: 20, height: 18)
         .contentShape(Rectangle())
     }
 }

@@ -53,6 +53,37 @@ enum MPVLoadPhase: Sendable {
     case playing
 }
 
+/// 一次播放请求：地址与随请求一起送出的头。换集、重试和恢复都复用同一个值，
+/// 避免把 URL 和 Cookie/Referer/UA 拆散后出现「裸 URL 能重连但有头源 403」。
+struct MPVPlaybackRequest: Equatable {
+    let url: URL
+    let referer: String?
+    let userAgent: String?
+    let cookie: String?
+
+    enum Change: Equatable {
+        case unchanged
+        case headersOnly
+        case urlChanged
+    }
+
+    /// SwiftUI 更新时先区分「换源」和「同源只刷新请求头」。后者只更新断流恢复请求，
+    /// 不能重开文件，也不能覆盖用户已经按下的暂停。
+    func change(from previous: MPVPlaybackRequest?) -> Change {
+        guard let previous else { return .urlChanged }
+        guard previous != self else { return .unchanged }
+        return previous.url == url ? .headersOnly : .urlChanged
+    }
+}
+
+/// 画中画一次取帧：帧本身，加上**命令下发前**读到的媒体时间与暂停状态。
+/// 时间不能等回执后再读：30Hz 节拍里回执延迟会把相邻两拍压成同一个值。
+struct PiPCapturedFrame: Sendable {
+    let frame: MPVRawFrame
+    let mediaTime: Double
+    let paused: Bool
+}
+
 struct MPVSnapshot: Sendable {
     var time: Double
     var duration: Double
@@ -72,6 +103,10 @@ struct MPVSnapshot: Sendable {
     /// 内核正在 seek（拖进度、换集）。加载符号在这段时间也要转，
     /// 不然拖完进度就是一整块静止的黑屏。
     var isSeeking: Bool = false
+    /// 每次 loadfile 的编号；快速换源 / 原位重连时用来丢弃旧内核的迟到快照。
+    var loadID: UInt64 = 0
+    /// 这条快照里的视频参数确实来自当前 loadID 的新文件，而不是上一集残留。
+    var freshVideoParams: Bool = false
     /// 这次加载走到哪一步了（LP 4818）。
     var loadPhase: MPVLoadPhase = .idle
 }
@@ -109,6 +144,10 @@ final class MPVEngine {
     private static let pipCommandMarker: UInt64 = 1 << 63
     // Only outstanding commands and at most 64 timeout tombstones; no frame history.
     private var pipRawShotSubmissions: [UInt64: (generation: UInt64, submittedAt: Double, timedOut: Bool)] = [:]
+    /// 较旧的 mpv 不接受 `screenshot-raw video bgra` 第三个参数。只在它明确回错后
+    /// 永久退回两参数的默认 bgr0，避免每帧都先失败一次。
+    private var pipBGRACommandIDs: Set<UInt64> = []
+    private var pipUsesLegacyScreenshotRaw = false
     private var pipStatistics = (
         submit: 0, reply: 0, success: 0, nilReply: 0, timeout: 0, late: 0,
         submitFailed: 0, evictedTimeout: 0, evictedLate: 0, timedReplies: 0,
@@ -131,6 +170,7 @@ final class MPVEngine {
         if !active {
             reportPictureInPictureStatistics(final: true)
             pipRawShotSubmissions.removeAll(keepingCapacity: true)
+            pipBGRACommandIDs.removeAll(keepingCapacity: true)
         }
     }
 
@@ -152,11 +192,39 @@ final class MPVEngine {
     /// 内核已经在跑的时候改这一项不会重开文件，只影响后面还要读多少——
     /// 缓冲被打空的当下改小也会立刻生效，所以「移动数据→低内存」不用重开这一集。
     func applyCacheSize(_ bytes: Int) {
+        // SwiftUI 每次刷新都会把这一项重新算一遍；值没变就别再打 mpv 属性。
+        // 以前每 250ms 重设一次 demuxer 缓存，慢源上会被反复打断，表现就是卡顿。
+        guard bytes != cacheBytes else { return }
         cacheBytes = bytes
         guard let mpv = handle else { return }
         let value = String(bytes)
         mpv_set_property_string(mpv, "demuxer-max-bytes", value)
         mpv_set_property_string(mpv, "demuxer-max-back-bytes", value)
+        mpv_set_property_string(mpv, "demuxer-readahead-secs", readAheadSeconds(for: bytes))
+        mpv_set_property_string(mpv, "cache-secs", cacheSeconds())
+    }
+
+    /// 起播阶段只放 1 秒的预取窗口，首帧出来后再恢复长缓存。
+    ///
+    /// 慢源上直接把 `cache-secs` / 预读设成几万秒，会让「先填一大段缓存」和
+    /// 「网速只有几百 KB/s」叠在一起，加载圈看起来一直不走；先让解码器拿到
+    /// 1 秒数据出画面，再补后面的窗口。
+    private func readAheadSeconds(for bytes: Int) -> String {
+        guard bytes > PlaybackCachePolicy.lowMemoryBytes else { return "1" }
+        return reportedFirstFrame ? "5" : "1"
+    }
+
+    /// `cache-secs` 会覆盖 `demuxer-readahead-secs`，起播时也要一起压低，
+    /// 否则只改后者等于没改。
+    private func cacheSeconds() -> String {
+        reportedFirstFrame ? "36000" : "1"
+    }
+
+    /// 首帧之后才提高预取。低内存档的 readahead 仍保持 1 秒，不拿内存换平滑。
+    private func promoteCacheAfterFirstFrame() {
+        setOptionForPlayback("cache-secs", "36000")
+        guard cacheBytes > PlaybackCachePolicy.lowMemoryBytes else { return }
+        setOptionForPlayback("demuxer-readahead-secs", "5")
     }
 
     private var lastSnapshot = MPVSnapshot(
@@ -164,6 +232,14 @@ final class MPVEngine {
     )
     /// 本次加载是否已经报过首帧。
     private var reportedFirstFrame = false
+    /// 本次 loadfile 已经收到 START_FILE 前，不把旧画面当新一集首帧。
+    private var awaitingFreshLoadVideo = false
+    /// 逐次 loadfile 的编号；事件泵收到 START_FILE 后把它盖到快照上。
+    private var loadIDSeed: UInt64 = 0
+    private var pendingFreshLoadID: UInt64 = 0
+    private var firstFrameLoadID: UInt64 = 0
+    /// 当前媒体地址与请求头。断流自愈要复用同一组参数，不能只记裸 URL。
+    private var currentSource: MPVPlaybackRequest?
 
     /// 已下发、还没回执的异步命令。
     private var pendingCommands: [UInt64: CommandRequest] = [:]
@@ -259,8 +335,19 @@ final class MPVEngine {
         setOption("demuxer-max-back-bytes", String(cacheBytes))
         // main 的网络预取窗口。1500 MiB 只限制内存上限，时间窗口仍要足够长；
         // 3x 播放时默认窗口会很快耗尽，表现成频繁 core-idle。
-        setOption("cache-secs", "36000")
-        setOption("demuxer-readahead-secs", "1")
+        setOption("cache-secs", cacheSeconds())
+        setOption("demuxer-readahead-secs", readAheadSeconds(for: cacheBytes))
+        // 源站对 HLS keepalive 复用会回 400 / EOF。断连后 FFmpeg 虽会
+        // 「retrying with new connection」，但默认 60 秒超时和持久连接
+        // 会让内核长时间停在 core-idle。每个分片用新连接、短超时并允许重连。
+        setOption("network-timeout", "10")
+        // `http_persistent` 是 HLS demuxer 选项（默认开，复用服务器回 400 的
+        // keepalive）；`multiple_requests` 等是 HTTP protocol 选项，别混到 demuxer 里。
+        setOption("demuxer-lavf-o", "http_persistent=0")
+        setOption(
+            "stream-lavf-o",
+            "multiple_requests=0,reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=7"
+        )
 
         let initStatus = mpv_initialize(mpv)
         guard initStatus >= 0 else {
@@ -305,7 +392,11 @@ final class MPVEngine {
                     eventAt: eventAt, copiedAt: copiedAt, window: window
                 )
                 self.finishCommand(id: id, error: error)
-                self.finishRawShot(id: id, frame: error >= 0 ? rawFrame : nil)
+                self.finishRawShot(
+                    id: id,
+                    frame: error >= 0 ? rawFrame : nil,
+                    error: error
+                )
             }
         }
         pump.onPictureInPictureStatistics = { [weak self] window in
@@ -325,10 +416,25 @@ final class MPVEngine {
 
     private func apply(_ snapshot: MPVSnapshot) {
         lastSnapshot = snapshot
+        // 只有带本次 loadID 的快照才能消耗「等新文件」闩锁；beginLoad 合成的
+        // .opening 仍带旧编号，不能让上一集残留的 hasVideo 提前报首帧。
+        // 编号单调递增，比本次更大的编号只可能是内核自发 START_FILE 领的新号
+        // （快速换集时两条 loadfile 被合并、或迟到 START_FILE），同样算新文件；
+        // 死等相等会把闩锁永久闩住，首帧和缓存 promotion 再也走不到。
+        if awaitingFreshLoadVideo,
+           pendingFreshLoadID != 0,
+           snapshot.loadID >= pendingFreshLoadID || snapshot.freshVideoParams {
+            awaitingFreshLoadVideo = false
+            pendingFreshLoadID = 0
+        }
         onSnapshot?(snapshot)
-        if snapshot.hasVideo, !reportedFirstFrame {
+        if snapshot.freshVideoParams,
+           snapshot.loadID != firstFrameLoadID,
+           !awaitingFreshLoadVideo {
+            firstFrameLoadID = snapshot.loadID
             reportedFirstFrame = true
             pump?.markFirstFrameRendered()
+            promoteCacheAfterFirstFrame()
             onFirstFrame?()
         }
     }
@@ -336,16 +442,33 @@ final class MPVEngine {
     // MARK: - 播放
 
     /// 换集 / 首次起播。UA 与 Referer 规则站点校验，缺一不可。
-    func load(url: URL, referer: String?, userAgent: String?, cookie: String? = nil) {
+    func load(_ request: MPVPlaybackRequest) {
         guard handle != nil else { return }
+        currentSource = request
+        applySourceHeaders(request)
+        beginLoad(at: nil, isRecovery: false)
+    }
+
+    /// 兼容旧调用点：把分散的参数收成一个不可变请求值。
+    func load(url: URL, referer: String?, userAgent: String?, cookie: String? = nil) {
+        load(MPVPlaybackRequest(
+            url: url,
+            referer: referer,
+            userAgent: userAgent,
+            cookie: cookie
+        ))
+    }
+
+    /// 换集 / 首次起播 / 断流恢复共用的请求头设置；整组头一起复用，不能只记裸 URL。
+    private func applySourceHeaders(_ request: MPVPlaybackRequest, logStart: Bool = true) {
         // UA 和 Referer 走 mpv 自己的选项，不拼进 `http-header-fields`（LP 5504/5506）：
         // 那个选项是一串字段，拼字符串再交给 ffmpeg 时容易整条塞成一个带换行的头，
         // 服务器见到畸形请求就回 400——本地 curl 同样的头 200，手机内核 400 的差别
         // 就在这儿。UA / Referer 有专门选项，让库自己去拼。
-        setOptionForPlayback("user-agent", userAgent ?? "")
-        setOptionForPlayback("referrer", referer ?? "")
+        setOptionForPlayback("user-agent", request.userAgent ?? "")
+        setOptionForPlayback("referrer", request.referer ?? "")
         // 只有 Cookie 非空时才用 header 字段（没有专门选项可替）。
-        if let cookie, !cookie.isEmpty {
+        if let cookie = request.cookie, !cookie.isEmpty {
             setOptionForPlayback("http-header-fields", "Cookie: \(cookie)")
         } else {
             setOptionForPlayback("http-header-fields", "")
@@ -353,19 +476,80 @@ final class MPVEngine {
         // 内核起播前把这次带过去的头记一行（Fuck 5487）：登录态有没有送到，
         // 看一眼运行日志就知道，不用在界面上猜是站点限了还是 Cookie 没带上。
         // 只记名字和个数，值不落盘。
-        let cookieCount = (cookie ?? "").split(separator: ";").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+        let cookieCount = (request.cookie ?? "").split(separator: ";")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+        guard logStart else { return }
         KazumiLogBuffer.shared.append(
-            "内核起播 host=\(url.host() ?? "-") cookie=\(cookieCount)个 referer=\(referer == nil ? "无" : "有") ua=\(userAgent == nil ? "无" : "有")",
+            "内核起播 host=\(request.url.host() ?? "-") cookie=\(cookieCount)个 referer=\(request.referer == nil ? "无" : "有") ua=\(request.userAgent == nil ? "无" : "有")",
             category: .player
         )
-        // 换集 / 重试都按「接着看」处理：内核里 pause 可能还是上一集留下的 true，
-        // 不显式放开，加载完了就停在那儿黑着（LP 2026-10-28 第 4 条「不会自动播放」）。
+    }
+
+    /// 同一集的请求头（例如登录态 Cookie）刷新了：只更新恢复用的完整请求，
+    /// 不重开文件、不改播放意图，避免用户暂停时被从头拉起。
+    func updatePlaybackRequest(_ request: MPVPlaybackRequest) {
+        guard handle != nil else { return }
+        currentSource = request
+        applySourceHeaders(request, logStart: false)
+    }
+
+    /// 已经有当前源、可以接受断流恢复。本地文件、未 load 过的引擎返回 false。
+    var hasLoadedSource: Bool { handle != nil && currentSource != nil }
+
+    /// loadfile 前统一复位本次加载状态；恢复播放时只把 pause 放开，
+    /// 不碰 `wantsPlaying`，避免用户暂停态被自愈重新拉起来。
+    @discardableResult
+    private func beginLoad(at seconds: Double?, isRecovery: Bool) -> Bool {
+        guard let source = currentSource, handle != nil else { return false }
+        loadIDSeed &+= 1
+        let loadID = loadIDSeed
+        pendingFreshLoadID = loadID
+        awaitingFreshLoadVideo = true
+        firstFrameLoadID = 0
         reportedFirstFrame = false
-        // 换集 / 重新加载 / 换源：从这一刻起就是「在加载」，别等 mpv 的 START_FILE
-        // 事件（那要等它自己排到），界面上的圈要立刻转起来。
-        pump?.beginLoad()
+        pump?.beginLoad(loadID: loadID, playbackStart: seconds)
+        setOptionForPlayback("cache-secs", "1")
+        setOptionForPlayback("demuxer-readahead-secs", "1")
         setFlag("pause", false)
-        command("loadfile", [url.absoluteString, "replace"])
+        var args: [String?] = [source.url.absoluteString, "replace"]
+        if let seconds, seconds.isFinite, seconds > 0 {
+            // mpv 0.38+ 的第四参数必须带一个被忽略的 index；-1 表示不用插入位置。
+            args.append(contentsOf: ["-1", "start=\(String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), seconds))"])
+        }
+        // loadfile 的回执要等文件真正打开（慢源可能十几秒），不能套 20 秒人工超时：
+        // 超时会把 FIFO 里的编号撤掉，迟到的 START_FILE 就会领到下一次加载的编号。
+        // 真正的失败由 mpv 回执或 stop() 收口。
+        let accepted = submitAsyncCommand("loadfile", args, timeout: nil) { [weak self] status in
+            guard status < 0 else { return }
+            self?.rollbackLoad(loadID: loadID, status: status)
+        }
+        guard accepted else { return false }
+        KazumiLogBuffer.player(
+            isRecovery
+                ? "网络卡住：已原地重连并从 \(Int(seconds ?? 0)) 秒恢复"
+                : "内核 loadfile 已下发"
+        )
+        return true
+    }
+
+    private func rollbackLoad(loadID: UInt64, status: Int32) {
+        pump?.cancelPendingLoad(loadID: loadID)
+        // 命令没被内核接受就不会有 START_FILE，编号和首帧闩锁都必须一起撤掉；
+        // 留着闩锁会让后面所有快照都因 loadID 对不上而永远报不了首帧。
+        if pendingFreshLoadID == loadID {
+            pendingFreshLoadID = 0
+            awaitingFreshLoadVideo = false
+        }
+        log("loadfile 回执失败 loadID=\(loadID)：\(String(cString: mpv_error_string(status)))")
+    }
+
+    /// 表面层确认断流并过了冷却 / 次数闸门后，用新连接重载同一地址续播。
+    /// 返回 false 表示本次根本没有提交命令；模型不能提前消耗恢复额度或清就绪态。
+    @discardableResult
+    func recoverFromStall(at time: Double) -> Bool {
+        guard let source = currentSource, handle != nil, !source.url.isFileURL else { return false }
+        applySourceHeaders(source)
+        return beginLoad(at: time, isRecovery: true)
     }
 
     func play() {
@@ -425,7 +609,9 @@ final class MPVEngine {
     private var usesFallbackVideoOutputList = false
 
     func reconfigureVideoOutputForSurfaceResize() {
-        guard handle != nil, lastSnapshot.hasVideo, !renderingLocked else { return }
+        // 换集后 reportedFirstFrame 会先归零；旧一集的 hasVideo 还在时不要
+        // 在加载途中重建 VO，否则转屏会拿旧画面尺寸去撑新窗口。
+        guard handle != nil, lastSnapshot.hasVideo, reportedFirstFrame, !renderingLocked else { return }
         usesFallbackVideoOutputList.toggle()
         setOptionForPlayback(
             "options/vo",
@@ -441,7 +627,15 @@ final class MPVEngine {
 
     func seek(to time: Double) {
         guard time.isFinite, time >= 0 else { return }
-        command("seek", [String(format: "%.3f", time), "absolute"])
+        // 走异步命令表：断流时 `mpv_command` 的同步 seek 会等 demuxer 锁，
+        // 在主线程上拖一下就卡住界面。命令仍然按提交顺序执行。
+        submitAsyncCommand(
+            "seek",
+            [String(format: "%.3f", time), "absolute"]
+        ) { [weak self] status in
+            guard status < 0 else { return }
+            self?.log("seek 失败 code=\(status) t=\(time)")
+        }
     }
 
     /// 已缓冲到的位置（进度条的缓冲段）。读不到就返回 0。
@@ -603,7 +797,8 @@ final class MPVEngine {
                 setOptionForPlayback("hwdec", effectiveHardwareDecode)
             }
         }
-        guard let frame = await rawScreenshot() else {
+        let shot = await rawScreenshot()
+        guard let frame = shot.frame else {
             return (nil, "取帧失败：screenshot-raw 没回帧")
         }
         guard let image = frame.makeCGImage() else {
@@ -640,9 +835,15 @@ final class MPVEngine {
     }
 
     /// 下发 `screenshot-raw video`，等回执里的那块帧。
-    private func rawScreenshot(timeout: Double = 20, pictureInPicture: Bool = false) async -> MPVRawFrame? {
-        guard let handle else { return nil }
+    /// 返回的媒体时间是在命令**下发前**读的：回执本身要 16–33ms，若等回执后再取 time-pos，
+    /// 30Hz 节拍里相邻两拍会读到几乎同一个值，被去重逻辑隔拍丢掉（约 15Hz）。
+    private func rawScreenshot(
+        timeout: Double = 20,
+        pictureInPicture: Bool = false
+    ) async -> (frame: MPVRawFrame?, capturedMediaTime: Double, paused: Bool) {
+        guard let handle else { return (nil, .nan, true) }
         let countPictureInPicture = pictureInPicture && pictureInPictureFrameFeedActive
+        let timing = pictureInPicture ? pictureInPictureTiming() : nil
         let id = countPictureInPicture ? (nextCommandID | Self.pipCommandMarker) : nextCommandID
         nextCommandID += 1
 
@@ -650,7 +851,12 @@ final class MPVEngine {
         // 和 node，所以调用完就能放。
         let commandName = strdup("screenshot-raw")!
         let modeName = strdup("video")!
-        let strings: [UnsafeMutablePointer<CChar>] = [commandName, modeName]
+        // 活动画中画优先请求 BGRA：它与 CVPixelBuffer 的 32BGRA 内存布局一致。
+        // 老内核明确拒绝第三参数后，后续固定退回默认 bgr0。
+        let requestsBGRA = pictureInPicture && !pipUsesLegacyScreenshotRaw
+        let formatName = requestsBGRA ? strdup("bgra") : nil
+        var strings: [UnsafeMutablePointer<CChar>] = [commandName, modeName]
+        if let formatName { strings.append(formatName) }
         defer { for item in strings { free(item) } }
         var values = strings.map { pointer -> mpv_node in
             var node = mpv_node()
@@ -659,8 +865,9 @@ final class MPVEngine {
             return node
         }
 
-        return await withCheckedContinuation { (continuation: CheckedContinuation<MPVRawFrame?, Never>) in
+        let frame = await withCheckedContinuation { (continuation: CheckedContinuation<MPVRawFrame?, Never>) in
             rawShotWaiters[id] = continuation
+            if requestsBGRA { pipBGRACommandIDs.insert(id) }
             var status: Int32 = -1
             if countPictureInPicture {
                 pipStatistics.submit += 1
@@ -686,7 +893,7 @@ final class MPVEngine {
                     pipStatistics.submitFailed += 1
                 }
                 log("取帧命令下发失败：\(String(cString: mpv_error_string(status)))")
-                finishRawShot(id: id, frame: nil)
+                finishRawShot(id: id, frame: nil, error: status)
                 return
             }
             // 跟其他异步命令一样的超时：放走等待者，不让截图那条任务挂死。
@@ -704,16 +911,24 @@ final class MPVEngine {
                         pipStatistics.evictedTimeout += 1
                     }
                 }
+                // 超时不是格式不兼容；丢掉探测标记并结束本轮，避免无回执时集合增长。
+                pipBGRACommandIDs.remove(id)
                 finishRawShot(id: id, frame: nil)
             }
         }
+        return (frame, timing?.time ?? .nan, timing?.paused ?? true)
     }
 
     /// 画中画取帧：直接读解码后的原始帧，不依赖窗口或 Metal drawable。
     /// 0.25 秒拿不到就放走本轮，不让慢回执把 33ms 节拍压到 4fps。
-    func captureRawFrameForPictureInPicture() async -> MPVRawFrame? {
-        let frame = await rawScreenshot(timeout: 0.25, pictureInPicture: true)
-        guard let frame else {
+    func captureRawFrameForPictureInPicture() async -> PiPCapturedFrame? {
+        let triedBGRA = !pipUsesLegacyScreenshotRaw
+        var result = await rawScreenshot(timeout: 0.25, pictureInPicture: true)
+        // 第三参数在当前内核明确回错时立刻用旧式两参数补一次；之后不再探测。
+        if result.frame == nil, triedBGRA, pipUsesLegacyScreenshotRaw {
+            result = await rawScreenshot(timeout: 0.25, pictureInPicture: true)
+        }
+        guard let frame = result.frame else {
             if pipFrameMissSince == nil { pipFrameMissSince = Date() }
             if !pipFrameSourceLogged,
                let since = pipFrameMissSince,
@@ -726,7 +941,7 @@ final class MPVEngine {
             return nil
         }
         pipFrameMissSince = nil
-        return frame
+        return PiPCapturedFrame(frame: frame, mediaTime: result.capturedMediaTime, paused: result.paused)
     }
 
     /// 画中画时间轴：直接读内核当前时间与暂停状态。
@@ -807,6 +1022,7 @@ final class MPVEngine {
         pump = nil
         // 引擎要没了，还等着的命令不能继续挂着。
         failPendingCommands(-1)
+        pipBGRACommandIDs.removeAll(keepingCapacity: true)
         if let handle {
             mpv_terminate_destroy(handle)
         }
@@ -861,38 +1077,55 @@ final class MPVEngine {
 
     /// 异步命令：把命令丢进 mpv 就走，等事件泵里那条 `COMMAND_REPLY` 回来再继续。
     ///
-    /// 为什么不用同步 `mpv_command`：截图要 mpv 回到最近的关键帧重新解码，网络流上
-    /// 这一下是秒级的；同步调用会把主线程一起卡住（MPVEngine 整个是 @MainActor，
-    /// 命令是从主线程发下去的）。回执带超时：超时了也要把等待者放走，不然 task 挂死。
+    /// 为什么不用同步 `mpv_command`：截图和 loadfile 都可能等网络/关键帧；同步调用会
+    /// 把主线程一起卡住（MPVEngine 整个是 @MainActor）。
     /// 返回错误码（>= 0 成功），-1 表示引擎还没起来，-2 表示超时。
     func runAsyncCommand(_ name: String, _ args: [String?] = []) async -> Int32 {
-        guard let handle else { return -1 }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Int32, Never>) in
+            _ = submitAsyncCommand(name, args) { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+
+    /// 立即返回命令是否已被 libmpv 接受；最终回执由 completion 交回主 actor。
+    /// loadfile 用这条路径，既不在主线程同步等待，又能让恢复状态机区分 no-op/提交失败。
+    @discardableResult
+    private func submitAsyncCommand(
+        _ name: String,
+        _ args: [String?] = [],
+        timeout: Double? = 20,
+        completion: @escaping (Int32) -> Void
+    ) -> Bool {
+        guard let handle else {
+            completion(-1)
+            return false
+        }
         let id = nextCommandID
         nextCommandID += 1
-        // C 字符串得活到回执那一刻：mpv 只保证在调用期间有效，所以自己 strdup，
-        // 收尾时统一 free。
         var strings: [UnsafeMutablePointer<CChar>] = []
         for item in [name] + args.compactMap({ $0 }) {
             strings.append(strdup(item))
         }
-        return await withCheckedContinuation { (cont: CheckedContinuation<Int32, Never>) in
-            let waiter = CommandWaiter(cont)
-            pendingCommands[id] = CommandRequest(waiter: waiter, strings: strings)
-            var pointers: [UnsafePointer<CChar>?] = strings.map { UnsafePointer($0) }
-            pointers.append(nil)
-            let status = mpv_command_async(handle, id, &pointers)
-            if status < 0 {
-                log("命令 \(name) 异步下发失败：\(String(cString: mpv_error_string(status)))")
-                finishCommand(id: id, error: status)
-                return
-            }
-            // 超时：放走等待者。回执要是迟到了，`finishCommand` 看到队列里已经没它、
-            // 就不会重复 resume。
+        pendingCommands[id] = CommandRequest(
+            waiter: CommandWaiter(completion),
+            strings: strings
+        )
+        var pointers: [UnsafePointer<CChar>?] = strings.map { UnsafePointer($0) }
+        pointers.append(nil)
+        let status = mpv_command_async(handle, id, &pointers)
+        if status < 0 {
+            log("命令 \(name) 异步下发失败：\(String(cString: mpv_error_string(status)))")
+            finishCommand(id: id, error: status)
+            return false
+        }
+        if let timeout {
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(20))
+                try? await Task.sleep(for: .seconds(timeout))
                 finishCommand(id: id, error: -2)
             }
         }
+        return true
     }
 
     /// 回执落地：把 C 字符串释放、把等待者放走。只认一次（重复回执直接忽略）。
@@ -944,7 +1177,13 @@ final class MPVEngine {
     }
 
     /// 取帧回执落地：把原始帧交给等待者（没拿到就是 nil）。
-    private func finishRawShot(id: UInt64, frame: MPVRawFrame?) {
+    private func finishRawShot(id: UInt64, frame: MPVRawFrame?, error: Int32? = nil) {
+        if pipBGRACommandIDs.remove(id) != nil, let error, error < 0 {
+            if !pipUsesLegacyScreenshotRaw {
+                pipUsesLegacyScreenshotRaw = true
+                log("画中画 screenshot-raw 不支持 BGRA 参数，已退回默认 bgr0")
+            }
+        }
         guard let waiter = rawShotWaiters.removeValue(forKey: id) else { return }
         waiter.resume(returning: frame)
     }
@@ -964,8 +1203,9 @@ final class MPVEngine {
         }
     }
 
-    private func command(_ name: String, _ args: [String?] = []) {
-        guard let handle else { return }
+    @discardableResult
+    private func command(_ name: String, _ args: [String?] = []) -> Bool {
+        guard let handle else { return false }
         var strings: [String?] = [name]
         strings.append(contentsOf: args)
         strings.append(nil)
@@ -978,22 +1218,25 @@ final class MPVEngine {
         let status = mpv_command(handle, &cargs)
         if status < 0 {
             log("命令 \(name) 失败：\(String(cString: mpv_error_string(status)))")
+            return false
         }
+        return true
     }
 }
 
-/// 一条异步命令的等待者。回执和超时都会来敲门，只能认一次——续两次会直接崩。
+/// 一条异步命令的等待者。回执和超时都会来敲门，只能认一次。
 /// 只在主线程上动。
 private final class CommandWaiter {
-    private var continuation: CheckedContinuation<Int32, Never>?
+    private var completion: ((Int32) -> Void)?
 
-    init(_ continuation: CheckedContinuation<Int32, Never>) {
-        self.continuation = continuation
+    init(_ completion: @escaping (Int32) -> Void) {
+        self.completion = completion
     }
 
     func resume(_ error: Int32) {
-        continuation?.resume(returning: error)
-        continuation = nil
+        let action = completion
+        completion = nil
+        action?(error)
     }
 }
 
@@ -1034,13 +1277,29 @@ final class MPVEventPump: @unchecked Sendable {
     /// 只保存已脱敏的 error / fatal 摘要，报错提示也不能携带凭据。
     private var lastCoreErrorText: String?
     private var diagnostics = MPVDiagnostics()
-    private var awaitingStartFile = false
     /// 这一集的格式参数只记一次。
     private var loggedVideoInfo = false
     /// 这次加载走到哪一步（LP 4818）。只在事件泵自己的队列上读写。
     private var loadPhase: MPVLoadPhase = .idle
     /// 这次加载里，第一份视频参数快照有没有到。
     private var firstFrameRendered = false
+    /// 本次加载的起始进度。start=600 这类原位恢复不能用绝对 0.1 秒判首帧。
+    private var playbackStartTime = 0.0
+    /// 当前 START_FILE 对应的 loadID。每条已接受的 loadfile 按下发顺序排队，
+    /// 快速换源时不能用单个 pending 槽覆盖前一条，否则旧源的 START_FILE
+    /// 会错误认领最新 loadID，短暂把旧画面当成新一集。
+    private struct PendingLoad {
+        let id: UInt64
+        let playbackStartTime: Double
+    }
+    private var activeLoadID: UInt64 = 0
+    private var pendingLoads: [PendingLoad] = []
+    /// 当前 loadID 是否已经收到新文件的视频参数重配事件。
+    private var videoParamsFresh = false
+    /// 本轮 START_FILE 之后是否见过一次「没有视频」的快照；只有先确认旧文件画面已清掉，
+    /// FILE_LOADED 才能拿来当 fresh 的兜底，不拿上一集残留参数冒充新一集。
+    private var sawVideoClearedSinceStart = false
+    private var fileLoadedAt = 0.0
 
     init(
         mpv: OpaquePointer,
@@ -1229,16 +1488,39 @@ final class MPVEventPump: @unchecked Sendable {
     }
 
     /// 引擎要开始新的一次加载了（换集 / 重试 / 换源）。
-    func beginLoad() {
-        queue.async { [weak self] in
-            guard let self, self.running else { return }
-            self.pipReferenceCodec = nil
-            self.loadPhase = .opening
-            self.firstFrameRendered = false
-            self.loggedVideoInfo = false
-            self.lastCoreErrorText = nil
-            self.diagnostics.resetPlayback()
-            self.awaitingStartFile = true
+    /// loadID 先挂到 pending，等 mpv 真发 START_FILE 才成为 active，
+    /// 这样 beginLoad 合成的 .opening 不会带新编号去骗过首帧门。
+    func beginLoad(loadID: UInt64, playbackStart: Double? = nil) {
+        if DispatchQueue.getSpecific(key: Self.queueKey) == ObjectIdentifier(queue) {
+            beginLoadOnQueue(loadID: loadID, playbackStart: playbackStart)
+        } else {
+            // 必须在 loadfile 命令下发前把编号放进队列；否则 mpv 可能先发
+            // START_FILE，事件泵会把它当成自发换文件并自造一个 loadID。
+            queue.sync { beginLoadOnQueue(loadID: loadID, playbackStart: playbackStart) }
+        }
+    }
+
+    private func beginLoadOnQueue(loadID: UInt64, playbackStart: Double?) {
+        guard running else { return }
+        pipReferenceCodec = nil
+        loadPhase = .opening
+        firstFrameRendered = false
+        pendingLoads.append(PendingLoad(
+            id: loadID,
+            playbackStartTime: max(0, playbackStart ?? 0)
+        ))
+        playbackStartTime = max(0, playbackStart ?? 0)
+        videoParamsFresh = false
+        loggedVideoInfo = false
+        lastCoreErrorText = nil
+        diagnostics.resetPlayback()
+    }
+
+    func cancelPendingLoad(loadID: UInt64) {
+        if DispatchQueue.getSpecific(key: Self.queueKey) == ObjectIdentifier(queue) {
+            pendingLoads.removeAll { $0.id == loadID }
+        } else {
+            queue.sync { pendingLoads.removeAll { $0.id == loadID } }
         }
     }
 
@@ -1291,14 +1573,42 @@ final class MPVEventPump: @unchecked Sendable {
             if id == MPV_EVENT_SHUTDOWN { return }
             if id == MPV_EVENT_START_FILE {
                 // 开始打开文件：圈从现在开始转（LP 4818 第 2 条）。
+                // 有 pending 就用引擎给的编号；内核自行换文件时自己递增。
+                // 只有这一刻之后发出的快照才算新 loadID。
+                let newLoadID: UInt64
+                if !pendingLoads.isEmpty {
+                    let pending = pendingLoads.removeFirst()
+                    newLoadID = pending.id
+                    playbackStartTime = pending.playbackStartTime
+                } else {
+                    activeLoadID &+= 1
+                    newLoadID = activeLoadID
+                    playbackStartTime = 0
+                    diagnostics.resetPlayback()
+                }
+                activeLoadID = newLoadID
                 loadPhase = .opening
                 pipReferenceCodec = nil
                 firstFrameRendered = false
+                videoParamsFresh = false
                 loggedVideoInfo = false
                 lastCoreErrorText = nil
-                // beginLoad 已重置过就不再给一份配额；内核自行换文件仍需重置。
-                if !awaitingStartFile { diagnostics.resetPlayback() }
-                awaitingStartFile = false
+                sawVideoClearedSinceStart = false
+                fileLoadedAt = 0
+            }
+            if id == MPV_EVENT_VIDEO_RECONFIG {
+                // video-params 属于当前 loadID 的新文件；此前同编号快照可能还残留旧画面。
+                videoParamsFresh = true
+            }
+            if (id == MPV_EVENT_FILE_LOADED || id == MPV_EVENT_PLAYBACK_RESTART),
+               !videoParamsFresh,
+               activeLoadID != 0,
+               sawVideoClearedSinceStart,
+               currentVideoParamsAvailable() {
+                // 有些版本/原位重载不会再发 VIDEO_RECONFIG。先见过旧画面被清掉，
+                // 再由绑定当前 loadID 的文件/起播事件确认，参数才属于这一集。
+                videoParamsFresh = true
+                log("当前 loadID=\(activeLoadID) 未收到 VIDEO_RECONFIG，已由文件/起播事件确认视频参数")
             }
             if pictureInPictureFrameFeedActive,
                id == MPV_EVENT_FILE_LOADED || id == MPV_EVENT_VIDEO_RECONFIG {
@@ -1318,6 +1628,7 @@ final class MPVEventPump: @unchecked Sendable {
             if id == MPV_EVENT_END_FILE, let raw = event.pointee.data {
                 // 播完 / 出错：加载状态清掉，别让圈挂在那儿转（LP 4818 第 8 条）。
                 loadPhase = .idle
+                videoParamsFresh = false
                 let endFile = UnsafeMutablePointer<mpv_event_end_file>(OpaquePointer(raw))
                 if endFile.pointee.reason == MPV_END_FILE_REASON_ERROR {
                     let message = String(cString: mpv_error_string(endFile.pointee.error))
@@ -1370,15 +1681,33 @@ final class MPVEventPump: @unchecked Sendable {
         guard snapshotAt - lastSnapshotAt >= 0.25 else { return }
         lastSnapshotAt = snapshotAt
         var snap = snapshot()
+        snap.loadID = activeLoadID
+        // 在读取 snap.hasVideo 之前先记录「旧画面已清掉」这一事实，供 FILE_LOADED
+        // 之后的事件兜底使用。
+        if !snap.hasVideo { sawVideoClearedSinceStart = true }
+        if !videoParamsFresh,
+           loadPhase == .awaitingFirstFrame,
+           fileLoadedAt > 0,
+           snapshotAt - fileLoadedAt >= 0.3,
+           !snap.isPaused,
+           snap.hasVideo,
+           currentVideoParamsAvailable(),
+           snap.time > playbackStartTime + 0.1 {
+            // 最后一层兜底：文件已打开、时间轴也确实从本集起点走起来了，
+            // 说明画面属于当前 loadID。只在前两层都没拿到 VIDEO_RECONFIG 时用。
+            videoParamsFresh = true
+            log("当前 loadID=\(activeLoadID) 以时间轴推进确认首帧视频参数")
+        }
+        snap.freshVideoParams = videoParamsFresh && snap.hasVideo
         // 「自动播放真的起来了」的两个判据，满足一个就算（LP 4820）：
         // 一是第一份视频参数快照已经到了，二是时间轴真的在推进（没暂停、time-pos 走起来了）。
         // 后者兜住「帧画出来了但首帧回调没轮到」这种情况。
         if loadPhase == .awaitingFirstFrame {
-            if firstFrameRendered || (!snap.isPaused && snap.time > 0.1) {
+            if firstFrameRendered || (!snap.isPaused && snap.time > playbackStartTime + 0.1) {
                 loadPhase = .playing
             }
         }
-        if snap.hasVideo { lastError = nil }
+        if snap.freshVideoParams { lastError = nil }
         // 第一帧出来的时候把源的真实格式记下来：位深、矩阵、范围这三样
         // 直接决定颜色对不对，pixelformat 里带 10 就是 10bit 片源。
         // 只在**真取到值**之后才打印一次（Fuck 5592 指出来的）。
@@ -1386,7 +1715,7 @@ final class MPVEventPump: @unchecked Sendable {
         // 那一拍里 pixelformat / 颜色三件套 / hwdec-current 还都是空的，于是整行
         // 变成 `px=? 矩阵=? 原色=? 伽马=? 位深=? hwdec=?`，等于没打。
         // 现在取空就等下一拍（250ms 一拍）再取，直到取到为止。
-        if snap.hasVideo, !loggedVideoInfo {
+        if snap.freshVideoParams, !loggedVideoInfo {
             let line = videoInfoLine()
             if !line.hasSuffix("px=? 矩阵=? 原色=? 伽马=? 位深=? hwdec=?") {
                 loggedVideoInfo = true
@@ -1410,6 +1739,14 @@ final class MPVEventPump: @unchecked Sendable {
             return String(cString: raw)
         }
         return "fmt=\(text("video-format")) px=\(text("video-params/pixelformat")) 矩阵=\(text("video-params/colormatrix")) 原色=\(text("video-params/primaries")) 伽马=\(text("video-params/gamma")) 位深=\(text("video-params/plane-depth")) hwdec=\(text("hwdec-current"))"
+    }
+
+    private func currentVideoParamsAvailable() -> Bool {
+        var width = Int64(0)
+        var height = Int64(0)
+        let widthStatus = mpv_get_property(mpv, "video-params/w", MPV_FORMAT_INT64, &width)
+        let heightStatus = mpv_get_property(mpv, "video-params/h", MPV_FORMAT_INT64, &height)
+        return widthStatus >= 0 && heightStatus >= 0 && width > 0 && height > 0
     }
 
     private func snapshot() -> MPVSnapshot {
@@ -1454,21 +1791,24 @@ final class MPVEventPump: @unchecked Sendable {
 
     /// 当前的下载速度（字节/秒）。
     ///
-    /// 先问 `cache-speed`：它就是「demuxer 缓存正在被填多快」。个别内核版本这个
-    /// 属性是空的，再退回 `demuxer-cache-state` 里的 `raw-input-rate`
-    /// （mpv 的 node map 支持按子键取值，直接拿字符串再转数最省事）。
-    /// 两个都拿不到就是 0：界面上不显示网速，不留一个「0 KB/s」在那儿。
+    /// 先问 `demuxer-cache-state/raw-input-rate`：它是网络输入这一拍的原始速率，
+    /// 会跟着源站限速上下变；`cache-speed` 更像缓存的平均填充速度，慢源上容易
+    /// 长时间停在同一个数字（「554 KB/s 不动」就是这么来的）。
+    /// `raw-input-rate` 个别内核版本没有值，再退回 `cache-speed`。
+    /// 两个都拿不到就是 0：界面上不显示网速。
     private func downloadSpeed() -> Double {
-        var speed = Double(0)
-        if mpv_get_property(mpv, "cache-speed", MPV_FORMAT_DOUBLE, &speed) >= 0,
-           speed.isFinite, speed > 0 {
-            return speed
+        var raw = Int64(0)
+        if mpv_get_property(mpv, "demuxer-cache-state/raw-input-rate", MPV_FORMAT_INT64, &raw) >= 0,
+           raw >= 0 {
+            // 属性明确返回 0 就是当前没有网络输入，不能再用 cache-speed 的
+            // 平滑值顶上；否则断流时界面会长时间停在一个「假网速」。
+            return Double(raw)
         }
-        guard let raw = mpv_get_property_string(mpv, "demuxer-cache-state/raw-input-rate") else {
-            return 0
+        var speed = Int64(0)
+        if mpv_get_property(mpv, "cache-speed", MPV_FORMAT_INT64, &speed) >= 0,
+           speed > 0 {
+            return Double(speed)
         }
-        defer { mpv_free(raw) }
-        let value = Double(String(cString: raw)) ?? 0
-        return value.isFinite && value > 0 ? value : 0
+        return 0
     }
 }

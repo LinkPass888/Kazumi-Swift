@@ -30,7 +30,7 @@ final class PictureInPictureController: NSObject {
         case settled(Int)
     }
 
-    private let hostView = PiPHostView()
+    private var hostView = PiPHostView()
     private var pipController: AVPictureInPictureController?
     private var copier: PiPFrameCopier?
     private weak var surface: PlayerSurfaceModel?
@@ -106,11 +106,39 @@ final class PictureInPictureController: NSObject {
         let background = (engine?.playerScene ?? playerScene)?.activationState == .background
         var result = "source未就绪"
         log("prepare attempted background=\(background) engineReady=\(engine?.handle != nil)")
+        // 时基重锚挂到 surface 上：拖动、续播、快进、PiP 跳过和断流重连都从这里过，
+        // copier 不必再依赖「媒体时间大跳」才能猜到时间轴已经换了。
+        surface.onPlaybackDiscontinuity = { [weak self] time, paused in
+            self?.copier?.prepareForSeek(to: time, paused: paused)
+        }
         defer {
             log("prepare result=\(result) background=\(background) sourceReady=\(pipController?.contentSource != nil && copier != nil && hostView.window != nil) copyReady=\(copier != nil) cadence=\(captureCadence.map { String(format: "%.6f", $0) } ?? "off")")
         }
         if hasOngoingPictureInPicture {
-            result = self.engine === engine ? "同引擎沿用活动周期/节拍/资格" : "过渡中保留原内容源"
+            // 活动小窗期间换集：surface/engine 必须跟上，否则代理回调仍按
+            // 上一集的时长作答，copier 也还绑在已停止的旧引擎上（小窗冻结）。
+            self.surface = surface
+            contentIsPrimaryAndPlaying = surface.isPlaying
+            let engineChanged = copier.map { $0.engine !== engine } ?? false
+            let transitioning: Bool
+            switch phase {
+            case .starting, .restoring:
+                transitioning = true
+            default:
+                transitioning = false
+            }
+            if engineChanged, !transitioning, let engine, engine.handle != nil {
+                self.engine?.setPictureInPictureFrameFeedActive(false)
+                self.engine = engine
+                copier?.retarget(engine: engine)
+                engine.setPictureInPictureFrameFeedActive(true)
+                engine.requestRender()
+                // 换集后时长/进度都变了，让系统重读一遍，避免小窗进度条停在上一集。
+                pipController?.invalidatePlaybackState()
+                result = "活动小窗换引擎改绑"
+            } else {
+                result = self.engine === engine ? "同引擎沿用活动周期/节拍/资格" : "过渡中保留原内容源"
+            }
             return
         }
         self.surface = surface
@@ -122,9 +150,14 @@ final class PictureInPictureController: NSObject {
         contentIsPrimaryAndPlaying = surface.isPlaying
         guard ensureController(), attachHostIfNeeded() else { return }
 
-        if let copier, copier.engine !== engine {
-            copier.teardown()
-            self.copier = nil
+        let engineChanged = copier.map { $0.engine !== engine } ?? false
+        if let copier, engineChanged {
+            // AVSampleBufferRenderSynchronizer 不允许把同一个 renderer 再加到
+            // 另一个同步器上。换集时驱动器复用同一个 hostView/displayLayer，
+            // 因此这里只能把现有 copier 改绑到新引擎，绝不能 teardown 后重建：
+            // 重建会在 init 里对同一个 renderer 再 addRenderer，直接抛
+            // NSInvalidArgumentException 崩溃（真机 3.0.2 自动连播复现）。
+            copier.retarget(engine: engine)
         }
         let alreadyPrepared = copier != nil && captureTimer != nil
         if copier == nil {
@@ -133,13 +166,19 @@ final class PictureInPictureController: NSObject {
             next.onVideoAspectChanged = { [weak self] in self?.syncHostAspect($0) }
             copier = next
         }
+        copier?.shouldSuspendCapture = { [weak self] in
+            guard let surface = self?.surface else { return false }
+            // 用户暂停、内核暂停或断流时，小窗保留最后一帧即可；继续发
+            // screenshot-raw 只会读回同一张全分辨率画面，白白耗电发热。
+            return !surface.wantsPlaying || surface.corePaused || surface.isStalled
+        }
         setCaptureCadence(0.5, reason: "内联低频")
         refreshAutomaticStart(reason: "内容源已准备")
-        if !alreadyPrepared {
+        if !alreadyPrepared || engineChanged {
             copier?.driveSynchronizer(engine: engine)
             engine.requestRender()
         }
-        result = alreadyPrepared ? "inline幂等复用" : "内容源已建立"
+        result = alreadyPrepared ? (engineChanged ? "inline换引擎复用" : "inline幂等复用") : "内容源已建立"
     }
 
     /// Forwarded exactly once for a real scene background transition.
@@ -272,10 +311,14 @@ final class PictureInPictureController: NSObject {
         copier?.teardown()
         copier = nil
         hostView.removeFromSuperview()
+        // renderer 无法安全从旧 synchronizer 上摘下来；换一块新宿主视图，
+        // 下次 prepare 拿到的是全新的 displayLayer/renderer，避免重复 addRenderer。
+        hostView = PiPHostView()
         isActive = false
         phase = .inline
         pendingControllerStop = false
         deliveredSettlement = nil
+        surface?.onPlaybackDiscontinuity = nil
         surface = nil
         engine = nil
         onActiveChanged?(false)
@@ -736,21 +779,46 @@ final class PictureInPictureController: NSObject {
 
     private func setCaptureCadence(_ interval: Double, reason: String) {
         copier?.beginCapture()
-        copier?.captureInterval = interval
-        engine?.setPictureInPictureFrameFeedActive(interval < 0.1)
-        if captureCadence != interval {
-            captureCadence = interval
-            log("喂帧节拍切换：\(interval < 0.1 ? "约30Hz" : "低频2Hz")（\(reason)）")
+        let highFrequency = interval < 0.1
+        // 高帧率节拍与 timer 用同一个数值，避免 0.0333… 与 33_333_333ns 两处各算一遍。
+        let effectiveInterval = highFrequency ? 1.0 / 30.0 : interval
+        copier?.captureInterval = effectiveInterval
+        engine?.setPictureInPictureFrameFeedActive(highFrequency)
+        let timerNanos = max(1, Int((effectiveInterval * 1_000_000_000).rounded()))
+        let leeway: DispatchTimeInterval = highFrequency ? .milliseconds(5) : .milliseconds(50)
+        let cadenceChanged = captureCadence != effectiveInterval
+        if cadenceChanged {
+            captureCadence = effectiveInterval
+            log("喂帧节拍切换：\(highFrequency ? "约30Hz" : "低频\(String(format: "%.1f", effectiveInterval))s") timer=\(timerNanos)ns（\(reason)）")
         }
-        guard captureTimer == nil else { return }
+        if let timer = captureTimer {
+            // 低频时别再让 33ms timer 空跑 30 次/秒，只为了在 0.5s 后取一帧。
+            // 节拍没变时也不要反复 suspend/reschedule。
+            if cadenceChanged {
+                timer.suspend()
+                timer.schedule(
+                    // 低频首拍立刻取一帧：小窗刚停下时画面还停在上一帧，
+                    // 等满 0.5 秒才补会看起来像卡了一下。
+                    deadline: .now() + (highFrequency ? .nanoseconds(timerNanos) : .seconds(0)),
+                    repeating: .nanoseconds(timerNanos),
+                    leeway: leeway
+                )
+                timer.resume()
+            }
+            return
+        }
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now(), repeating: .nanoseconds(33_333_333), leeway: .milliseconds(5))
+        timer.schedule(
+            deadline: .now() + .nanoseconds(timerNanos),
+            repeating: .nanoseconds(timerNanos),
+            leeway: leeway
+        )
         timer.setEventHandler { [weak self] in
             MainActor.assumeIsolated { self?.copier?.requestCapture() }
         }
         timer.resume()
         captureTimer = timer
-        log("喂帧节拍启动")
+        log("喂帧节拍启动 timer=\(timerNanos)ns")
     }
 
     private func stopCapture(reason: String) {
@@ -1041,6 +1109,9 @@ private final class PiPFrameCopier {
 
     var onLog: ((String) -> Void)?
     var onVideoAspectChanged: ((CGFloat) -> Void)?
+    /// 内核断流时别继续发 screenshot-raw：卡住的命令会叠在 mpv 队列里，
+    /// 拖进度和原地重连都要等它超时。
+    var shouldSuspendCapture: (@MainActor () -> Bool)?
     var captureInterval = 0.5 {
         willSet {
             if newValue != captureInterval {
@@ -1051,8 +1122,13 @@ private final class PiPFrameCopier {
     private(set) var isCapturing = false
 
     private var formatDescription: CMVideoFormatDescription?
+    private var formatWidth = 0
+    private var formatHeight = 0
+    private var formatPixelFormat: OSType = 0
     private var lastPTS = Double.nan
     private var lastEnqueuedHostTime: CFTimeInterval?
+    /// 上一次真正入队时内核的媒体时间；time-pos 没前进就别再读回同一帧。
+    private var lastCapturedMediaTime = Double.nan
     private var lastCaptureHostTime: CFTimeInterval = 0
     private var captureTask: Task<Void, Never>?
     private var lastReportedAspect: CGFloat = 0
@@ -1062,6 +1138,15 @@ private final class PiPFrameCopier {
     private var lastFeedEventHostTime: CFTimeInterval = 0
     private var lastFeedEventPTS = Double.nan
     private var captureGeneration = 0
+    private var captureInFlight = false
+    private var captureSuspended = false
+    /// seek 是异步下发的：命令还在队列里时取到的帧属于旧位置，别塞进刚重置的时基。
+    private var pendingSeekTarget: Double?
+    private var pendingSeekHostTime: CFTimeInterval = 0
+    /// 断流要持续这么久才冻结取帧：HLS 分片切换那一瞬间 core-idle 会闪一下，
+    /// 立刻暂停会在每次换片时白停一拍、还让时基来回重锚。
+    private var suspendCandidateSince: CFTimeInterval = 0
+    private static let suspendDebounce: CFTimeInterval = 0.75
     private var captureWindowHostTime: CFTimeInterval = 0
     private var captureCounts: [String: Int] = [:]
 
@@ -1078,13 +1163,38 @@ private final class PiPFrameCopier {
         lastEnqueuedHostTime.map { CACurrentMediaTime() - $0 }
     }
 
+    /// 换集时复用同一个 renderer/同步器，只把取帧来源改到新引擎。
+    /// 不能重建 copier：displayLayer 的 sampleBufferRenderer 已经在当前
+    /// synchronizer 上，重复 addRenderer 会抛异常。
+    func retarget(engine: MPVEngine) {
+        guard self.engine !== engine else { return }
+        captureGeneration += 1
+        captureTask?.cancel()
+        captureTask = nil
+        captureInFlight = false
+        renderer.flush()
+        formatDescription = nil
+        formatWidth = 0
+        formatHeight = 0
+        formatPixelFormat = 0
+        lastPTS = .nan
+        lastEnqueuedHostTime = nil
+        lastCapturedMediaTime = .nan
+        lastCaptureHostTime = 0
+        captureSuspended = false
+        didLogFirstFrame = false
+        didLogFailure = false
+        self.engine = engine
+        driveSynchronizer(engine: engine)
+    }
+
     func driveSynchronizer(engine: MPVEngine?) {
         let timing = engine?.pictureInPictureTiming()
         let time = timing?.time ?? synchronizer.currentTime().seconds
         let paused = timing?.paused ?? false
         let anchor = lastPTS.isFinite && lastPTS >= 0 ? lastPTS : time
         synchronizer.setRate(
-            paused ? 0 : 1,
+            paused || captureSuspended ? 0 : 1,
             time: CMTime(seconds: max(0, anchor), preferredTimescale: 600)
         )
     }
@@ -1112,6 +1222,11 @@ private final class PiPFrameCopier {
         captureWindowHostTime = CACurrentMediaTime()
         captureCounts.removeAll(keepingCapacity: true)
         lastCaptureHostTime = 0
+        // 新窗口从头计时：旧窗口的「已入队」标记会让第一帧被去重逻辑挡掉。
+        lastCapturedMediaTime = .nan
+        captureSuspended = false
+        suspendCandidateSince = 0
+        pendingSeekTarget = nil
         driveSynchronizer(engine: engine)
         logFeedEvent("beginCapture 起搏")
     }
@@ -1123,11 +1238,29 @@ private final class PiPFrameCopier {
         captureGeneration += 1
         captureTask?.cancel()
         captureTask = nil
+        captureInFlight = false
+        captureSuspended = false
+        suspendCandidateSince = 0
+        pendingSeekTarget = nil
+        // 一次取帧窗口结束就回到干净时基：旧 PTS / host time 若留着，下一次
+        // beginCapture 会把新窗口的第一帧当成「没有新画面」丢掉，或按旧锚点跳时。
+        renderer.flush()
+        lastPTS = .nan
+        lastEnqueuedHostTime = nil
+        lastCapturedMediaTime = .nan
+        lastCaptureHostTime = 0
     }
 
     func prepareForSeek(to seconds: Double, paused: Bool) {
         renderer.flush()
         lastPTS = .nan
+        lastCapturedMediaTime = .nan
+        lastEnqueuedHostTime = nil
+        lastCaptureHostTime = 0
+        captureSuspended = false
+        // 异步 seek 落地前取到的还是旧位置的帧，按目标时间挡一小段。
+        pendingSeekTarget = seconds
+        pendingSeekHostTime = CACurrentMediaTime()
         syncTime(to: seconds, paused: paused)
         logSynchronizerObservation("seek 后时基重置")
     }
@@ -1139,19 +1272,70 @@ private final class PiPFrameCopier {
         captureGeneration += 1
         captureTask?.cancel()
         captureTask = nil
+        captureInFlight = false
+        captureSuspended = false
+        suspendCandidateSince = 0
+        pendingSeekTarget = nil
         renderer.flush()
         // The synchronizer owns this renderer for the copier's lifetime. Do not
         // detach on iOS 26: removeRenderer requires an asynchronous completion.
         formatDescription = nil
+        formatWidth = 0
+        formatHeight = 0
+        formatPixelFormat = 0
+        lastPTS = .nan
         lastEnqueuedHostTime = nil
+        lastCapturedMediaTime = .nan
+        lastCaptureHostTime = 0
     }
 
     func requestCapture() {
         guard isCapturing, let engine else { return }
+        if shouldSuspendCapture?() == true {
+            let stallCheckAt = CACurrentMediaTime()
+            if suspendCandidateSince == 0 { suspendCandidateSince = stallCheckAt }
+            // 分片切换的瞬时 idle 不算断流：要求持续一段时间再冻结时基。
+            if !captureSuspended,
+               stallCheckAt - suspendCandidateSince >= Self.suspendDebounce {
+                captureSuspended = true
+                captureGeneration += 1
+                captureTask?.cancel()
+                captureTask = nil
+                captureInFlight = false
+                driveSynchronizer(engine: engine)
+                logFeedEvent("断流：冻结画中画时基并停止取帧")
+            }
+            captureCounts["skip-stalled", default: 0] += 1
+            return
+        }
+        suspendCandidateSince = 0
+        let wasSuspended = captureSuspended
+        captureSuspended = false
+        if wasSuspended {
+            // 断流期间时间轴可能已经跳了（原地重连从别处续播），旧 PTS 不能再当锚点。
+            lastPTS = .nan
+            lastCapturedMediaTime = .nan
+            lastCaptureHostTime = 0
+            lastEnqueuedHostTime = nil
+            pendingSeekTarget = nil
+            driveSynchronizer(engine: engine)
+            logFeedEvent("断流结束：恢复画中画时基")
+        }
         let now = CACurrentMediaTime()
         captureCounts["tick", default: 0] += 1
         defer { reportCaptureWindow(reason: "5s window") }
-        if captureTask != nil {
+        // 已经有一帧入队、且内核 time-pos 还没走到下一帧：跳过 screenshot-raw。
+        // 显示层会保留上一帧；暂停、core-idle 或 60fps 源在 30Hz 节拍中间
+        // 的重复读回是纯 CPU/内存带宽开销，也是画中画发热的主要来源之一。
+        let timing = engine.pictureInPictureTiming()
+        if lastEnqueuedHostTime != nil,
+           timing.time.isFinite,
+           lastCapturedMediaTime.isFinite,
+           abs(timing.time - lastCapturedMediaTime) < 1.0 / 60.0 {
+            captureCounts["skip-no-new-frame", default: 0] += 1
+            return
+        }
+        if captureInFlight {
             guard now - lastCaptureHostTime >= 1 else {
                 captureCounts["skip-inflight", default: 0] += 1
                 return
@@ -1160,6 +1344,7 @@ private final class PiPFrameCopier {
             captureGeneration += 1
             captureTask?.cancel()
             captureTask = nil
+            captureInFlight = false
             logFeedEvent("取帧挂住超 1 秒，放走本轮以保住 33ms 节拍")
         }
         let cadenceTolerance = captureInterval < 0.1 ? 0.001 : 0
@@ -1170,15 +1355,21 @@ private final class PiPFrameCopier {
         captureCounts["request", default: 0] += 1
         lastCaptureHostTime = now
         captureGeneration += 1
+        captureInFlight = true
         let generation = captureGeneration
         captureTask = Task { [weak self] in
             guard let self else { return }
-            let frame = await engine.captureRawFrameForPictureInPicture()
+            defer {
+                if self.captureGeneration == generation {
+                    self.captureInFlight = false
+                    self.captureTask = nil
+                }
+            }
+            let captured = await engine.captureRawFrameForPictureInPicture()
             guard self.captureGeneration == generation else { return }
             self.captureCounts["return", default: 0] += 1
-            self.captureTask = nil
             guard self.isCapturing else { return }
-            guard let frame else {
+            guard let captured else {
                 self.captureCounts["no-frame", default: 0] += 1
                 self.logOnce("screenshot-raw 没拿到画中画帧")
                 self.driveSynchronizer(engine: engine)
@@ -1186,22 +1377,45 @@ private final class PiPFrameCopier {
                 return
             }
             self.captureCounts["raw-frame", default: 0] += 1
-            self.enqueue(frame)
+            self.enqueue(captured)
         }
     }
 
-    private func enqueue(_ frame: MPVRawFrame) {
+    private func enqueue(_ captured: PiPCapturedFrame) {
         guard let engine else { return }
-        let (time, paused) = engine.pictureInPictureTiming()
+        let frame = captured.frame
+        // 媒体时间固定用「命令下发前」那一拍：回执后再读 time-pos 会把相邻两拍
+        // 读成同一个值，去重逻辑于是隔拍丢帧，30Hz 实际掉到约 15Hz。
+        let time = captured.mediaTime
+        let paused = captured.paused
+        // seek 还没被 mpv 执行完：这一帧属于旧位置。目标时间附近就放行，
+        // 超过 1.5 秒仍未落点也放行，避免源站一直不响应时小窗永远不更新。
+        if let target = pendingSeekTarget {
+            if abs(time - target) <= 3 || CACurrentMediaTime() - pendingSeekHostTime > 1.5 {
+                pendingSeekTarget = nil
+            } else {
+                captureCounts["skip-seek-target", default: 0] += 1
+                return
+            }
+        }
         if paused, lastPTS.isFinite, abs(time - lastPTS) < 0.05 {
             captureCounts["skip-paused", default: 0] += 1
             driveSynchronizer(engine: engine)
             logFeedEvent("断帧：mpv 暂停，保持时基")
             return
         }
-        if time.isFinite, lastPTS.isFinite, time + 0.5 < lastPTS {
+        // 任何来源的 seek / 换集都会让媒体时间大跳：主界面拖动、续播、跳过片头
+        // 都不会经过 PiP 自己的 skipByInterval，所以时基必须在这里统一认出来。
+        // 正常 30Hz 一拍只走 0.033 秒，2 秒阈值既能抓住拖动又不会被断帧误触。
+        if time.isFinite, lastPTS.isFinite, abs(time - lastPTS) > 2.0 {
             renderer.flush()
             lastPTS = .nan
+            lastEnqueuedHostTime = nil
+            lastCapturedMediaTime = .nan
+            lastCaptureHostTime = 0
+            pendingSeekTarget = nil
+            captureCounts["flush-time-jump", default: 0] += 1
+            logFeedEvent("时间轴跳变（seek/换集）→ 重锚画中画时基")
         }
         var pts = time.isFinite ? max(0, time) : (lastPTS.isFinite ? lastPTS + 1.0 / 30.0 : 0)
         if lastPTS.isFinite, pts <= lastPTS {
@@ -1220,6 +1434,24 @@ private final class PiPFrameCopier {
             driveSynchronizer(engine: engine)
             logFeedEvent("断帧：转缓冲失败，保持时基", frame: frame)
             return
+        }
+        // 同一条播放内核里分辨率或像素格式变了：旧 formatDescription 不能再用，
+        // 否则每帧 CMSampleBufferCreateReadyWithImageBuffer 都会失败，小窗永久冻住。
+        let pixelWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let pixelHeight = CVPixelBufferGetHeight(pixelBuffer)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        if formatDescription != nil,
+           formatWidth > 0,
+           (formatWidth != pixelWidth
+            || formatHeight != pixelHeight
+            || formatPixelFormat != pixelFormat) {
+            formatDescription = nil
+            formatWidth = 0
+            formatHeight = 0
+            formatPixelFormat = 0
+            renderer.flush()
+            lastPTS = .nan
+            logFeedEvent("尺寸或像素格式变化 → 重建 formatDescription", frame: frame)
         }
         guard let sampleBuffer = makeSampleBuffer(pixelBuffer: pixelBuffer, presentationTime: pts) else {
             captureCounts["sample-failure", default: 0] += 1
@@ -1244,6 +1476,7 @@ private final class PiPFrameCopier {
         renderer.enqueue(sampleBuffer)
         captureCounts["enqueue", default: 0] += 1
         lastPTS = pts
+        lastCapturedMediaTime = time.isFinite ? time : .nan
         lastEnqueuedHostTime = CACurrentMediaTime()
         logFeedEvent("喂入新帧", frame: frame)
         if !didLogFirstFrame {
@@ -1273,6 +1506,9 @@ private final class PiPFrameCopier {
             )
             guard status == noErr, let description else { return nil }
             formatDescription = description
+            formatWidth = CVPixelBufferGetWidth(pixelBuffer)
+            formatHeight = CVPixelBufferGetHeight(pixelBuffer)
+            formatPixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
         }
         guard let formatDescription else { return nil }
         var timing = CMSampleTimingInfo(
@@ -1298,13 +1534,14 @@ private final class PiPFrameCopier {
         guard force || elapsed >= 5 else { return }
         if captureInterval < 0.1 {
             let window = String(format: "%.3f", captureWindowHostTime)
-            let feed = ["tick", "request", "return", "raw-frame", "enqueue", "skip-inflight", "skip-cadence"]
+            let timerNanos = Int(captureInterval * 1_000_000_000)
+            let feed = ["tick", "request", "return", "raw-frame", "enqueue", "skip-inflight", "skip-cadence", "skip-no-new-frame", "skip-seek-target", "skip-stalled"]
                 .map { "\($0)=\(captureCounts[$0, default: 0])" }.joined(separator: " ")
-            let drops = ["skip-paused", "hung-release", "no-frame", "pixel-failure", "sample-failure", "renderer-failed", "renderer-not-ready"]
+            let drops = ["skip-paused", "hung-release", "no-frame", "pixel-failure", "sample-failure", "renderer-failed", "renderer-not-ready", "flush-time-jump"]
                 .map { "\($0)=\(captureCounts[$0, default: 0])" }.joined(separator: " ")
             // Keep each payload below the diagnostics' 600-character limit,
             // including the shared lifecycle prefix. Both lines share window.
-            onLog?("capture window=\(window) part=1 \(reason) duration=\(String(format: "%.3f", elapsed))s interval=\(String(format: "%.6f", captureInterval)) timer=33333333ns \(feed)")
+            onLog?("capture window=\(window) part=1 \(reason) duration=\(String(format: "%.3f", elapsed))s interval=\(String(format: "%.6f", captureInterval)) timer=\(timerNanos)ns \(feed)")
             onLog?("capture window=\(window) part=2 \(drops)；request=取帧API/enqueue=入队，非呈现FPS；submit/reply/timeout由Engine统计")
         }
         captureWindowHostTime = now

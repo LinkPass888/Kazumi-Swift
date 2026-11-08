@@ -30,7 +30,27 @@ final class BangumiProgressService {
 
     /// 刚标上的那一集，给播放器显示一句提示（LP 2026-10-29 4795「标记后加个提示就好了」）。
     /// 只存最新一句：补队列时连着标好几集，屏幕上也只说最后那集。
-    private(set) var markedNotice: String?
+    ///
+    /// **必须带一个自增序号**：提示文案是固定的一句，连标两集时值是同一个字符串，
+    /// `.onChange` 认「值没变」就不再触发——表现是「第一集有提示，后面全没有」，
+    /// 而 Bangumi 那边其实每集都标上了（LP 2026-11-08）。
+    struct MarkedNotice: Equatable {
+        let message: String
+        let serial: Int
+    }
+
+    private(set) var markedNotice: MarkedNotice?
+    private var markedNoticeSerial = 0
+
+    /// 记一句「刚标记了」并换一个序号，保证消费端每次都算新值。
+    private func noteMarked() {
+        markedNoticeSerial += 1
+        markedNotice = MarkedNotice(
+            message: String(localized: "已标记本集看过"),
+            serial: markedNoticeSerial
+        )
+    }
+
     /// 番剧 → (集数 → Bangumi 单集 id)。同一次播放里会反复问进度，缓存一次省一批请求。
     private var episodeIndex: [Int: [Int: Int]] = [:]
     /// 串行化：上一集还在标，下一集不要抢在同一条队列前面。
@@ -124,19 +144,13 @@ final class BangumiProgressService {
             return false
         }
 
-        var result = await BangumiAPI.markEpisodeWatched(episodeID: episodeID)
-        if case .notCollected = result {
-            // 400 = 番剧还没收藏。先收成「在看」再试一次，这正是原版的规矩。
-            if await BangumiAPI.updateCollection(subjectID: subjectID, type: .watching) {
-                result = await BangumiAPI.markEpisodeWatched(episodeID: episodeID)
-            }
-        }
+        let result = await BangumiAPI.markEpisodeWatched(episodeID: episodeID)
         switch result {
         case .ok:
             KazumiLog.network.notice(
                 "Bangumi: 已标记看过 \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集"
             )
-            markedNotice = String(localized: "已标记本集看过")
+            noteMarked()
             return false
         case .unauthorized:
             // 令牌没了或过期：这次就算了，不要拿一个失效凭据反复重试。
@@ -147,7 +161,16 @@ final class BangumiProgressService {
                 "Bangumi: \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集在 Bangumi 上不存在，标记丢弃"
             )
             return false
-        case .notCollected, .failed:
+        case .notCollected:
+            // 这部番不在收藏里。Bangumi 的单集接口挂在 `/collections/{subject_id}/`
+            // 下面，没收藏就是 400，标不了——而「顺手把整部番改成在看」是用户明确
+            // 不要的副作用（LP 2026-11-08）。所以这里什么都不做：不改收藏状态、
+            // 不入队（重试多少次还是 400）、也不弹提示，只留一行日志。
+            KazumiLog.network.notice(
+                "Bangumi: 该番未收藏，跳过本集标记（不改收藏状态）"
+            )
+            return false
+        case .failed:
             KazumiLog.network.error(
                 "Bangumi: 自动标记看过失败 \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集，进队列等下次补"
             )

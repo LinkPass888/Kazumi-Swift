@@ -38,7 +38,7 @@ jobs:
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       - name: Echo build progress
-        run: echo "Kazumi_ios_${{ env.tag }}.ipa build progress"
+        run: echo "Kazumi_ios_${tag}.ipa build progress"
 
       # 只把版本号打进日志：这个镜像的小版本会随 GitHub 更新，钉死路径反而会在镜像升级那天断掉。
       - name: Show Xcode version
@@ -90,8 +90,8 @@ jobs:
           # 无签名打包：对嵌入的动态库做 ad-hoc 签名，便于侧载安装。
           find Payload/Runner.app -type d -name "*.framework" -exec codesign --force --sign - {} \;
           find Payload/Runner.app -type f -name "*.dylib" -exec codesign --force --sign - {} \;
-          zip -q -r "Kazumi_ios_${{ env.tag }}_no_sign.ipa" Payload
-          ls -lh "Kazumi_ios_${{ env.tag }}_no_sign.ipa"
+          zip -q -r "Kazumi_ios_${tag}_no_sign.ipa" Payload
+          ls -lh "Kazumi_ios_${tag}_no_sign.ipa"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -135,7 +135,7 @@ jobs:
           name: ios_outputs
           path: ios_outputs
 
-      - name: List files in ios_outputs directory
+      - name: List release files
         run: ls -l ios_outputs
 
       - name: Create release

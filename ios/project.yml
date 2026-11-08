@@ -49,6 +49,8 @@ packages:
     url: https://github.com/cezheng/Fuzi.git
     from: 3.1.3
   MPVKit:
+    # 原版 MPVKit（LGPL 链路）。之前试过自己精简的 fork，
+    # 网速等运行时行为对不上（LP 2026-11-08 第 3 条：换回原版），改回来。
     url: https://github.com/mpvkit/MPVKit.git
     exactVersion: 1.1.0-n9.0.2
 
@@ -185,14 +187,20 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi
         PRODUCT_NAME: $(TARGET_NAME)
+        # 只改可执行文件名（= 进程名），不碰 PRODUCT_NAME / PRODUCT_MODULE_NAME：
+        # 这样 .app 仍是 Runner.app（CI 的 Payload/Runner.app 路径不用改），
+        # Swift module 仍是 Runner（8 个测试的 @testable import Runner 不用改），
+        # scheme / 工程名 / 包名也全部保持原样。Info.plist 的 CFBundleExecutable
+        # 已经是 $(EXECUTABLE_NAME)，会自动展开成 Kazumi。
+        EXECUTABLE_NAME: Kazumi
         # DanDanPlay 默认配置；CI 通过 xcodebuild 覆盖，设置页的自定义值优先。
         DANDAN_API_URL: "https://api.dandanplay.net"
         DANDAN_APP_ID: ""
         DANDAN_APP_SECRET: ""
         # 版本号：3.0.0 起（Ato 7411）。仓库已无 Dart 工程，pubspec.yaml 不存在了，
         # 版本唯一来源就是这里 + CHANGELOG.md 顶部条目。
-        MARKETING_VERSION: "3.0.2"
-        CURRENT_PROJECT_VERSION: "30002"
+        MARKETING_VERSION: "3.0.3"
+        CURRENT_PROJECT_VERSION: "30003"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
         INFOPLIST_FILE: Runner/Info.plist

@@ -9,7 +9,7 @@
 
 ![iOS 26+](https://img.shields.io/badge/iOS-26%2B-black?style=for-the-badge&logo=apple)
 ![SwiftUI](https://img.shields.io/badge/Swift-SwiftUI-F05138?style=for-the-badge&logo=swift)
-![version](https://img.shields.io/badge/version-3.0.2-2E8B57?style=for-the-badge)
+![version](https://img.shields.io/badge/version-3.0.3-2E8B57?style=for-the-badge)
 ![license](https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge)
 
 </div>
