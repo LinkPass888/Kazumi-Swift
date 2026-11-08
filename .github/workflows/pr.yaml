@@ -37,7 +37,7 @@ jobs:
       contents: read
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # 不钉版本，就用 xcode-27 镜像默认那个（现在是 Xcode 27.1 / iOS SDK 27.1，LP 3253/3254 定的）。
       # 只把版本号打进日志，编完能直接看到这次是拿哪套 SDK 编的。
@@ -95,7 +95,7 @@ jobs:
           zip -q -r Kazumi_ios_canary_no_sign.ipa Payload
 
       - name: Upload canary IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios_outputs
           path: Kazumi_ios_*.ipa
