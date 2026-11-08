@@ -175,7 +175,10 @@ final class DLNABrowser {
                 &hostname, socklen_t(hostname.count),
                 nil, socklen_t(0), NI_NUMERICHOST
             )
-            address = String(cString: hostname)
+            address = String(
+                decoding: hostname.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+                as: Unicode.UTF8.self
+            )
         }
         guard let ip = address else { return nil }
         let parts = ip.split(separator: ".")
@@ -365,7 +368,7 @@ actor DLNAUnicastProber {
             "ssdp:all"
         ]
 
-        nonisolated(unsafe) let conn = connection
+        let conn = connection
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 let finish = Once<[URL]> { value in

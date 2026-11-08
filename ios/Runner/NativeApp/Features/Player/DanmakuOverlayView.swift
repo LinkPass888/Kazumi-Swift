@@ -407,7 +407,7 @@ final class DanmakuOverlayView: UIView {
         paragraph.alignment = .center
         paragraph.lineBreakMode = .byClipping
         // 填充字和描边用同一套排版，`drawText` 里再用同一个 CTLine 画两遍。
-        var attributes: [NSAttributedString.Key: Any] = [
+        let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: textColor,
             .paragraphStyle: paragraph
@@ -564,7 +564,9 @@ final class DanmakuOverlayView: UIView {
     // MARK: - 颜色
 
     private var currentScreenScale: CGFloat {
-        let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        // 倍率走 trait collection：iOS 26 起 `UIScreen.main` 弃用，displayScale 变化时
+        // 布局会自己再走一次，不用自己盯屏。
+        let scale = traitCollection.displayScale
         return scale > 0 ? scale : 1
     }
 

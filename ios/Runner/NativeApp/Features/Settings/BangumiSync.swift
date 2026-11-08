@@ -336,7 +336,7 @@ final class BangumiSyncEngine {
     /// Bangumi 的收藏类型 → 本地收藏类型。对应 collect_type_mapper.dart。
     static func collectType(bangumiType: Int) -> CollectType? {
         switch bangumiType {
-        case 0: .none
+        case 0: CollectType.none
         case 1: .wish
         case 2: .watched
         case 3: .watching

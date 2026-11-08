@@ -181,12 +181,13 @@ private struct CommentRichText: View {
             for token in CommentToken.parse(run.text) {
                 switch token {
                 case .text(let value):
-                    result = result + styled(value, run.style)
+                    // iOS 26 弃用了 `Text + Text`，改用插值拼接（各段样式照旧各自保留）。
+                    result = Text("\(result)\(styled(value, run.style))")
                 case .emoticon(let code):
                     // 还没拿到就当没有：不把 (bgm38) 这种码当字显示出来，也不留空档。
                     guard let list = frames[code], !list.isEmpty else { continue }
                     let image = list[tick % list.count]
-                    result = result + Text(Image(uiImage: image)).baselineOffset(-2)
+                    result = Text("\(result)\(Text(Image(uiImage: image)).baselineOffset(-2))")
                 }
             }
         }

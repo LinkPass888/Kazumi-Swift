@@ -36,8 +36,8 @@ final class KazumiImageLoader: @unchecked Sendable {
     /// 没量到尺寸时按这个像素解码（约等于一张列表封面的两倍）。
     private static let defaultPixelSize = 600
 
-    /// 屏幕倍率。`UIScreen.main` 只能在主线程读，而尺寸换算要在解码前后随时算，
-    /// 所以启动时由 App 写一次进来。
+    /// 屏幕倍率。屏幕倍率只能在主线程读，而尺寸换算要在解码前后随时算，
+    /// 所以由场景代理在窗口就绪时写一次进来（iOS 26 起 `UIScreen.main` 已弃用）。
     nonisolated(unsafe) static var screenScale: CGFloat = 3
 
     /// 内存里存图 + 它当时的解码档位。同一张图只留一份：预取按 600 解的那份
