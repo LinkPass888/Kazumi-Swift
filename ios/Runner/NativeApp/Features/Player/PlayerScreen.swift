@@ -292,8 +292,6 @@ struct PlayerScreen: View {
     @State private var pausedByBackground = false
     /// 后台自动画中画。设置关着时一直是 nil：不建图层、不建控制器、不碰软件渲染。
     @State private var pictureInPicture: PictureInPictureController?
-    /// 投屏进行中：画中画与投屏互斥，这颗按钮置灰并给出读屏原因。
-    @State private var isCasting = false
     /// 「更多」/ 倍速面板：自己握开关，好让控制层知道菜单还开着。
     ///
     /// 系统菜单不把开合告诉代码，所以另挂了一个 `SystemMenuProbe` 看它在不在，
@@ -2277,7 +2275,6 @@ struct PlayerScreen: View {
             // HStack 一有富余空间被压，就会把其中一颗压成 0 宽——表现出来是
             // 「收藏按钮没了」（LP 2026-10-28；跟 Colo 3300 记的那次同一个毛病）。
             HStack(spacing: 6) {
-                pipEnterButton
                 // 跳过那颗在收藏左边（LP 2026-10-28 第 6 条）。
                 skipForwardButton
                 collectButton
@@ -2289,43 +2286,10 @@ struct PlayerScreen: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, isFullscreen ? Self.landscapePlayerTopInset : Self.playerTopInset)
-        .onAppear { isCasting = Self.hasExternalVideoRoute }
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
-            isCasting = Self.hasExternalVideoRoute
-        }
     }
 
-    private static var hasExternalVideoRoute: Bool {
-        AVAudioSession.sharedInstance().currentRoute.outputs.contains {
-            $0.portType == .airPlay || $0.portType == .HDMI
-        }
-    }
-
-    /// 顶栏手动画中画：单符号 pip.enter，只有可用／不可用两态。
-    /// 用户手势直接走控制器的单次启动，不经过自动那条 possible 门控。
-    @ViewBuilder
-    private var pipEnterButton: some View {
-        if AVPictureInPictureController.isPictureInPictureSupported() {
-            let button = PlayerIconButton {
-                if pictureInPicture == nil {
-                    makePictureInPictureController(settingsStore: settings)
-                }
-                pictureInPicture?.startFromUserTap(engine: surface.engine, surface: surface)
-            } content: {
-                Image(systemName: "pip.enter")
-                    .playerIcon()
-                    .foregroundStyle(.white)
-            }
-            .opacity(isCasting ? 0.4 : 1)
-            .disabled(isCasting)
-            .accessibilityLabel(String(localized: "开启画中画"))
-            if isCasting {
-                button.accessibilityHint(String(localized: "投屏时不能用"))
-            } else {
-                button
-            }
-        }
-    }
+    /// 顶栏手动画中画按钮已删除：自动画中画（设置里那颗开关）覆盖了切后台的场景，
+    /// 而这颗键占着顶栏右侧、正好压在「跳过片头」的点击范围上，误触代价比收益大。
 
     /// 横屏底栏的视频比例：点开直接选，当前项系统打勾。
     private var aspectRatioButton: some View {
