@@ -18,11 +18,14 @@ struct VideoParserEvent: Sendable {
     var url: String
     var offset: Int
     var format: VideoSourceFormat
+    /// 这一次 `load()` 的代号：换集 / 重试后旧页面迟到的回调靠它丢掉。
+    var loadID: Int
 
-    init(url: String, offset: Int = 0, format: VideoSourceFormat = .auto) {
+    init(url: String, offset: Int = 0, format: VideoSourceFormat = .auto, loadID: Int = 0) {
         self.url = url
         self.offset = offset
         self.format = format
+        self.loadID = loadID
     }
 }
 
@@ -40,6 +43,14 @@ final class VideoSourceWebView: NSObject {
     var onLog: ((String) -> Void)?
     var onVideoLoading: ((Bool) -> Void)?
     var onVideoURLParser: ((VideoParserEvent) -> Void)?
+    /// 新一次加载的代号，**在导航之前**就发出去（LP 2026-11-08）。
+    ///
+    /// `load(url:)` 是 async：调用方要等它返回才拿得到 `loadID`。可它内部要先
+    /// 卸旧页、写 Cookie 才 `webView.load`，这段等待里旧页面迟到的回调照样会进
+    /// `resolveVideoSource`，并被贴上**新的**代号——调用方那时手上还是 -1，
+    /// 事件就被当成「不是这一次的」丢掉，界面留在「正在解析播放地址」。
+    /// 现在代号一生成就通知调用方，先对上号再看事件。
+    var onLoadStarted: ((Int) -> Void)?
     /// 网页真的加载完了一次（`didFinish`，含它自己那次重试）。
     /// 下载解析靠它判断「完了却没有地址」——`load(url:)` 那个 await 在请求
     /// 刚发出时就返回了，拿它当「加载完」会让解析秒退（无地址就直接判失败）。
@@ -53,6 +64,8 @@ final class VideoSourceWebView: NSObject {
     private var isVideoSourceLoaded = false
     private var useLegacyParser = false
     private var isLoading = false
+    /// 每次 `load()` 自增：解析事件带上它，页面换掉之后旧事件就失效。
+    private var loadGeneration = 0
 
     private let userAgent = HTTPHeaders.randomUserAgent()
 
@@ -88,6 +101,21 @@ final class VideoSourceWebView: NSObject {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
+        // 解析页只用来嗅探地址，**不许出声**（LP 2026-11-08 第 1 条）。
+        //
+        // 站点常把 `<video>` 自动播起来：`mediaTypesRequiringUserActionForPlayback = .all`
+        // 只挡得住「有声自动播」，挡不住「先静音自动播、再由脚本解除静音」这条常见写法。
+        // 于是界面还停在「正在解析播放地址」，声音已经是这一集的了——用户以为播放器卡住，
+        // 其实是这个看不见的页面在放。
+        //
+        // `WKWebView` 没有公开的静音开关（`isMuted` 是 `AVPlayer` 的，编译不过），
+        // 只能在文档最前面把 `HTMLMediaElement` 的 `muted` 写死成 true：拦 setter、
+        // 保留 getter，站点读到的仍是「我静音了」，不会因为判断被改而以为异常。
+        controller.addUserScript(WKUserScript(
+            source: VideoSourceWebView.muteMediaScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
         configuration.userContentController = controller
 
         // 与原实现一致：图片与广告 document 直接阻断。
@@ -98,6 +126,7 @@ final class VideoSourceWebView: NSObject {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = self
         view.customUserAgent = userAgent
+        // 静音由 `muteMediaScript` 在文档最前面注入，见 `initialize()` 上面那段注释。
         webView = view
         emit("WebView: created")
     }
@@ -126,10 +155,19 @@ final class VideoSourceWebView: NSObject {
         sessionUserAgent = (storedUA?.isEmpty ?? true) ? nil : storedUA
     }
 
-    func load(url: String, useLegacyParser: Bool, offset: Int = 0) async {
+    @discardableResult
+    func load(url: String, useLegacyParser: Bool, offset: Int = 0) async -> Int {
         await initialize()
-        guard let webView else { return }
-        await unloadPage()
+        guard let webView else { return loadGeneration }
+        // 第一次加载时没有旧页面，别先空跑一次 about:blank（会多等一次导航）。
+        if webView.url != nil {
+            await unloadPage()
+        }
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        // 代号先发出去，调用方马上对上号：下面还要卸旧页、写 Cookie，
+        // 这段等待里旧页面迟到的回调也会被贴上这个代号（见 onLoadStarted 注释）。
+        onLoadStarted?(generation)
         self.useLegacyParser = useLegacyParser
         if !hasInjectedScripts {
             injectScripts(useLegacyParser: useLegacyParser)
@@ -143,7 +181,7 @@ final class VideoSourceWebView: NSObject {
         onVideoLoading?(true)
         guard let target = URL(string: url) else {
             emit("Invalid URL: \(url)")
-            return
+            return generation
         }
         // 登录态要在导航之前就位：Cookie 先落进这个会话，UA 跟登录时一致。
         // 没有登录态的规则要显式回到原来那个随机 UA：不然换一条不用登录的规则，
@@ -160,6 +198,20 @@ final class VideoSourceWebView: NSObject {
         }
         emit("started loading: \(url)")
         webView.load(URLRequest(url: target))
+        return generation
+    }
+
+    /// 解析失败 / 离开这一集时把页面里的媒体停掉。
+    ///
+    /// 只跳 `about:blank` 不够：旧页面在导航完成前还要跑一会儿，视频照旧在解码，
+    /// 「卡在解析、声音还在放」就是这么来的（LP 2026-11-08 第 1 条）。
+    /// 解析途中**不**调这个：不少规则要靠页面自己把 m3u8 请求发出去才嗅得到地址。
+    func pauseMediaPlayback() {
+        guard let webView else { return }
+        if #available(iOS 15.0, *) {
+            webView.pauseAllMediaPlayback()
+            webView.closeAllMediaPresentations(completionHandler: nil)
+        }
     }
 
     func unloadPage() async {
@@ -241,7 +293,7 @@ final class VideoSourceWebView: NSObject {
         } else {
             resolved = message
         }
-        let event = VideoParserEvent(url: resolved, offset: offset)
+        let event = VideoParserEvent(url: resolved, offset: offset, loadID: loadGeneration)
         onVideoURLParser?(event)
     }
 
@@ -264,7 +316,7 @@ final class VideoSourceWebView: NSObject {
         onVideoLoading?(false)
         emit("Loading video source \(decoded)")
         Task { @MainActor in await self.unloadPage() }
-        onVideoURLParser?(VideoParserEvent(url: decoded, offset: offset))
+        onVideoURLParser?(VideoParserEvent(url: decoded, offset: offset, loadID: loadGeneration))
     }
 
     /// 新版解析器：接受绝对或相对地址，且尚未解析过。
@@ -286,6 +338,43 @@ final class VideoSourceWebView: NSObject {
       var value = args.length > 0 && args[0] != null ? String(args[0]) : '';
       try { window.webkit.messageHandlers[name].postMessage(value); } catch(e) {}
     };
+    """
+
+    /// 解析页静音：把 `HTMLMediaElement` 的 `muted` 钉成 true，顺带把音量压到 0
+    /// （有些播放器走 WebAudio，`muted` 管不到，音量归零能盖住 `<audio>` 那条）。
+    /// 只拦 setter、保留 getter——站点读 `video.muted` 仍得到 true，不会以为出了异常。
+    private static let muteMediaScript = """
+    (function () {
+      try {
+        var desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+        if (desc && desc.set) {
+          Object.defineProperty(HTMLMediaElement.prototype, 'muted', {
+            configurable: true,
+            get: desc.get,
+            set: function () { desc.set.call(this, true); }
+          });
+        }
+      } catch (e) {}
+      function quiet(el) {
+        try { el.muted = true; if (el.volume !== 0) el.volume = 0; } catch (e) {}
+      }
+      function quietAll() {
+        var list = document.querySelectorAll('video, audio');
+        for (var i = 0; i < list.length; i++) { quiet(list[i]); }
+      }
+      try {
+        var play = HTMLMediaElement.prototype.play;
+        HTMLMediaElement.prototype.play = function () {
+          quiet(this);
+          return play.apply(this, arguments);
+        };
+      } catch (e) {}
+      document.addEventListener('play', function (e) { quiet(e.target); }, true);
+      document.addEventListener('playing', function (e) { quiet(e.target); }, true);
+      document.addEventListener('DOMContentLoaded', quietAll, true);
+      // 页面自己会反复解静音，隔一秒再压一次；解析页只有一个主框架，开销可忽略。
+      setInterval(quietAll, 1000);
+    })();
     """
 
     private static let removeLazyLoadingScript = """
@@ -369,7 +458,8 @@ final class VideoSourceWebView: NSObject {
     document.querySelectorAll('video').forEach(processVideoElement);
 
     const _observer = new MutationObserver((mutations) => {
-      window.flutter_inappwebview.callHandler('LogBridge', 'Scanning for video elements...');
+      // 这里原来每收到一批 DOM 变更就往 LogBridge 打一行「Scanning for video elements...」。
+      // 那种页面一秒能改几十上百次，等于把主线程按满；而这行日志对排查没帮助，删掉。
       mutations.forEach(mutation => {
         if (mutation.type === 'attributes' && mutation.target.nodeName === 'VIDEO') {
           processVideoElement(mutation.target);

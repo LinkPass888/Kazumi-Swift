@@ -28,6 +28,16 @@ struct MPVRawFrame: Sendable {
     var format: String
     var pixels: [UInt8]
 
+    /// 测试与 VO 回执之外的构造入口。自定义 `init?(node:)` 会关掉 Swift 的
+    /// 默认 memberwise init，这里显式补回来，避免只靠隐式合成。
+    init(width: Int, height: Int, stride: Int, format: String, pixels: [UInt8]) {
+        self.width = width
+        self.height = height
+        self.stride = stride
+        self.format = format
+        self.pixels = pixels
+    }
+
     /// 从 `screenshot-raw` 的回执 node 里读出来。读不到关键字段就返回 nil。
     init?(node: mpv_node) {
         guard node.format == MPV_FORMAT_NODE_MAP, let rawList = node.u.list else { return nil }
@@ -71,16 +81,25 @@ struct MPVRawFrame: Sendable {
 
         guard width > 0, height > 0, !pixels.isEmpty else { return nil }
         // stride 没给就按最紧的排法算（一个像素 3 字节还是 4 字节由格式决定）。
+        // mpv 允许负 stride（自下而上的行序），这里原样保留，取帧时再按方向算行偏移。
         let bytesPerPixel = Self.layout(of: format)?.bytesPerPixel ?? 4
         self.width = width
         self.height = height
-        self.stride = stride > 0 ? stride : width * bytesPerPixel
+        self.stride = stride != 0 ? stride : width * bytesPerPixel
         self.format = format
         self.pixels = pixels
     }
 
     /// 这块帧的像素尺寸，写日志用。
     var pixelSize: CGSize { CGSize(width: width, height: height) }
+
+    /// 每行实际占多少字节（stride 的绝对值）。
+    var rowStrideBytes: Int { abs(stride) }
+
+    /// 源缓冲里第 `y` 行（自上而下）的起始下标；负 stride 表示自下而上。
+    func sourceRowOffset(forRow y: Int, rowStride: Int) -> Int {
+        stride < 0 ? (height - 1 - y) * rowStride : y * rowStride
+    }
 
     /// 转成 CGImage。mpv 给的是打包好的 RGB 变体，这里统一还原成 RGBA 再建图。
     func makeCGImage() -> CGImage? {
@@ -90,20 +109,19 @@ struct MPVRawFrame: Sendable {
         // 整个图就斜着花了（Fuck 5017）。
         let bytesPerPixel = layout.bytesPerPixel
         let channels = layout.map
-        guard bytesPerPixel > 0, pixels.count >= stride * height || pixels.count >= width * bytesPerPixel * height
-        else { return nil }
-
-        var rgba = [UInt8](repeating: 0, count: width * height * 4)
-        let rowStride = stride > 0 && stride >= width * bytesPerPixel
-            ? stride
+        let rowStride = stride != 0 && abs(stride) >= width * bytesPerPixel
+            ? abs(stride)
             : width * bytesPerPixel
+        guard bytesPerPixel > 0, pixels.count >= rowStride * height else { return nil }
+
+        var rgba = [UInt8](repeating: 255, count: width * height * 4)
 
         pixels.withUnsafeBufferPointer { source in
             guard let base = source.baseAddress else { return }
             rgba.withUnsafeMutableBufferPointer { target in
                 guard let out = target.baseAddress else { return }
                 for y in 0..<height {
-                    let rowStart = base.advanced(by: y * rowStride)
+                    let rowStart = base.advanced(by: sourceRowOffset(forRow: y, rowStride: rowStride))
                     let outRow = out.advanced(by: y * width * 4)
                     for x in 0..<width {
                         let pixel = rowStart.advanced(by: x * bytesPerPixel)
@@ -113,6 +131,8 @@ struct MPVRawFrame: Sendable {
                         destination[0] = pixel[channels[0]]
                         destination[1] = pixel[channels[1]]
                         destination[2] = pixel[channels[2]]
+                        // 没有 alpha 通道的格式（bgr0 / rgb24 …）第 4 字节是填充值，
+                        // 可能为 0；写 0 会让截图/小窗整块透明，一律按不透明处理。
                         destination[3] = channels[3] >= 0 ? pixel[channels[3]] : 255
                     }
                 }
@@ -136,15 +156,22 @@ struct MPVRawFrame: Sendable {
         )
     }
 
+    /// 当前打包格式已经与目标 32BGRA 完全一致，可跳过逐像素通道转换。
+    var canDirectCopyToBGRA: Bool {
+        format.caseInsensitiveCompare("bgra") == .orderedSame
+    }
+
     /// 转成画中画可直接消费的 32BGRA `CVPixelBuffer`。
     func makePixelBuffer() -> CVPixelBuffer? {
         guard let layout = Self.layout(of: format) else { return nil }
         let bytesPerPixel = layout.bytesPerPixel
         let channels = layout.map
-        let rowStride = stride > 0 && stride >= width * bytesPerPixel
-            ? stride
+        guard bytesPerPixel > 0 else { return nil }
+        let rowStride = stride != 0 && abs(stride) >= width * bytesPerPixel
+            ? abs(stride)
             : width * bytesPerPixel
         guard pixels.count >= rowStride * height else { return nil }
+        let bottomUp = stride < 0
 
         var buffer: CVPixelBuffer?
         let attributes = [
@@ -164,15 +191,45 @@ struct MPVRawFrame: Sendable {
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         guard let destination = CVPixelBufferGetBaseAddress(buffer) else { return nil }
         let destinationStride = CVPixelBufferGetBytesPerRow(buffer)
+        let visibleRowBytes = width * 4
 
         pixels.withUnsafeBufferPointer { source in
             guard let base = source.baseAddress else { return }
             let output = destination.assumingMemoryBound(to: UInt8.self)
+            // 逐行取源行起点：负 stride 时第 0 行在缓冲末尾，界面方向不能跟着翻。
+            func sourceRow(_ y: Int) -> UnsafePointer<UInt8> {
+                let row = bottomUp ? height - 1 - y : y
+                return base.advanced(by: row * rowStride)
+            }
+            if canDirectCopyToBGRA {
+                if !bottomUp, rowStride == visibleRowBytes, destinationStride == visibleRowBytes {
+                    UnsafeMutableRawPointer(output).copyMemory(
+                        from: UnsafeRawPointer(base),
+                        byteCount: visibleRowBytes * height
+                    )
+                } else {
+                    for y in 0..<height {
+                        let destinationRow = output.advanced(by: y * destinationStride)
+                        UnsafeMutableRawPointer(destinationRow).copyMemory(
+                            from: UnsafeRawPointer(sourceRow(y)),
+                            byteCount: visibleRowBytes
+                        )
+                    }
+                }
+                // 视频帧没有真正的 alpha；解码器留下的 0 会让小窗整块透明。
+                for y in 0..<height {
+                    let destinationRow = output.advanced(by: y * destinationStride)
+                    for x in 0..<width {
+                        destinationRow[x * 4 + 3] = 255
+                    }
+                }
+                return
+            }
             for y in 0..<height {
-                let sourceRow = base.advanced(by: y * rowStride)
+                let row = sourceRow(y)
                 let destinationRow = output.advanced(by: y * destinationStride)
                 for x in 0..<width {
-                    let pixel = sourceRow.advanced(by: x * bytesPerPixel)
+                    let pixel = row.advanced(by: x * bytesPerPixel)
                     let target = destinationRow.advanced(by: x * 4)
                     target[0] = pixel[channels[2]]
                     target[1] = pixel[channels[1]]

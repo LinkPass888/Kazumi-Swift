@@ -8,6 +8,7 @@
 //  接口（`PlayerSurfaceModel`）保持原样，页面那边一行不用改。
 //
 
+import Foundation
 import SwiftUI
 import UIKit
 
@@ -52,7 +53,8 @@ final class PlayerSurfaceModel {
     /// 播放页拿它做「起播后把嗅探用的 WebView 放掉」（LP 4938 Step 2）。挂在这里而不是
     /// SwiftUI 的 `.onChange` 上，是因为播放页那串 modifier 已经长到编译器的类型检查
     /// 会超时（「unable to type-check in reasonable time」），往里再塞一个闭包就编不过。
-    var onPlaybackStarted: (() -> Void)?
+    /// 同上：只在内核回调里被调用，界面不靠它刷新，写它不该触发重画。
+    @ObservationIgnored var onPlaybackStarted: (() -> Void)?
     /// 这一集是不是已经报过「起播稳定」了；换集 / 重新加载时清掉，下一集再报一次。
     private var didReportPlaybackStarted = false
     /// 时间轴真的走起来了（第一帧之后又过了 0.15 秒）。
@@ -67,6 +69,8 @@ final class PlayerSurfaceModel {
     /// 上一帧内核报的 `pause` / `core-idle`：只在真的变了的时候写一行日志。
     private var lastCorePaused = false
     private var lastCoreIdle = false
+    /// 缓冲段刷新的节拍：状态快照 4Hz，这里 1Hz 就够。
+    private var bufferedRefreshTick = 0
     /// 这次加载走到哪一步（由 mpv 事件推，见 `MPVLoadPhase`）。
     private(set) var loadPhase: MPVLoadPhase = .idle
 
@@ -92,9 +96,28 @@ final class PlayerSurfaceModel {
     /// 视频的像素尺寸；还没拿到时是 .zero，布局回落到整块画面。
     var videoSize: CGSize = .zero
 
-    weak var engine: MPVEngine?
+    /// 内核引用。**不参与 Observation**（LP 2026-11-08 第 1 条）。
+    ///
+    /// `MPVPlayerContainer.updateUIView` 每次 SwiftUI 更新都会调 `attach(engine:)`
+    /// 把它写一遍；而 representable 的更新闭包本身就在观察范围内——崩溃日志里
+    /// `PlatformViewChild.updateValue` → `ObservationCenter.invalidate` →
+    /// `_installTracking` 那条栈就是它。写一次就让自己失效，SwiftUI 再更新一次、
+    /// 再写、再失效：主线程永远出不来（表现是「卡在正在解析播放地址 / 点不动也退不出去」，
+    /// 退后台 5 秒收不掉进程被 watchdog 杀掉）。
+    /// 界面渲染不靠它（只用它在按钮里取引擎做动作），标掉最安全。
+    @ObservationIgnored weak var engine: MPVEngine?
+
+    /// loadID 只在同一个 mpv 内核里单调递增；换内核时从 0 重新认领。
+    func attach(engine newEngine: MPVEngine?) {
+        // 同一个内核就别写：写空值也算一次变更，见上面 `engine` 的注释。
+        guard engine !== newEngine else { return }
+        activeLoadID = 0
+        engine = newEngine
+    }
+
     /// 弹幕画布：横屏底栏「发弹幕」往这里补一条自己发的。
-    weak var danmakuOverlay: DanmakuOverlayView?
+    /// 同上，`makeUIView` 里会写它，别让它参与 Observation。
+    @ObservationIgnored weak var danmakuOverlay: DanmakuOverlayView?
 
     /// 期望的播放速率。换集 / 起播后会回到 1.0，因此就绪时要按这个值再补一次。
     var desiredRate: Float = 1.0
@@ -104,7 +127,27 @@ final class PlayerSurfaceModel {
     var pendingResumeTime: Double?
 
     /// 正常播完（非出错）时的回调，交给页面处理自动连播。
-    var onFinish: (@MainActor (PlayerSurfaceModel) -> Void)?
+    /// 回调只被内核/页面调用，界面不靠它刷新：同样标掉，避免在视图更新期写它就自我失效。
+    @ObservationIgnored var onFinish: (@MainActor (PlayerSurfaceModel) -> Void)?
+    /// 断流自愈的重试请求；由容器接到 MPVEngine 的当前源重载。
+    /// 返回 false 表示引擎压根没提交（本地文件、没有当前源、命令下发失败），
+    /// 模型不能因此消耗恢复额度或清掉就绪状态。
+    /// 同上：`makeUIView` 里会写它，写进去不需要重画任何视图。
+    @ObservationIgnored var onRecoverFromStall: (@MainActor (Double) -> Bool)?
+    /// 已起播后，真实进度上次推进的时刻（单调时钟，系统校时 / 休眠都不影响）。
+    @ObservationIgnored private var lastRealProgressAt: TimeInterval = 0
+    @ObservationIgnored private var lastRealProgressTime = 0.0
+    @ObservationIgnored private var lastRecoveryRequestAt: TimeInterval = 0
+    @ObservationIgnored private var recoveryRequestCount = 0
+    @ObservationIgnored private var recoveryLatchArmed = false
+    @ObservationIgnored private var recoveryBaselineTime = 0.0
+    @ObservationIgnored private var ignoreProgressAfterSeek = false
+    @ObservationIgnored private var activeLoadID: UInt64 = 0
+    private static let stallRecoveryDelay: TimeInterval = 8
+    private static let stallRecoveryCooldown: TimeInterval = 20
+    private static let stallRecoveryLimit = 3
+    @ObservationIgnored
+    var nowProvider: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
     /// 这一集加载完就该自己开播（LP 2026-10-28 第 3 条）。
     ///
@@ -169,8 +212,19 @@ final class PlayerSurfaceModel {
 
     func seek(to time: Double) {
         guard time.isFinite, time >= 0 else { return }
+        noteSeekDiscontinuity(to: time)
+        onPlaybackDiscontinuity?(time, corePaused)
         engine?.seek(to: time)
         currentTime = time
+    }
+
+    /// 主动 seek 让媒体时间轴跳变；先把看门狗基线挪到落点，
+    /// 下一拍非 seeking 快照再吃掉这次跳变，避免向前跳被当成真实推进。
+    private func noteSeekDiscontinuity(to time: Double) {
+        lastRealProgressAt = nowProvider()
+        lastRealProgressTime = time
+        recoveryBaselineTime = time
+        ignoreProgressAfterSeek = true
     }
 
     func setPlaybackRate(_ rate: Float) {
@@ -224,8 +278,21 @@ final class PlayerSurfaceModel {
         wantsPlaying = true
     }
 
+    /// PiP 时基重锚钩子。所有 seek（拖动 / 续播 / 快进 / PiP 跳过）和断流原位重连
+    /// 都经过这里，避免只有 PiP 自己按「跳过」时才知道时基要重置。
+    @ObservationIgnored var onPlaybackDiscontinuity: (@MainActor (Double, Bool) -> Void)?
+
     /// 内核推来的一帧状态。
     func handle(snapshot: MPVSnapshot) {
+        if snapshot.loadID != activeLoadID {
+            activeLoadID = snapshot.loadID
+            hasFirstFrame = false
+            hasStartedPlayback = false
+            didReportPlaybackStarted = false
+            isReady = false
+            loadPhase = .opening
+            autoPlayPending = wantsPlaying
+        }
         currentTime = max(0, snapshot.time)
         if snapshot.duration.isFinite, snapshot.duration > 0 {
             duration = snapshot.duration
@@ -261,9 +328,16 @@ final class PlayerSurfaceModel {
         // 首帧判据以内核相位为准，别依赖引擎那条一次性回调：回调没轮到
         // 就永远不算首帧（实测就是这样，画面明明在跑却触发不了）。
         // 相位推进本身就要求「帧画过了」或「time-pos 真的在走」（LP 4820）。
-        if !hasFirstFrame, snapshot.loadPhase == .playing { hasFirstFrame = true }
+        if !hasFirstFrame, snapshot.loadPhase == .playing, snapshot.freshVideoParams {
+            hasFirstFrame = true
+        }
         // 网速平滑一下：mpv 报的是瞬时值，直接显示就是每 250ms 乱跳的数字。
         // 掉到 0 时直接归零，别让「已经不下载了」还挂着上一个速度。
+        //
+        // 这里**只看有没有网络输入**，不按 `core-idle` 归零：缓冲中（等缓存填、
+        // 网卡住）内核本来就是 idle，可那正是用户最想看网速的时候，按 idle 归零
+        // 会让「正在缓冲…」下面那行速度直接消失（LP 2026-11-08 第 2 条）。
+        // 真断流时 `raw-input-rate` 自己会掉到 0，不需要额外兜。
         if snapshot.downloadSpeed > 0 {
             downloadSpeed = downloadSpeed > 0
                 ? downloadSpeed * 0.6 + snapshot.downloadSpeed * 0.4
@@ -297,16 +371,24 @@ final class PlayerSurfaceModel {
         // 内核「没暂停但也没在走」= 缓冲/等数据。`isStalled` 靠它算，
         // 不能靠 `isPlaying`：上面那一档会把缓冲态的 isPlaying 也设成 true。
         coreIdle = snapshot.isIdle
+        evaluateStallRecovery(snapshot: snapshot)
         if snapshot.videoWidth > 0, snapshot.videoHeight > 0 {
             let size = CGSize(width: snapshot.videoWidth, height: snapshot.videoHeight)
             if videoSize != size { videoSize = size }
         }
-        if snapshot.hasVideo {
-            if !isReady {
-                // 第一帧到手：把起播那次没生效的「别停」补回来，然后按正常播放补速率。
-                if autoPlayPending {
-                    autoPlayPending = false
-                    wantsPlaying = true
+        // 缓冲段不需要跟着 4Hz 的状态快照走：每 4 拍读一次 mpv 属性就够，
+        // 少一次主线程的同步属性查询，播放中更不容易被 UI 抢时间。
+        bufferedRefreshTick &+= 1
+        if bufferedRefreshTick % 4 == 0 {
+            refreshBufferedTime()
+        }
+        // 只有当前 loadID 的新文件视频参数才允许把界面置为就绪、补一次 play()。
+        // 旧文件残留的 hasVideo 不能消耗 autoPlayPending，也不能把缓存提前拉到 36000 秒。
+        if snapshot.freshVideoParams {
+            if !isReady, autoPlayPending {
+                autoPlayPending = false
+                // 用户在命令下发后按了暂停就作废，不再把内核拉起来。
+                if wantsPlaying {
                     engine?.play()
                     isPlaying = true
                 }
@@ -329,6 +411,92 @@ final class PlayerSurfaceModel {
                 finishReported = false
             }
         }
+    }
+
+    /// 真正的 HLS 断流会停在 core-idle：mpv 的 time-pos 几乎不动。
+    /// 自动画中画即使尚未实际开启，其前台预热同步器也可能继续假推进。
+    /// 这里只认内核时间轴；连续 8 秒没前进 0.75 秒且网络输入低于 1 KiB/s，
+    /// 才请求容器用新连接重载当前地址。用户暂停或仍在正常下载时不触发。
+    private func evaluateStallRecovery(snapshot: MPVSnapshot) {
+        let now = nowProvider()
+
+        guard wantsPlaying, hasFirstFrame, loadPhase == .playing,
+              !snapshot.isPaused, !snapshot.isSeeking, snapshot.time.isFinite,
+              snapshot.duration.isFinite,
+              snapshot.duration <= 0 || snapshot.time < snapshot.duration - 3
+        else {
+            // 暂停、seek、片尾、未起播都算断点：基线挪到当前位置重新计时，
+            // 同时放开闩锁——否则暂停/拖动回来后这一次自愈永远等不到第二次。
+            disarmStallRecovery(at: snapshot.time, now: now)
+            return
+        }
+
+        // 第一拍、主动 seek 后的第一拍、或媒体时间轴大幅跳变：只重置基线，
+        // 不把跳变本身当成「真实推进」。ignoreProgressAfterSeek 在这里才消费掉。
+        if lastRealProgressAt == 0 || ignoreProgressAfterSeek
+            || abs(snapshot.time - lastRealProgressTime) > 8 {
+            lastRealProgressAt = now
+            lastRealProgressTime = snapshot.time
+            recoveryBaselineTime = snapshot.time
+            ignoreProgressAfterSeek = false
+            return
+        }
+
+        // 先判真实推进，再看网络输入：以前网络输入那条早返回会挡住基线更新，
+        // 断流期间只要报过一次 ≥1 KiB/s，进度基线就永远停在旧值。
+        if snapshot.time >= lastRealProgressTime + 0.75 {
+            lastRealProgressAt = now
+            lastRealProgressTime = snapshot.time
+            if recoveryLatchArmed, snapshot.time >= recoveryBaselineTime + 2 {
+                recoveryLatchArmed = false
+            }
+            return
+        }
+
+        if snapshot.time < lastRealProgressTime - 1 {
+            lastRealProgressAt = now
+            lastRealProgressTime = snapshot.time
+            recoveryBaselineTime = snapshot.time
+            return
+        }
+
+        // 内核还在跑 / demuxer 还有输入：这一拍不是闲置，停摆时钟不累积。
+        if !snapshot.isIdle || snapshot.downloadSpeed >= 1_024 {
+            lastRealProgressAt = now
+            return
+        }
+
+        guard !recoveryLatchArmed,
+              snapshot.isIdle,
+              now - lastRealProgressAt >= Self.stallRecoveryDelay,
+              (recoveryRequestCount == 0
+               || now - lastRecoveryRequestAt >= Self.stallRecoveryCooldown),
+              recoveryRequestCount < Self.stallRecoveryLimit
+        else { return }
+
+        let submitted = onRecoverFromStall?(max(0, snapshot.time)) ?? false
+        guard submitted else {
+            // 引擎没接这次恢复：不消耗额度、不解闩锁，只按冷却退避，等条件变化再说。
+            lastRecoveryRequestAt = now
+            recoveryBaselineTime = snapshot.time
+            KazumiLogBuffer.player("HLS 进度停住，但引擎未接受重连 t=\(snapshot.time)")
+            return
+        }
+        lastRecoveryRequestAt = now
+        recoveryRequestCount += 1
+        recoveryLatchArmed = true
+        recoveryBaselineTime = snapshot.time
+        lastRealProgressAt = now
+        KazumiLogBuffer.player("HLS 进度停住，请求原地重连 t=\(snapshot.time)")
+    }
+
+    /// 离开「想播、在播、未到片尾」这条路径时统一收口，避免恢复闩锁永久停住。
+    private func disarmStallRecovery(at time: Double, now: TimeInterval) {
+        lastRealProgressAt = now
+        lastRealProgressTime = time
+        recoveryBaselineTime = time
+        recoveryLatchArmed = false
+        ignoreProgressAfterSeek = false
     }
 
     /// 播放结束（正常播完或出错）的收尾。
@@ -371,8 +539,35 @@ final class PlayerSurfaceModel {
         downloadSpeed = 0
         pendingResumeTime = nil
         errorMessage = nil
+        lastRealProgressAt = 0
+        lastRealProgressTime = 0
+        lastRecoveryRequestAt = 0
+        recoveryRequestCount = 0
+        recoveryLatchArmed = false
+        recoveryBaselineTime = 0
+        ignoreProgressAfterSeek = false
+        // 保留上一条实际 loadID；beginLoad 的 .opening 快照仍带它，直到
+        // START_FILE 发来新编号。清成 0 反而会把旧编号误判为一次新加载。
         // 换集先清尺寸：新的一集分辨率可能不同，拿到之前回落到整块画面。
         videoSize = .zero
+    }
+
+    /// 断流原位重连前重新武装首帧补播；不换集，所以保留重试次数与冷却。
+    func prepareForPlaybackRestart() {
+        guard wantsPlaying else { return }
+        autoPlayPending = true
+        hasFirstFrame = false
+        hasStartedPlayback = false
+        didReportPlaybackStarted = false
+        isReady = false
+        loadPhase = .opening
+        downloadSpeed = 0
+        // 原位重连的 start=<time> 几乎不让媒体时间跳变，PiP 不会触发跳变兜底；
+        // 这里直接告诉它重锚一次，别让小窗抱着上一轮的 PTS / host time。
+        onPlaybackDiscontinuity?(currentTime, corePaused)
+        lastRealProgressAt = nowProvider()
+        lastRealProgressTime = currentTime
+        ignoreProgressAfterSeek = false
     }
 
     func updateTime(current: Double, total: Double) {
@@ -462,6 +657,9 @@ final class MPVHostView: UIView {
         // 画面尺寸 / 填充方式变了也要同步 drawable：暂停时没有新帧，
         // 旧尺寸的 swapchain 会被系统拉伸（同下面的 layoutSubviews）。
         let geometryChanged = videoSize != self.videoSize || fillMode != self.fillMode
+        let insetChanged = danmakuTopInset != self.danmakuTopInset
+        // SwiftUI 每个状态快照都会走这里；三项都没变时不要再触发布局。
+        guard geometryChanged || insetChanged else { return }
         self.videoSize = videoSize
         self.fillMode = fillMode
         self.danmakuTopInset = danmakuTopInset
@@ -480,7 +678,11 @@ final class MPVHostView: UIView {
             lastLayoutSize = bounds.size
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
-            engine?.reconfigureVideoOutputForSurfaceResize()
+            // 还没拿到这一集的画面尺寸（起播 / 换集中）时不要重建 VO：
+            // 这时 drawable 只是在跟着转屏变，旧画面不该被当成新尺寸去重配。
+            if videoSize.width > 0, videoSize.height > 0 {
+                engine?.reconfigureVideoOutputForSurfaceResize()
+            }
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
         // 顶部让出控制栏（横屏 44pt），底部仍留 20% 给字幕：
@@ -568,7 +770,6 @@ struct MPVPlayerContainer: UIViewRepresentable {
         }
         engine.onSnapshot = { [weak surface] snapshot in
             surface?.handle(snapshot: snapshot)
-            surface?.refreshBufferedTime()
         }
         engine.onLog = { message in
             KazumiLogBuffer.player("mpv: \(message)")
@@ -576,13 +777,22 @@ struct MPVPlayerContainer: UIViewRepresentable {
         engine.onFirstFrame = { [weak surface] in
             surface?.hasFirstFrame = true
         }
+        surface.onRecoverFromStall = { [weak engine, weak surface] time in
+            guard let surface, surface.wantsPlaying, let engine else { return false }
+            // 先确认命令真提交了，再重新武装首帧补播：引擎是本地文件、没有当前源或
+            // 下发失败时会返回 false，这时界面状态一个字都不能动，恢复额度也不能消耗。
+            guard engine.recoverFromStall(at: time) else { return false }
+            // mpv 换文件会重设 pause；用户随后暂停会清掉它。
+            surface.prepareForPlaybackRestart()
+            return true
+        }
         engine.start(in: host.metalView)
         host.engine = engine
 
         context.coordinator.engine = engine
         context.coordinator.surface = surface
         context.coordinator.overlay = host.overlay
-        surface.engine = engine
+        surface.attach(engine: engine)
         surface.danmakuOverlay = host.overlay
         host.overlay.clock = surface
         host.updateVideoLayout(
@@ -605,7 +815,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
 
     func updateUIView(_ uiView: MPVHostView, context: Context) {
         context.coordinator.surface = surface
-        surface.engine = context.coordinator.engine
+        surface.attach(engine: context.coordinator.engine)
         // 设置页改了档位、或者网络在 Wi-Fi 和移动数据之间换了，这一集当场换缓存大小，
         // 不用重开（main 的 `_onChanged` 也是立刻 apply）。
         context.coordinator.engine?.applyCacheSize(cacheSizeForPolicy())
@@ -638,7 +848,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
         coordinator.overlay?.clock = nil
         coordinator.overlay = nil
         uiView.overlay.clock = nil
-        coordinator.surface?.engine = nil
+        coordinator.surface?.attach(engine: nil)
         coordinator.engine?.stop()
         coordinator.engine = nil
         // 播放器没了就别再把回调挂在单例上。
@@ -651,7 +861,8 @@ struct MPVPlayerContainer: UIViewRepresentable {
         weak var overlay: DanmakuOverlayView?
         var engine: MPVEngine?
 
-        private var lastURL: URL?
+        private var lastRequest: MPVPlaybackRequest?
+        private var lastLoadedURL: URL?
         private var lastShaders: [String] = []
         private var lastFill: MPVFillMode?
         private var lastVideoAspectOverride = ""
@@ -701,10 +912,35 @@ struct MPVPlayerContainer: UIViewRepresentable {
                 lastProxy = proxyURL
                 engine.setProxy(proxyURL)
             }
-            guard lastURL != url else { return }
-            lastURL = url
-            surface?.markWantsPlaying()
-            engine.load(url: url, referer: referer, userAgent: userAgent, cookie: cookie)
+            let request = MPVPlaybackRequest(
+                url: url,
+                referer: referer,
+                userAgent: userAgent,
+                cookie: cookie
+            )
+            switch request.change(from: lastRequest) {
+            case .unchanged:
+                return
+            case .headersOnly:
+                // 同一地址只换了请求头（登录态的 Cookie 刷新这类）：更新断流恢复用的
+                // 完整请求与内核头选项就够了，不重开文件，也不碰用户当前的暂停意图。
+                // lastLoadedURL 对不上说明中间漏过一次换源，退回换源分支更安全。
+                guard lastLoadedURL == url, engine.hasLoadedSource else {
+                    lastRequest = request
+                    lastLoadedURL = url
+                    surface?.markWantsPlaying()
+                    engine.load(request)
+                    return
+                }
+                lastRequest = request
+                engine.updatePlaybackRequest(request)
+                KazumiLogBuffer.player("播放请求头已刷新（同一地址，不重开）")
+            case .urlChanged:
+                lastRequest = request
+                lastLoadedURL = url
+                surface?.markWantsPlaying()
+                engine.load(request)
+            }
         }
     }
 }

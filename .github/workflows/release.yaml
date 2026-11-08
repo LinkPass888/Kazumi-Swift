@@ -38,7 +38,7 @@ jobs:
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       - name: Echo build progress
-        run: echo "Kazumi_ios_${{ env.tag }}.ipa build progress"
+        run: echo "Kazumi_ios_${tag}.ipa build progress"
 
       # 只把版本号打进日志：这个镜像的小版本会随 GitHub 更新，钉死路径反而会在镜像升级那天断掉。
       - name: Show Xcode version
@@ -90,8 +90,8 @@ jobs:
           # 无签名打包：对嵌入的动态库做 ad-hoc 签名，便于侧载安装。
           find Payload/Runner.app -type d -name "*.framework" -exec codesign --force --sign - {} \;
           find Payload/Runner.app -type f -name "*.dylib" -exec codesign --force --sign - {} \;
-          zip -q -r "Kazumi_ios_${{ env.tag }}_no_sign.ipa" Payload
-          ls -lh "Kazumi_ios_${{ env.tag }}_no_sign.ipa"
+          zip -q -r "Kazumi_ios_${tag}_no_sign.ipa" Payload
+          ls -lh "Kazumi_ios_${tag}_no_sign.ipa"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -100,10 +100,93 @@ jobs:
           path: Kazumi_ios_*.ipa
           if-no-files-found: error
 
+  # macOS 包走 “Designed for iPad” 变体：还是用 iphoneos SDK 编 arm64，
+  # 只把打包目的地换成 macOS，所以 UIKit / Metal / MPVKit 全不用改，
+  # 也不需要打开 Mac Catalyst（那要逐处适配）。仅 Apple Silicon Mac 能运行。
+  build-macos:
+    name: "Release for macOS (Designed for iPad)"
+    runs-on: "xcode-27"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Extract tag name
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Echo build progress
+        run: echo "Kazumi_macos_${tag}.zip build progress"
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Install build tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Resolve Swift Packages
+        run: |
+          set -o pipefail
+          xcodebuild -project "$PROJECT" -scheme "$SCHEME" -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" | xcbeautify
+
+      - name: Build archive (Designed for iPad, no codesign)
+        run: |
+          set -o pipefail
+          # 这里不能用 generic/platform=macOS：variant 只在具体的 destination 上生效。
+          # arch 固定 arm64 —— “Designed for iPad” 只支持 Apple Silicon。
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "platform=macOS,arch=arm64,variant=Designed for iPad" \
+            -archivePath "$RUNNER_TEMP/Kazumi-macos.xcarchive" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            DANDAN_APP_ID="${{ secrets.DANDANAPI_APPID }}" \
+            DANDAN_APP_SECRET="${{ secrets.DANDANAPI_KEY }}" \
+            | xcbeautify
+
+      - name: Package unsigned macOS dmg
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/Kazumi-macos.xcarchive/Products/Applications/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "未找到 Runner.app：$APP_PATH" >&2
+            exit 1
+          fi
+          # 与 iOS 包保持同一策略：对嵌入的动态库和 app 本体做 ad-hoc 签名。
+          find "$APP_PATH" -type d -name "*.framework" -exec codesign --force --sign - {} \;
+          find "$APP_PATH" -type f -name "*.dylib" -exec codesign --force --sign - {} \;
+          codesign --force --sign - "$APP_PATH"
+          # dmg 里放 app + /Applications 软链接，打开后直接拖拽安装。
+          STAGE="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          ditto "$APP_PATH" "$STAGE/Runner.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Kazumi" -srcfolder "$STAGE" -ov -format UDZO \
+            "Kazumi_macos_${tag}_no_sign.dmg"
+          ls -lh "Kazumi_macos_${tag}_no_sign.dmg"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos_outputs
+          path: Kazumi_macos_*.dmg
+          if-no-files-found: error
+
   release:
     name: "Release"
     runs-on: "ubuntu-latest"
-    needs: [build-ios]
+    needs: [build-ios, build-macos]
     permissions:
       contents: write
     steps:
@@ -125,6 +208,14 @@ jobs:
           if [ ! -s RELEASE_NOTES.md ]; then
             echo "Kazumi ${tag}" > RELEASE_NOTES.md
           fi
+          cat >> RELEASE_NOTES.md <<'EOF'
+
+          ### macOS
+
+          `Kazumi_macos_*_no_sign.dmg` 是未签名的 “Designed for iPad” 版本，
+          仅支持 Apple Silicon Mac。打开后把 `Runner.app` 拖进「应用程序」，
+          首次启动若被 Gatekeeper 拦下，右键 → 打开，或自行重签。
+          EOF
           echo "---------- release notes ----------"
           cat RELEASE_NOTES.md
         shell: bash
@@ -135,8 +226,16 @@ jobs:
           name: ios_outputs
           path: ios_outputs
 
-      - name: List files in ios_outputs directory
-        run: ls -l ios_outputs
+      - name: Download macOS package
+        uses: actions/download-artifact@v4
+        with:
+          name: macos_outputs
+          path: macos_outputs
+
+      - name: List release files
+        run: |
+          ls -l ios_outputs
+          ls -l macos_outputs
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -144,3 +243,4 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             ios_outputs/Kazumi_ios_*.ipa
+            macos_outputs/Kazumi_macos_*.dmg
