@@ -438,10 +438,10 @@ struct SyncBackupScreen: View {
 
     /// 面板退场之后再做下一件事：弹窗、改结果行都在这一拍之后。
     private func afterPickerDismissed(_ work: @escaping () -> Void) {
-        // 本来就在主队列上跑，work 里也只是几行 UI 改动；asyncAfter 的闭包要求
-        // @Sendable，拿 nonisolated(unsafe) 把它递进去，别为此把整条链改成 async。
-        nonisolated(unsafe) let run = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: run)
+        // asyncAfter 的闭包要 @Sendable，而 work 里改的是本页状态。
+        // 装进一个显式的 unchecked 盒子再递进去：这些调用本来就在主队列上，不存在并发。
+        let box = MainQueueWork(work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { box.run() }
     }
 
     private static func isCancelled(_ error: Error) -> Bool {
@@ -528,5 +528,18 @@ struct SyncBackupScreen: View {
         guard let date else { return String(localized: "时间未知") }
         // 日期跟手机格式走，时刻写死 24 小时（LP 6109 / 6118）。
         return "\(SystemDateText.date(date, includeYear: true)) \(KazumiTimeText.clock(date))"
+    }
+}
+
+/// 把主队列闭包塞进 @Sendable 的 dispatch 闭包用：调用点都在主队列上，不存在并发。
+private struct MainQueueWork: @unchecked Sendable {
+    private let work: () -> Void
+
+    init(_ work: @escaping () -> Void) {
+        self.work = work
+    }
+
+    func run() {
+        work()
     }
 }
