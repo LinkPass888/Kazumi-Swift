@@ -438,7 +438,10 @@ struct SyncBackupScreen: View {
 
     /// 面板退场之后再做下一件事：弹窗、改结果行都在这一拍之后。
     private func afterPickerDismissed(_ work: @escaping () -> Void) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+        // 本来就在主队列上跑，work 里也只是几行 UI 改动；asyncAfter 的闭包要求
+        // @Sendable，拿 nonisolated(unsafe) 把它递进去，别为此把整条链改成 async。
+        nonisolated(unsafe) let run = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: run)
     }
 
     private static func isCancelled(_ error: Error) -> Bool {

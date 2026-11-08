@@ -1131,8 +1131,6 @@ struct PlayerScreen: View {
     /// 竖屏里这条就是页面最上面那一块；横屏全屏时铺满。
     @ViewBuilder
     private func playerArea(_ controller: PlayerController) -> some View {
-        // 在这里读一次：视频尺寸变化要让整个播放区重算（控制层矩形也跟着变）。
-        let videoSize = surface.videoSize
         ZStack {
             // 上下两条压暗：压在**画面之上、控制层之下**（LP 2026-10-28 第 3 条）。
             // 挂成画面的 overlay 而不是 ZStack 里的一层：overlay 不参与布局，

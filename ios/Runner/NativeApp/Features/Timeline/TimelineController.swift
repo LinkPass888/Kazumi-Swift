@@ -181,7 +181,7 @@ final class TimelineController {
         if isCurrent {
             cached = await BangumiAPI.cachedCalendar()
         } else {
-            cached = await TimelineCache.shared.seasonRawDays(start: AnimeSeason.seasonRange(for: date).start)
+            cached = TimelineCache.shared.seasonRawDays(start: AnimeSeason.seasonRange(for: date).start)
                 .map { days in
                     days.map { day in
                         guard case let .array(list) = day else { return [] }
