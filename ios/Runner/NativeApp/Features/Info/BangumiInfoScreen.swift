@@ -141,7 +141,8 @@ struct BangumiInfoScreen: View {
     // MARK: - 内容
 
     private func content(_ controller: InfoController) -> some View {
-        ZStack(alignment: isWideTier ? .bottomLeading : .bottomTrailing) {
+        // 「开始观看」所有宽度统一右下角（Colo 7725 §3.2，旧 §6.5「宽档靠左」作废）。
+        ZStack(alignment: .bottomTrailing) {
             // ScrollViewReader 包在外面：展开评论的回复时要喊这个列表滚一滚（Colo 3366）。
             ScrollViewReader { proxy in
                 ScrollView {
@@ -826,9 +827,8 @@ extension BangumiInfoScreen {
         } action: { height in
             startPlayingButtonHeight = height
         }
-        // 宽档「开始观看」跟着左栏靠左（§6.5），不横跨整屏。
-        .padding(.leading, isWideTier ? 18 : 0)
-        .padding(.trailing, isWideTier ? 0 : 18)
+        // 右下角：右 18、下 22，宽档窄档同一个位置（Colo 7725 §3.2）。
+        .padding(.trailing, 18)
         .padding(.bottom, 22)
         .accessibilityLabel("开始观看")
     }
