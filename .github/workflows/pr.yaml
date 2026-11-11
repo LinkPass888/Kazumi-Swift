@@ -180,3 +180,80 @@ jobs:
           name: macos_outputs
           path: Kazumi_macos_canary.dmg
           if-no-files-found: error
+
+  # Mac Catalyst：同一个 iOS 工程、同一套 UIKit 界面，加一个 Mac destination 编出 Mac App。
+  # 与上面的真 macOS target 并行存在，等 Catalyst 包确认能用再决定删不删后者。
+  build-catalyst:
+    if: ${{ github.event_name == 'workflow_dispatch' || ! github.event.pull_request.draft }}
+    name: "Build for Mac Catalyst"
+    runs-on: "xcode-27"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      - name: Show Xcode and SDK version
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Install build tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec ios/project.yml --project ios
+
+      # 包解析这一步就能验证 maccatalyst 切片：MPVKit 的 xcframework 里没有
+      # ios-arm64_x86_64-maccatalyst 的话，后面的链接必挂。
+      - name: Resolve Swift Packages
+        run: |
+          set -o pipefail
+          xcodebuild -project "$PROJECT" -scheme "$SCHEME" -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-catalyst" | xcbeautify
+
+      - name: Build (no codesign)
+        env:
+          DANDAN_APP_ID: ${{ secrets.DANDANAPI_APPID }}
+          DANDAN_APP_SECRET: ${{ secrets.DANDANAPI_KEY }}
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "platform=macOS,variant=Mac Catalyst" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-catalyst" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-catalyst" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            SUPPORTS_MACCATALYST=YES \
+            DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
+            DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
+            | xcbeautify
+
+      - name: Package canary Catalyst dmg
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$RUNNER_TEMP/DerivedData-catalyst/Build/Products" -type d -name 'Runner.app' -print -quit)"
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "未找到 Catalyst 的 Runner.app" >&2
+            exit 1
+          fi
+          STAGE="$RUNNER_TEMP/catalyst-dmg-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -R "$APP_PATH" "$STAGE/Kazumi.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Kazumi" -srcfolder "$STAGE" -fs HFS+ \
+            -format UDZO -ov Kazumi_catalyst_canary.dmg
+          ls -lh Kazumi_catalyst_canary.dmg
+
+      - name: Upload canary Catalyst dmg
+        uses: actions/upload-artifact@v7
+        with:
+          name: catalyst_outputs
+          path: Kazumi_catalyst_canary.dmg
+          if-no-files-found: error

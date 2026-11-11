@@ -182,10 +182,87 @@ jobs:
           path: Kazumi_macos_*.dmg
           if-no-files-found: error
 
+
+  # Mac Catalyst：与 iOS 同一个工程，编出能拖拽安装的 Mac App。
+  build-catalyst:
+    name: "Release for Mac Catalyst"
+    runs-on: "xcode-27"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      - name: Extract tag name
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Show Xcode and SDK version
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Install build tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Resolve Swift Packages
+        run: |
+          set -o pipefail
+          xcodebuild -project "$PROJECT" -scheme "$SCHEME" -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-catalyst" | xcbeautify
+
+      - name: Build (no codesign)
+        env:
+          DANDAN_APP_ID: ${{ secrets.DANDANAPI_APPID }}
+          DANDAN_APP_SECRET: ${{ secrets.DANDANAPI_KEY }}
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "platform=macOS,variant=Mac Catalyst" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-catalyst" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-catalyst" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            SUPPORTS_MACCATALYST=YES \
+            DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
+            DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
+            | xcbeautify
+
+      - name: Package unsigned Catalyst dmg
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$RUNNER_TEMP/DerivedData-catalyst/Build/Products" -type d -name 'Runner.app' -print -quit)"
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "未找到 Catalyst 的 Runner.app" >&2
+            exit 1
+          fi
+          STAGE="$RUNNER_TEMP/catalyst-dmg-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -R "$APP_PATH" "$STAGE/Kazumi.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Kazumi" -srcfolder "$STAGE" -fs HFS+ \
+            -format UDZO -ov "Kazumi_catalyst_${tag}_no_sign.dmg"
+          ls -lh "Kazumi_catalyst_${tag}_no_sign.dmg"
+
+      - name: Upload Catalyst artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: catalyst_outputs
+          path: Kazumi_catalyst_*.dmg
+          if-no-files-found: error
+
   release:
     name: "Release"
     runs-on: "ubuntu-latest"
-    needs: [build-ios, build-macos]
+    needs: [build-ios, build-macos, build-catalyst]
     permissions:
       contents: write
     steps:
@@ -223,10 +300,17 @@ jobs:
           name: macos_outputs
           path: macos_outputs
 
+      - name: Download Catalyst app
+        uses: actions/download-artifact@v8
+        with:
+          name: catalyst_outputs
+          path: catalyst_outputs
+
       - name: List release files
         run: |
           ls -l ios_outputs
           ls -l macos_outputs
+          ls -l catalyst_outputs
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -235,3 +319,4 @@ jobs:
           files: |
             ios_outputs/Kazumi_ios_*.ipa
             macos_outputs/Kazumi_macos_*.dmg
+            catalyst_outputs/Kazumi_catalyst_*.dmg

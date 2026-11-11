@@ -208,7 +208,12 @@ targets:
         DEVELOPMENT_ASSET_PATHS: ""
         CODE_SIGN_STYLE: Automatic
         ENABLE_PREVIEWS: YES
-        SUPPORTS_MACCATALYST: NO
+        # Mac Catalyst：同一份 iOS 工程 / UIKit 界面直接编出 Mac App。
+        # MPVKit 1.1.0-n9.0.2 的 xcframework 带 ios-arm64_x86_64-maccatalyst 切片
+        #（Libmpv / Libavdevice 的 Info.plist 里实测有），播放器不用换内核。
+        SUPPORTS_MACCATALYST: YES
+        # 别让 Xcode 给 Catalyst 版自动加 `maccatalyst.` 前缀，bundle id 与 iOS 保持一致。
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: YES
 
     dependencies:
@@ -221,6 +226,9 @@ targets:
       # 所有用法都包在 `if #available(iOS 27.0, *)` 里，见 Features/Player/NowPlayingSession27.swift。
       - sdk: NowPlaying.framework
         weak: true
+        # iOS 27 才有的框架，macOS SDK（Catalyst 用的就是它）里没有：
+        # 只让它在 iOS destination 下链接。
+        platformFilter: iOS
 
   RunnerTests:
     type: bundle.unit-test
