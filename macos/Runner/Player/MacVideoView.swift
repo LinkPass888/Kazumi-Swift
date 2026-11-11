@@ -20,9 +20,11 @@ final class MacMPVMetalLayer: CAMetalLayer {
             if Thread.isMainThread {
                 super.drawableSize = newValue
             } else {
+                // macOS 这边的 NSValue 走 AppKit 的 size:（NSSize 就是 CGSize），
+                // iOS 那套 cgSize:/cgSizeValue 在这边没有。
                 performSelector(
                     onMainThread: #selector(applyDrawableSize(_:)),
-                    with: NSValue(cgSize: newValue),
+                    with: NSValue(size: newValue),
                     waitUntilDone: false
                 )
             }
@@ -30,7 +32,7 @@ final class MacMPVMetalLayer: CAMetalLayer {
     }
 
     @objc private func applyDrawableSize(_ value: NSValue) {
-        drawableSize = value.cgSizeValue
+        drawableSize = value.sizeValue
     }
 }
 

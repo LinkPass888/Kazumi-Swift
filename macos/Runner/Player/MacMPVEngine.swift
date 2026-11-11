@@ -20,6 +20,12 @@ import Libmpv
 import Observation
 import QuartzCore
 
+/// mpv 句柄的 Sendable 包装。句柄本身是 C 指针，libmpv 的 API 允许跨线程调用，
+/// 这个盒子只是把这条事实告诉编译器。
+private struct MPVHandleBox: @unchecked Sendable {
+    let raw: OpaquePointer
+}
+
 /// 一次播放请求：地址 + 规则站要的三个可选请求头。
 struct MacPlaybackRequest: Equatable, Sendable {
     var url: URL
@@ -132,7 +138,10 @@ final class MacMPVWorker: @unchecked Sendable {
 
             handle = mpv
             stopped = false
-            eventQueue.async { [self] in eventLoop(mpv) }
+            // OpaquePointer 本身不是 Sendable，但 mpv 句柄本来就是跨线程安全的；
+            // 包一层把这件事写明白，别让「捕获非 Sendable」的警告一直挂着。
+            let box = MPVHandleBox(raw: mpv)
+            eventQueue.async { [self] in eventLoop(box.raw) }
         }
     }
 
