@@ -34,7 +34,11 @@ final class MPVMetalLayer: CAMetalLayer {
     }
 
     @objc private func applyDrawableSize(_ value: NSValue) {
+        #if os(iOS)
+        drawableSize = value.cgSizeValue
+        #else
         drawableSize = value.sizeValue
+        #endif
     }
 
     private static func boxSize(_ size: CGSize) -> NSValue {

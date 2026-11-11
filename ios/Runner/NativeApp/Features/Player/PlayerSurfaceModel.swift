@@ -108,7 +108,9 @@ final class PlayerSurfaceModel {
 
     /// 弹幕画布：横屏底栏「发弹幕」往这里补一条自己发的。
     /// 同上，`makeUIView` 里会写它，别让它参与 Observation。
+    #if os(iOS)
     @ObservationIgnored weak var danmakuOverlay: DanmakuOverlayView?
+    #endif
 
     /// 期望的播放速率。换集 / 起播后会回到 1.0，因此就绪时要按这个值再补一次。
     var desiredRate: Float = 1.0
