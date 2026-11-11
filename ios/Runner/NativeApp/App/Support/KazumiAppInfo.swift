@@ -18,7 +18,7 @@ enum KazumiAppInfo {
     }
 
     static var bundleIdentifier: String {
-        Bundle.main.bundleIdentifier ?? "com.example.kazumi"
+        Bundle.main.bundleIdentifier ?? "com.linkpass.kazumi"
     }
 
     /// 对应原工程 ApiEndpoints.version（用于规则 API 级别与 Bangumi 请求 UA）。

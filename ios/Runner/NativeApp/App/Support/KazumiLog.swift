@@ -10,7 +10,7 @@ import Foundation
 import os
 
 enum KazumiLog {
-    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.example.kazumi"
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.linkpass.kazumi"
 
     static let app = Logger(subsystem: subsystem, category: "App")
     static let network = Logger(subsystem: subsystem, category: "Network")

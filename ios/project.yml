@@ -6,12 +6,12 @@
 #   * 根目录 assets/ 以 folder reference 形式原样打进 Bundle，供 Anime4K 着色器与内置规则复用
 #
 # 生成工程：xcodegen generate --spec ios/project.yml --project ios
-# 产物路径：ios/Runner.xcodeproj，scheme 名称与包名保持 Runner / com.example.kazumi
+# 产物路径：ios/Runner.xcodeproj，scheme 名称与包名保持 Runner / com.linkpass.kazumi
 
 name: Runner
 
 options:
-  bundleIdPrefix: com.example
+  bundleIdPrefix: com.linkpass
   # 与 Flutter 原工程一致的部署版本（iOS 26 原生液态玻璃 API 需要）。
   deploymentTarget:
     iOS: "26.0"
@@ -185,7 +185,7 @@ targets:
 
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi
+        PRODUCT_BUNDLE_IDENTIFIER: com.linkpass.kazumi
         PRODUCT_NAME: $(TARGET_NAME)
         # 只改可执行文件名（= 进程名），不碰 PRODUCT_NAME / PRODUCT_MODULE_NAME：
         # 这样 .app 仍是 Runner.app（CI 的 Payload/Runner.app 路径不用改），
@@ -241,7 +241,7 @@ targets:
       - package: MPVKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.kazumi.RunnerTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.linkpass.kazumi.tests
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "6.0"
 
