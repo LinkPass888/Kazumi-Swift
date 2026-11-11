@@ -221,20 +221,11 @@ struct BangumiInfoScreen: View {
         }
         // 出入场由值驱动：状态变化本身不在动画事务里，只有结果被动画化。
         .animation(.easeOut(duration: 0.2), value: toastMessage)
-        // 导航标题给无障碍与系统用。
-        // 番名由系统的栏承载，但只在大标题滚出去之后才出现；滚回来就收掉。
-        // 栏本身（返回键、更多、玻璃底、滚动边缘）全是系统的，这里只决定那行字有没有。
-        // 栏里那行番名：系统栏的居中位置放一个 Text，只让它渐显渐隐——
-        // 栏本身（返回键、更多、玻璃底、滚动边缘）仍是系统的。
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(controller.item.displayName)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .opacity(barTitleProgress)
-                    .accessibilityHidden(barTitleProgress < 0.5)
-            }
-        }
+        // 栏里那行番名交给系统自己的标题：大标题滚出去之后才设上去，滚回来清掉。
+        // 不能塞自定义视图——Duo 合上时栏是竖的，Apple 规定自定义视图做的工具栏项
+        // 在竖栏里永远不显示，同一段代码在 iPad / iPhone 上出得来，在 Duo 上不出。
+        .navigationTitle(barTitleProgress >= 0.5 ? controller.item.displayName : "")
+        .toolbarTitleDisplayMode(.inline)
         // 顶部那排交给系统：系统返回键 + 系统工具栏按钮，玻璃底与间距由系统给
         // （LP 2026-11-11 / Apple《Adopting Liquid Glass》）。
         .toolbar {
