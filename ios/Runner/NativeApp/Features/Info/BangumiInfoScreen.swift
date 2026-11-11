@@ -43,8 +43,9 @@ struct BangumiInfoScreen: View {
     /// 大标题的高度，和栏里那行番名的出现进度（Ato 8300：跟着滚动位置连续变，
     /// 不是到点切换）。0 = 还没有，1 = 满。
     @State private var titleHeight: CGFloat = 0
-    /// 大标题顶在滚动内容里的位置，用命名坐标空间量一次，滚动时不变。
+    /// 大标题顶在滚动内容里的位置，用命名坐标空间量一次，滚动时不再重量。
     @State private var titleAnchor: CGFloat = 0
+    @State private var didMeasureTitleAnchor = false
     @State private var barTitleProgress: CGFloat = 0
 
     /// B 档：宽且不矮。
@@ -326,6 +327,8 @@ struct BangumiInfoScreen: View {
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.frame(in: .named("detailScroll")).minY
             } action: { anchor in
+                guard !didMeasureTitleAnchor else { return }
+                didMeasureTitleAnchor = true
                 titleAnchor = max(0, anchor)
             }
     }
