@@ -218,7 +218,9 @@ jobs:
           DANDAN_APP_ID: ${{ secrets.DANDANAPI_APPID }}
           DANDAN_APP_SECRET: ${{ secrets.DANDANAPI_KEY }}
         run: |
+          # 浅包校验（MPVKit 静态库壳）会判失败，但编译链接已完成：只容忍这一种。
           set -o pipefail
+          set +e
           xcodebuild build \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
@@ -233,7 +235,17 @@ jobs:
             SUPPORTS_MACCATALYST=YES \
             DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
             DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
-            | xcbeautify
+            2>&1 | tee "$RUNNER_TEMP/catalyst-build.log" | xcbeautify
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            if grep -q "does not use shallow bundles" "$RUNNER_TEMP/catalyst-build.log"; then
+              echo "只有浅包校验失败，编译与链接已完成，继续打包"
+            else
+              echo "构建失败（不是浅包校验）" >&2
+              exit "$status"
+            fi
+          fi
 
       - name: Package unsigned Catalyst dmg
         run: |
@@ -243,6 +255,19 @@ jobs:
             echo "未找到 Catalyst 的 Runner.app" >&2
             exit 1
           fi
+          # 清掉 MPVKit 那几个静态库壳（浅包布局在 macOS 上不合法，运行期用不到）。
+          for fw in "$APP_PATH"/Contents/Frameworks/Lib*.framework; do
+            [ -d "$fw" ] || continue
+            rm -rf "$fw"
+          done
+          # 删壳之后确认真代码是静态链进主二进制的（动态引用的话删壳会在运行时炸）。
+          if otool -L "$APP_PATH/Contents/MacOS/Kazumi" | grep -q "Lib.*\.framework"; then
+            echo "主程序仍动态引用 MPVKit 的 framework，不能删壳：" >&2
+            otool -L "$APP_PATH/Contents/MacOS/Kazumi" | grep "Lib.*\.framework" >&2
+            exit 1
+          fi
+          # arm64 二进制至少要 ad-hoc 签名才能跑。
+          codesign --force --deep --sign - "$APP_PATH"
           STAGE="$RUNNER_TEMP/catalyst-dmg-stage"
           rm -rf "$STAGE"
           mkdir -p "$STAGE"
