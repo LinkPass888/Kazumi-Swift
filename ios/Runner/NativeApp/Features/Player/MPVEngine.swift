@@ -5,11 +5,16 @@
 //  mpv 内核 + gpu-next / MoltenVK + Anime4K。
 //
 
-import AVKit
 import Foundation
 import ImageIO
 import Libmpv
+
+#if os(iOS)
+import AVKit
 import UIKit
+#else
+import AppKit
+#endif
 
 /// 上层的播放时钟接口：弹幕层只关心「现在播到哪」「在不在播」。
 @MainActor
@@ -117,9 +122,11 @@ final class MPVEngine {
     private var pump: MPVEventPump?
     private weak var metalView: MPVMetalView?
 
+    #if os(iOS)
     var playerScene: UIWindowScene? {
         metalView?.window?.windowScene
     }
+    #endif
 
     var onSnapshot: ((MPVSnapshot) -> Void)?
     /// 这一集已经拿到首份视频参数快照。
@@ -283,7 +290,12 @@ final class MPVEngine {
         setOption("gpu-api", "vulkan")
         setOption("gpu-context", "moltenvk")
         setOption("fbo-format", "rgba16hf")
+        #if os(iOS)
         let pictureInPictureEnabled = AVPictureInPictureController.isPictureInPictureSupported()
+        #else
+        // macOS 这一版还没有画中画：不开可复制帧通路，硬解仍走直通。
+        let pictureInPictureEnabled = false
+        #endif
         // 画中画要的是可复制的解码帧；vd-lavc-dr=yes 会把帧留在 GPU 侧，
         // 硬解丢参考帧时 screenshot-raw 一帧都回不来。只在内核创建时定一次。
         setOption("vd-lavc-dr", pictureInPictureEnabled ? "no" : "yes")
@@ -598,7 +610,11 @@ final class MPVEngine {
     /// 回前台时刷新一次 drawable 尺寸，让 MoltenVK 按当前 bounds 重新出图。
     func requestRender() {
         guard !renderingLocked else { return }
+        #if os(iOS)
         metalView?.setNeedsLayout()
+        #else
+        metalView?.needsLayout = true
+        #endif
         metalView?.updateDrawableSize()
         reconfigureVideoOutputForSurfaceResize()
     }
@@ -806,7 +822,7 @@ final class MPVEngine {
         }
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("kazumi-shot-\(UUID().uuidString).png")
-        guard let data = UIImage(cgImage: image).pngData() else {
+        guard let data = Self.pngData(from: image) else {
             return (nil, "取帧失败：PNG 编不出来")
         }
         do {
@@ -1002,6 +1018,7 @@ final class MPVEngine {
         return CGSize(width: width, height: height)
     }
 
+    #if os(iOS)
     /// 兼容旧调用点：读回内存。截图本身不再走这条（写文件再存相册更省）。
     func captureFrame() async -> (image: UIImage?, note: String) {
         let (url, note) = await captureFrameToFile()
@@ -1011,6 +1028,16 @@ final class MPVEngine {
         let image = UIImage(data: data)
         try? FileManager.default.removeItem(at: url)
         return (image, note)
+    }
+    #endif
+
+    /// CGImage → PNG。iOS 用 UIKit 的编码器，macOS 用 AppKit 的位图表示。
+    static func pngData(from image: CGImage) -> Data? {
+        #if os(iOS)
+        return UIImage(cgImage: image).pngData()
+        #else
+        return NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+        #endif
     }
 
     // MARK: - 收尾

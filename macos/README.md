@@ -63,9 +63,16 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 | 日志 / 元信息 | `App/Support/KazumiLog.swift`、`KazumiAppInfo.swift` |
 
 界面：侧边栏 + 各栏的移植说明 + 「关于」设置页；**播放器**（`Runner/Player/`）已经能放
-本地文件和直链——mpv 用和 iOS 同一套输出方式（`wid` 指向 CAMetalLayer +
-`vo=gpu-next` / `vulkan` / `moltenvk`），播放/暂停、±10 秒、进度、音量、倍速、全屏都有。
-选集、弹幕、断流自愈、画中画还没接。
+本地文件和直链。
+
+播放器**没有另写一份内核**：`ios/Runner/NativeApp/Features/Player` 下的
+`MPVEngine.swift`、`MPVMetalView.swift`、`PlayerSurfaceModel.swift` 等直接进 macOS target，
+两边共用。内核里 iOS 独占的只有 4 处（`UIWindowScene`、画中画探测、`UIImage` 截图 PNG、
+`setNeedsLayout`），都按 `os(iOS)` / `os(macOS)` 分开了；`MPVMetalView` 同一个文件里
+是 UIView 与 NSView 两套宿主。macOS 因此直接继承缓冲判断、断流原位重连、首帧、
+进度与截图逻辑，只补了自己缺的：内核音量（这边没有 `AVAudioSession`）、鼠标与键盘操作。
+
+还没接：选集、弹幕叠加、画中画、投屏。
 
 ## 移植顺序（按依赖从底往上）
 
@@ -77,9 +84,10 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 3. **规则界面**：`Plugins/Views` + `Service`（`UIDocumentPicker` → `NSOpenPanel`，
    `UIPasteboard` → `NSPasteboard`，`presentationDetents` → 固定尺寸 sheet）。
 4. **页面**：推荐 → 时间表 → 详情 → 搜索 → 历史 / 收藏 / 我的 → 设置。
-5. **播放器**（已起第一版）：`macos/Runner/Player/MacMPVEngine.swift` 是和 iOS 平行的一份
-   精简内核（1800 → 约 400 行），只做「打开就播」这一圈；iOS 那份里的选集、弹幕叠加、
-   断流自愈、画中画、命令 FIFO 还没搬。音频走 coreaudio，`AVAudioSession` 那套不需要。
+5. **播放器**（已共享内核）：ios 那份 `MPVEngine` / `PlayerSurfaceModel` 就是 macOS 的
+   内核，不再有平行实现。剩下没搬的是长在 iOS 界面里的东西：选集面板、弹幕叠层
+   （`DanmakuOverlayView` 是 UIKit 画的）、画中画、投屏。音频走 coreaudio，
+   `AVAudioSession` 那套不需要。
 6. **iOS 独占功能**：画中画、投屏（AVRoutePickerView）、相册选图、后台播放、灵动岛。
    macOS 侧要么不做，要么换实现（例如选图用 `NSOpenPanel`）。
 

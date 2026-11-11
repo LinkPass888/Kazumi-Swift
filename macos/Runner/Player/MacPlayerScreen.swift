@@ -2,11 +2,11 @@
 //  MacPlayerScreen.swift
 //  Kazumi (macOS)
 //
-//  macOS 侧的播放页：本地文件 / 直链，内核是 MacMPVEngine（mpv + gpu-next/MoltenVK）。
+//  macOS 侧的播放页。内核用的是 iOS 那份共享的 MPVEngine + PlayerSurfaceModel，
+//  所以缓冲判断、首帧、断流自愈、进度、截图都和手机上一个逻辑；
+//  这里只有 macOS 自己的一圈交互：打开文件 / 直链、鼠标拖进度、空格暂停、全屏。
 //
-//  这一版只有「能看」这一圈：打开、播放/暂停、±10 秒、进度、音量、倍速、全屏。
-//  弹幕叠加、选集、断流自愈、画中画这些等 macOS 页面移植到对应阶段再接——
-//  它们都长在 iOS 那套 PlayerScreen（5400 行）里，硬搬过来只会把 UIKit 一起搬进来。
+//  还没接的部分（等 macOS 页面按阶段移植过去）：选集、弹幕叠加、画中画、投屏。
 //
 
 import AppKit
@@ -14,33 +14,35 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct MacPlayerScreen: View {
-    @State private var engine = MacMPVEngine()
+    @State private var model = MacPlayerModel()
     @State private var isShowingURLSheet = false
     @State private var isScrubbing = false
     @State private var scrubPosition: Double = 0
-    @State private var hint: String?
+    @State private var inputHint: String?
 
     private static let speedChoices: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
+
+    private var surface: PlayerSurfaceModel { model.surface }
 
     var body: some View {
         ZStack {
             Color.black
 
-            MacVideoSurface { layer in engine.attach(layer) }
+            MacPlayerContainer(model: model)
                 .ignoresSafeArea()
 
-            if engine.currentTitle == nil {
+            if model.title == nil {
                 emptyState
             }
 
-            if let message = engine.state.message {
+            if let message = surface.errorMessage {
                 errorState(message)
             }
 
             VStack(spacing: 0) {
                 topBar
                 Spacer(minLength: 0)
-                if engine.currentTitle != nil {
+                if model.title != nil {
                     controlBar
                 }
             }
@@ -52,7 +54,7 @@ struct MacPlayerScreen: View {
                 openURL(text)
             }
         }
-        .onDisappear { engine.stop() }
+        .onDisappear { model.stop() }
     }
 
     // MARK: - 空状态 / 报错
@@ -65,7 +67,7 @@ struct MacPlayerScreen: View {
             Text("还没有打开视频")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white)
-            Text("拖入本地文件、选一个文件，或者贴一条直链。")
+            Text("选一个本地文件，或者贴一条直链。播放内核和手机上同一套。")
                 .font(.callout)
                 .foregroundStyle(.white.opacity(0.7))
             HStack(spacing: 12) {
@@ -105,23 +107,23 @@ struct MacPlayerScreen: View {
             Button("打开文件…") { openFile() }
             Button("打开链接…") { isShowingURLSheet = true }
             Spacer(minLength: 12)
-            if let title = engine.currentTitle {
-                Text(title)
-                    .font(.callout)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            if let hint {
-                Text(hint)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
+            VStack(spacing: 2) {
+                if let title = model.title {
+                    Text(title)
+                        .font(.callout)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                if let note = inputHint ?? model.hint {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.65))
+                }
             }
             Spacer(minLength: 12)
-            if engine.currentTitle != nil {
-                Button("停止") {
-                    engine.stop()
-                }
+            if model.title != nil {
+                Button("停止") { model.stop() }
             }
         }
         .buttonStyle(.bordered)
@@ -135,16 +137,16 @@ struct MacPlayerScreen: View {
         VStack(spacing: 10) {
             Slider(
                 value: Binding(
-                    get: { isScrubbing ? scrubPosition : engine.state.position },
+                    get: { isScrubbing ? scrubPosition : surface.currentTime },
                     set: { scrubPosition = $0 }
                 ),
-                in: 0...max(engine.state.duration, 1),
+                in: 0...max(surface.duration, 1),
                 onEditingChanged: { editing in
                     if editing {
-                        scrubPosition = engine.state.position
+                        scrubPosition = surface.currentTime
                         isScrubbing = true
                     } else {
-                        engine.seek(to: scrubPosition)
+                        surface.seek(to: scrubPosition)
                         isScrubbing = false
                     }
                 }
@@ -152,30 +154,35 @@ struct MacPlayerScreen: View {
             .tint(.white)
 
             HStack(spacing: 18) {
-                Button { engine.skip(by: -10) } label: {
+                Button { surface.skipForward(seconds: -10) } label: {
                     Image(systemName: "gobackward.10")
                 }
                 .help("后退 10 秒")
 
-                Button { engine.togglePause() } label: {
-                    Image(systemName: engine.state.isPaused ? "play.fill" : "pause.fill")
+                Button { surface.togglePlay() } label: {
+                    Image(systemName: surface.isPlaying ? "pause.fill" : "play.fill")
                         .frame(width: 26)
                 }
                 .keyboardShortcut(.space, modifiers: [])
-                .help(engine.state.isPaused ? "播放（空格）" : "暂停（空格）")
+                .help(surface.isPlaying ? "暂停（空格）" : "播放（空格）")
 
-                Button { engine.skip(by: 10) } label: {
+                Button { surface.skipForward(seconds: 10) } label: {
                     Image(systemName: "goforward.10")
                 }
                 .help("前进 10 秒")
 
-                Text("\(Self.clock(displayPosition)) / \(Self.clock(engine.state.duration))")
+                Text("\(Self.clock(displayPosition)) / \(Self.clock(surface.duration))")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.8))
 
-                if engine.state.isBuffering && !engine.state.isPaused {
+                if surface.isStalled || surface.isLoadingFirstFrame {
                     ProgressView()
                         .controlSize(.small)
+                }
+                if surface.downloadSpeed > 1 {
+                    Text(Self.speedText(surface.downloadSpeed))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.6))
                 }
 
                 Spacer(minLength: 8)
@@ -183,19 +190,26 @@ struct MacPlayerScreen: View {
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.8))
-                Slider(value: Binding(get: { engine.volume }, set: { engine.volume = $0 }), in: 0...100)
+                Slider(value: Binding(get: { model.volume }, set: { model.volume = $0 }), in: 0...100)
                     .frame(width: 110)
                     .tint(.white)
 
-                Menu(engine.speed == 1 ? "1x" : String(format: "%gx", engine.speed)) {
-                    ForEach(Self.speedChoices, id: \.self) { speed in
-                        Button(String(format: "%gx", speed)) {
-                            engine.speed = speed
+                Menu(model.speed == 1 ? "1x" : String(format: "%gx", model.speed)) {
+                    ForEach(Self.speedChoices, id: \.self) { choice in
+                        Button(String(format: "%gx", choice)) {
+                            model.speed = choice
                         }
                     }
                 }
                 .menuStyle(.borderlessButton)
                 .frame(width: 62)
+
+                Button {
+                    Task { await captureFrame() }
+                } label: {
+                    Image(systemName: "camera")
+                }
+                .help("截一张当前帧")
 
                 Button { NSApp.keyWindow?.toggleFullScreen(nil) } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -210,7 +224,7 @@ struct MacPlayerScreen: View {
     }
 
     private var displayPosition: Double {
-        isScrubbing ? scrubPosition : engine.state.position
+        isScrubbing ? scrubPosition : surface.currentTime
     }
 
     // MARK: - 打开
@@ -224,19 +238,28 @@ struct MacPlayerScreen: View {
         panel.message = "选一个本地视频文件"
         panel.prompt = "播放"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        hint = nil
-        engine.play(MacPlaybackRequest(url: url))
+        inputHint = nil
+        model.open(url: url)
+    }
+
+    /// 截图走共享的引擎（screenshot-raw → 临时 PNG），打开 Finder 定位到那一张。
+    private func captureFrame() async {
+        let (url, note) = await surface.captureFrame()
+        if let url {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+        inputHint = note
     }
 
     private func openURL(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else {
-            hint = "地址要以 http(s) 开头"
+            inputHint = "地址要以 http(s) 开头"
             return
         }
-        hint = nil
-        engine.play(MacPlaybackRequest(url: url))
+        inputHint = nil
+        model.open(url: url)
     }
 
     private static func clock(_ seconds: Double) -> String {
@@ -249,6 +272,13 @@ struct MacPlayerScreen: View {
             return String(format: "%d:%02d:%02d", hours, minutes, secs)
         }
         return String(format: "%d:%02d", minutes, secs)
+    }
+
+    private static func speedText(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1_048_576 {
+            return String(format: "%.1f MB/s", bytesPerSecond / 1_048_576)
+        }
+        return String(format: "%.0f KB/s", bytesPerSecond / 1024)
     }
 }
 

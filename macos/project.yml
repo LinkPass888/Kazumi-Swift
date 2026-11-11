@@ -45,9 +45,8 @@ packages:
   Fuzi:
     url: https://github.com/cezheng/Fuzi.git
     from: 3.1.3
-  # 播放内核。Package.swift 声明了 .macOS(.v12)，所以 macOS 切片应该存在；
-  # 这一版没有任何代码调用它，先挂着是为了让 CI 第一轮就把「macOS 能不能链接
-  # MPVKit」这件事答掉——播放器能不能移植全看这个结论。
+  # 播放内核。Package.swift 声明了 .macOS(.v12)，macOS 切片在。
+  # 现在 MPVEngine.swift 真的引用了它的符号，链接期就能验证这套切片可用。
   MPVKit:
     url: https://github.com/mpvkit/MPVKit.git
     exactVersion: 1.1.0-n9.0.2
@@ -82,6 +81,22 @@ targets:
       - path: ../ios/Runner/NativeApp/App/Support/ProxyURL.swift
       # 规则市场列表里的「更新于 MM-dd」，读系统日期格式。
       - path: ../ios/Runner/NativeApp/Design/SystemDateText.swift
+      # ——— 播放内核（和 iOS 共用同一份，不再另写一份精简版）———
+      # 内核本身几乎没有 UIKit：只有 4 处 iOS 独占（UIWindowScene、画中画探测、
+      # UIImage 截图 PNG、setNeedsLayout），已经按 os(iOS)/os(macOS) 分开；
+      # MPVMetalView 同一个文件里两套宿主（UIView / NSView）。
+      # 这一组进来之后 MPVKit 才真的被符号引用（之前只挂在包上，链接时被 dead-strip）。
+      - path: ../ios/Runner/NativeApp/Features/Player/MPVEngine.swift
+      - path: ../ios/Runner/NativeApp/Features/Player/MPVMetalView.swift
+      - path: ../ios/Runner/NativeApp/Features/Player/MPVFrameGrab.swift
+      - path: ../ios/Runner/NativeApp/Features/Player/MPVDiagnostics.swift
+      - path: ../ios/Runner/NativeApp/Features/Player/PlaybackCachePolicy.swift
+      - path: ../ios/Runner/NativeApp/Features/Player/PlayerErrorMessage.swift
+      - path: ../ios/Runner/NativeApp/Features/Player/PlayerSurfaceModel.swift
+      # 硬解档位（从 SettingsStore 里拆出来的纯枚举，SettingsStore 本身带界面依赖）。
+      - path: ../ios/Runner/NativeApp/App/State/HardwareDecodeMode.swift
+      # 「mpv: ...」这条日志口袋。
+      - path: ../ios/Runner/NativeApp/App/Support/KazumiLogBuffer.swift
       # 字符串目录直接借 iOS 那份：以后移植过来的页面不用再建一套。
       - path: ../ios/Runner/Localizable.xcstrings
         buildPhase: resources
