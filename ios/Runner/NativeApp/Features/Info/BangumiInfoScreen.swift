@@ -28,6 +28,8 @@ struct BangumiInfoScreen: View {
     @State private var selectedTab: InfoTab = .overview
     /// 浮起那颗「开始观看」的高度，量出来给正文底部留白用。
     @State private var startPlayingButtonHeight: CGFloat = 0
+    /// 追番菜单实测高度：栏 2 的文字区按它扣，菜单下沿才跟封面下沿齐平。
+    @State private var collectMenuHeight: CGFloat = 36
     @State private var toastMessage: String?
     /// 添加到时间表但番剧还没标成在看时，先弹确认。
     @State private var pendingTimelineItem: BangumiItem?
@@ -53,13 +55,14 @@ struct BangumiInfoScreen: View {
         containerSize.width >= 700 && containerSize.height < 600
     }
 
-    /// 宽屏三栏：只认可用宽度 ≥900（Colo 8228 §3.1）。不读高度、不读机型、不认姿态，
+    /// 宽屏三栏：只认可用宽度 ≥860（Colo 8355 定的最小可读栏宽 260 × 3 + 80）。不读高度、不读机型、不认姿态，
     /// 也不和推荐页那个高度阈值共用常量（Ato 8199）。辅助功能字号下一律回落单栏堆叠。
     private var threeColumn: Bool {
-        containerSize.width >= 900 && !dynamicTypeSize.isAccessibilitySize
+        containerSize.width >= 860 && !dynamicTypeSize.isAccessibilitySize
     }
 
     /// 三栏每栏宽度：(可用宽 − 左右页边 16×2 − 栏间 24×2) / 3。
+    /// Duo 内屏可用宽 867 时每栏 262.33（Colo 8355）；阈值 860 即最小可读栏宽 260。
     private var threeColumnWidth: CGFloat {
         max(0, (containerSize.width - 80) / 3)
     }
@@ -157,7 +160,9 @@ struct BangumiInfoScreen: View {
                             title(controller)
                             HStack(alignment: .top, spacing: 24) {
                                 coverColumn(controller)
-                                infoColumn(controller, coverHeight: 0)
+                                // 最小高不是钉死高（Colo 8398）：常规内容下栏 2 正好封面高、
+                                // 菜单下沿齐平；行数或字号涨了往下长，不靠缩字。
+                                infoColumn(controller, coverHeight: threeColumnWidth / Self.bigCoverAspectRatio)
                                     .frame(width: threeColumnWidth, alignment: .topLeading)
                                 tabColumn(controller, proxy: proxy)
                                     .frame(width: threeColumnWidth, alignment: .topLeading)
@@ -183,6 +188,7 @@ struct BangumiInfoScreen: View {
                     .padding(.bottom, contentBottomPadding)
                 }
                 .scrollIndicators(.hidden)
+                .containerRelativeFrame(.horizontal)
                 // 顶部滚动边缘效果交回系统的 .soft（其余二十多个页面同一条）。
                 .scrollEdgeEffectStyle(.soft, for: .top)
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -360,6 +366,9 @@ struct BangumiInfoScreen: View {
         } label: {
             Image(systemName: "ellipsis")
         }
+        // 只这一颗按系统 label 色，跟返回键一致（LP 8419 / Ato 8423）；
+        // 整页不设 tint，收藏菜单那些系统控件仍跟主题色走。
+        .tint(.primary)
         .accessibilityLabel("更多")
     }
 }
@@ -474,6 +483,9 @@ extension BangumiInfoScreen {
     /// 大封面的宽高比：详情页封面一律 0.67（简报定的；网格小卡另算，不走这个）。
     private static let bigCoverAspectRatio: CGFloat = 0.67
 
+    /// 追番菜单与文字区之间的间距（Colo 8365 D7：菜单与最后一行 ≥8）。
+    private static let collectMenuGap: CGFloat = 8
+
     /// 内容行宽：容器宽减左右各 16，最宽 950（§6.0：量容器，不量整屏）。
     private var infoRowWidth: CGFloat {
         min(max(0, containerSize.width - 32), 950)
@@ -545,12 +557,27 @@ extension BangumiInfoScreen {
             // 文字区压缩优先级最高：整块等比缩，宁可字小一点。
             .minimumScaleFactor(0.75)
             .layoutPriority(1)
-
-            Spacer(minLength: 6)
+            // 文字区至少撑到「封面高 − 菜单占位」，菜单就自然落在封面下沿
+            // （Colo 8365 D7：菜单下沿 ＝ 封面下沿 ±1）；行数或字号涨了文字区
+            // 继续往下长、菜单跟着下移，不靠缩字（Colo 8398 D8）。
+            //
+            // 这里用「文字区最小高」而不是尾部 Spacer：三栏时这一列和标签栏并排，
+            // 尾部 Spacer 会把列拉到标签栏那么高，菜单就被顶到封面下沿以下。
+            // 扣掉的高度用实测值：36 只是 minHeight，字号一大菜单自己会长过 36
+            // （Fuck 8411），写死 44 会让菜单下沿沉到封面下沿下面。
+            .frame(
+                minHeight: max(0, coverHeight - collectMenuHeight - Self.collectMenuGap),
+                alignment: .topLeading
+            )
 
             // 追番按钮钉在信息列底部，状态只换文案与图标，不换位置与尺寸。
             collectMenu(controller)
-                .frame(minWidth: 96, minHeight: 36, alignment: .leading)
+                // 三栏下按钮 27.7 高、容器 36，默认居中会让按钮下沿离封面下沿差 4 点，
+                // 这里改成贴底（Colo 8365 D7：菜单下沿 ＝ 封面下沿 ±1）。
+                .frame(minWidth: 96, minHeight: 36, alignment: threeColumn ? .bottomLeading : .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    collectMenuHeight = height
+                }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         // 至少和封面一样高，行多了往下长（Colo 3013）：行数是变的——有排名没排名、
