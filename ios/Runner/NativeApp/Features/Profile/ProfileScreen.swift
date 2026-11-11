@@ -207,74 +207,87 @@ struct ProfileScreen: View {
 
     /// 观看历史那一行底下最近的几条，竖放（LP 3557、Colo 3559）：
     /// 番名普遍长，横放三张一截断就认不出是哪部，比高一点更糟。
-    /// 点一条进那部的详情，「观看历史」那一行才是历史页。
+    /// 点一条直接播那一集（LP 2026-10-27，跟 main 一样），不进详情页。
+    ///
+    /// 卡片的信息和排版照「观看历史」页那张抄（Camo 2026-11-11）：带播放 / 重看角标的
+    /// 封面、番名两行、集数行、「看到 12:34」、进度条、最后一行「规则名 · 时间」。
+    /// 尺寸不能跟那一页一样大：这里按封面比例缩小——封面 64 宽（历史页 84），
+    /// 行高就是封面高度，内边距、行距、字号跟着小一档。
+    /// **字重和颜色仍用这一页原来的**——正文 regular、次要信息 secondary，
+    /// 不搬历史页那个加粗标题和主题色进度文案。
+    /// 同一部番只留最近看的那一条来源（按 `updatedAt` 倒序，第一条就是它）。
     private var recentStrip: some View {
         VStack(spacing: 0) {
             ForEach(Array(recentRecords.enumerated()), id: \.element.id) { index, record in
                 if index > 0 {
-                    // Colo 3561：条带里面的分隔线跟文字块对齐（14 + 封面 64 + 12 = 90），
+                    // 条带里面的分隔线跟文字块对齐（12 + 封面 64 + 12 = 88），
                     // 不跟组里其它分隔线一样左起 54——那样会从封面中间穿过去。
-                    Divider().padding(.leading, 90)
+                    Divider().padding(.leading, 88)
                 }
                 recentRow(record)
             }
         }
     }
 
-    /// 一条：封面 64×98 在左，右边名字 15、集行 12、状态 12，下面一条进度。
-    /// 点一条直接播那一集（LP 2026-10-27，跟 main 一样），不进详情页。
+    /// 一条：封面 64 宽在左，右边番名、集数、「看到 12:34」、进度条、
+    /// 「规则名 · 时间」；右边这一列至少撑满封面高度，进度条和时间落在这一条底部。
     private func recentRow(_ record: WatchRecord) -> some View {
         Button {
-            router.push(.player(bangumiID: record.bangumiID, episode: record.episodeNumber))
+            // 跟「观看历史」页同一份路由参数：带线路、带「接着看」标记、带卡片上
+            // 那条规则名。少了 `resumeRule`，离线时本地文件就查不到——播放器的
+            // `localFile` 是按「番剧 + 规则名」取的，下载好的集照样要联网（#27）。
+            router.push(.player(
+                bangumiID: record.bangumiID,
+                episode: record.episodeNumber,
+                source: nil,
+                resumeRoad: record.roadIndex,
+                resumeFromHistory: true,
+                resumeRule: record.sourceRuleName
+            ))
         } label: {
-            HStack(alignment: .center, spacing: 12) {
-                Color.clear
-                    .frame(width: 64, height: 64 / BangumiPosterCard.coverAspectRatio)
-                    .overlay {
-                        BangumiRemoteImage(url: record.imageURL)
-                    }
-                    .clipShape(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    )
+            HStack(spacing: 12) {
+                recentPoster(record)
 
-                // Colo 3567：文字那三行上下居中，不跟封面顶对齐——封面 98 高、
-                // 三行字只有 50 上下，顶对齐会在这一条下面空出四十多。
-                // 进度条不跟着居中（LP 3580）：它留在这条底部，跟封面下沿齐，
-                // 三行字在被它让出来的空间里居中。
-                VStack(alignment: .leading, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(record.bangumiName)
-                            .font(.subheadline)
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(record.bangumiName)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
 
-                        Text(episodeLine(for: record))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .padding(.top, 2)
+                    Text(episodeLine(for: record))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
 
-                        Text(statusText(for: record))
-                            .font(.caption)
+                    // 「看到 12:34」单独一行，在集数正下方（Colo 4895）。
+                    // 没有进度就整行不出现；颜色用这一页的次要灰，不用主题色。
+                    if let position = record.positionText {
+                        Text(position)
+                            .font(.system(size: 12).monospacedDigit())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .padding(.top, 2)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
-                    // 进度条是这一条的底边，跟状态行之间没有固定间距（Colo 3585）。
+                    Spacer(minLength: 0)
+
                     KazumiGlassProgressBar(
                         progress: record.fraction,
                         tint: KazumiPalette.accent(for: colorScheme)
                     )
+
+                    // 底部照观看历史页合成一条：规则名 · 时间。
+                    Text(metaLine(for: record))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // 这一列撑满封面高度：进度条落到封面下沿，三行字在里面居中。
-                .frame(height: 64 / BangumiPosterCard.coverAspectRatio)
+                // 用 minHeight 而不是定高：字号放大时这一列自己长高，不会压到下一行。
+                .frame(minHeight: Self.recentCoverWidth / BangumiPosterCard.coverAspectRatio, alignment: .top)
             }
-            // 行高 114 = 封面 98 ＋ 上下各 8。
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -282,24 +295,36 @@ struct ProfileScreen: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            Text(verbatim: "\(record.bangumiName)，\(episodeLine(for: record))，\(statusTextString(for: record))")
+            Text(verbatim: "\(record.bangumiName)，\(episodeLine(for: record))，\(record.positionText ?? String(localized: "继续观看"))")
         )
         .accessibilityAddTraits(.isButton)
     }
 
-    /// 底部状态，跟观看历史页同一份写法：看完的写「已看完」，否则写具体看到哪儿了
-    /// （LP 4892：不要百分比），一集都没看下去就说「继续观看」。
-    private func statusText(for record: WatchRecord) -> LocalizedStringKey {
-        if record.isFinished { return "已看完" }
-        // positionText 是算出来的进度（「12:34」这种），查不到译文就原样显示。
-        return LocalizedStringKey(record.positionText ?? "继续观看")
+    /// 封面：宽高都给死，圆角与海报卡同一套。右下角那颗小三角是「接着看」的意思，
+    /// 看完的换成「重看」（跟观看历史页同一颗）。
+    private func recentPoster(_ record: WatchRecord) -> some View {
+        BangumiRemoteImage(url: record.imageURL)
+            .frame(width: Self.recentCoverWidth, height: Self.recentCoverWidth / BangumiPosterCard.coverAspectRatio)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                // 角标也按封面比例缩：历史页那张是 26 / 11 / 6，这里 64 ÷ 84 折下来是 20 / 9 / 5。
+                Image(systemName: record.isFinished ? "arrow.counterclockwise" : "play.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(.black.opacity(0.45), in: Circle())
+                    .padding(5)
+            }
     }
 
-    /// 无障碍标签用的同一句话，但返回 String。
-    /// 不能把 `LocalizedStringKey` 插值进字符串里——那样拿到的是 debug 描述，不是译文。
-    private func statusTextString(for record: WatchRecord) -> String {
-        if record.isFinished { return String(localized: "已看完") }
-        return record.positionText ?? String(localized: "继续观看")
+    /// 封面宽：跟历史页那张（84）比小一档，行高按同一个封面比例算（64 ÷ 0.65 ≈ 98）。
+    private static let recentCoverWidth: CGFloat = 64
+
+    /// 底部那条：规则名 · 时间（Colo 4895）。规则名为空就只写时间。
+    private func metaLine(for record: WatchRecord) -> String {
+        let time = KazumiTimeText.relative(record.updatedAt)
+        let rule = record.sourceRuleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return rule.isEmpty ? time : "\(rule) · \(time)"
     }
 
     /// 「第 1 集」或「第 1 集 · 标题」，跟观看历史页同一份写法。
