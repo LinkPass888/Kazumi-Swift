@@ -259,17 +259,27 @@ jobs:
             echo "未找到 Catalyst 的 Runner.app" >&2
             exit 1
           fi
-          # 清掉 MPVKit 那几个静态库壳：浅包布局在 macOS 上不合法，运行期也用不到
-          # （真代码是静态链接进 Runner 的）。只动 Lib* 前缀的，别碰别人。
-          for fw in "$APP_PATH"/Contents/Frameworks/Lib*.framework; do
-            [ -d "$fw" ] || continue
-            rm -rf "$fw"
-          done
-          # 删壳之后要确认真代码是静态链进主二进制的：主程序若还动态引用
-          # Lib*.framework，删掉它就到运行时才炸。这里当场查出来。
-          if otool -L "$APP_PATH/Contents/MacOS/Kazumi" | grep -q "Lib.*\.framework"; then
-            echo "主程序仍动态引用 MPVKit 的 framework，不能删壳：" >&2
-            otool -L "$APP_PATH/Contents/MacOS/Kazumi" | grep "Lib.*\.framework" >&2
+          # MPVKit 的 framework 原样留着（浅包布局只影响 Xcode 的 Validate，
+          # 不影响 dyld 加载）；只查主程序引用的第三方依赖是否都还在包里。
+          # 校验主二进制的第三方依赖都在包里（@rpath / @executable_path 引用）。
+          # 注意别用 `grep 'Lib.*\.framework'`：那会连 /System/Library/... 一起命中。
+          BIN="$APP_PATH/Contents/MacOS/Kazumi"
+          MISSING=0
+          while read -r ref; do
+            case "$ref" in
+              /System/*|/usr/lib/*) continue ;;
+              @rpath/*) rel="${ref#@rpath/}" ;;
+              @executable_path/*) rel="${ref#@executable_path/}" ;;
+              *) continue ;;
+            esac
+            target="$APP_PATH/Contents/Frameworks/$rel"
+            if [ ! -e "$target" ]; then
+              echo "缺失依赖: $ref -> $target" >&2
+              MISSING=1
+            fi
+          done < <(otool -L "$BIN" | awk 'NR>1 {print $1}' | grep -E '^@(rpath|executable_path)/')
+          if [ "$MISSING" -ne 0 ]; then
+            echo "包内依赖不完整，dmg 打出来也起不来" >&2
             exit 1
           fi
           # arm64 的二进制必须至少有 ad-hoc 签名才能跑起来。
