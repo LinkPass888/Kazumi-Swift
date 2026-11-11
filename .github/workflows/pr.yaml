@@ -156,7 +156,7 @@ jobs:
             DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
             | xcbeautify
 
-      - name: Package canary app
+      - name: Package canary dmg
         run: |
           set -euo pipefail
           APP_PATH="$RUNNER_TEMP/DerivedData-mac/Build/Products/Release/Kazumi.app"
@@ -164,12 +164,19 @@ jobs:
             echo "未找到 Kazumi.app：$APP_PATH" >&2
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" Kazumi_macos_canary.zip
-          ls -lh Kazumi_macos_canary.zip
+          # 摆成标准的拖拽安装盘：Kazumi.app + /Applications 的软链。
+          STAGE="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -R "$APP_PATH" "$STAGE/Kazumi.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Kazumi" -srcfolder "$STAGE" -fs HFS+ \
+            -format UDZO -ov Kazumi_macos_canary.dmg
+          ls -lh Kazumi_macos_canary.dmg
 
-      - name: Upload canary app
+      - name: Upload canary dmg
         uses: actions/upload-artifact@v7
         with:
           name: macos_outputs
-          path: Kazumi_macos_canary.zip
+          path: Kazumi_macos_canary.dmg
           if-no-files-found: error

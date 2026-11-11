@@ -157,7 +157,7 @@ jobs:
             DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
             | xcbeautify
 
-      - name: Package unsigned app
+      - name: Package unsigned dmg
         run: |
           set -euo pipefail
           APP_PATH="$RUNNER_TEMP/DerivedData-mac/Build/Products/Release/Kazumi.app"
@@ -165,14 +165,21 @@ jobs:
             echo "未找到 Kazumi.app：$APP_PATH" >&2
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "Kazumi_macos_${tag}_no_sign.zip"
-          ls -lh "Kazumi_macos_${tag}_no_sign.zip"
+          # 摆成标准的拖拽安装盘：Kazumi.app + /Applications 的软链。
+          STAGE="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -R "$APP_PATH" "$STAGE/Kazumi.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Kazumi" -srcfolder "$STAGE" -fs HFS+ \
+            -format UDZO -ov "Kazumi_macos_${tag}_no_sign.dmg"
+          ls -lh "Kazumi_macos_${tag}_no_sign.dmg"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v7
         with:
           name: macos_outputs
-          path: Kazumi_macos_*.zip
+          path: Kazumi_macos_*.dmg
           if-no-files-found: error
 
   release:
@@ -227,4 +234,4 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             ios_outputs/Kazumi_ios_*.ipa
-            macos_outputs/Kazumi_macos_*.zip
+            macos_outputs/Kazumi_macos_*.dmg

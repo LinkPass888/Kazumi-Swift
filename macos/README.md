@@ -38,9 +38,15 @@ xcodebuild -project macos/Kazumi.xcodeproj -scheme Kazumi -configuration Debug \
 没有单独的 macOS 工作流，macOS 的构建直接并进现有两条：
 
 - `.github/workflows/pr.yaml` → 作业 `Build for macOS`，PR 一推就编，产出
-  `Kazumi_macos_canary.zip`（免签名）。
+  `Kazumi_macos_canary.dmg`（免签名、免公证）。
 - `.github/workflows/release.yaml` → 作业 `Release for macOS`，打 tag 时和 iOS 一起出包，
-  产出 `Kazumi_macos_<tag>_no_sign.zip` 挂到同一个 Release。
+  产出 `Kazumi_macos_<tag>_no_sign.dmg` 挂到同一个 Release。
+
+dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UDZO` 生成，
+是标准的拖拽安装盘；不签名所以首次打开要右键「打开」或 `xattr -dr com.apple.quarantine`。
+
+包体现在是「壳」的大小（1～2 MB）：播放内核 MPVKit 虽然在工程里，但还没有任何代码
+引用它的符号，链接时会整个 dead-strip 掉。播放器移植进来之后才会变成百 MB 级。
 
 两条都**只 build，不跑测试**——和 iOS 那条一样。
 
