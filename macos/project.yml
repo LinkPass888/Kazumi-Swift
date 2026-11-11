@@ -159,6 +159,10 @@ targets:
         CURRENT_PROJECT_VERSION: "30005"
         INFOPLIST_FILE: Runner/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        # 只出 Apple Silicon（arm64）。Intel Mac 不管：MPVKit 的 macOS 切片虽然是
+        # universal，这边也用不上 x86_64，只编一个架构能省掉近一半的编译时间。
+        ARCHS: arm64
+        VALID_ARCHS: arm64
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: Runner/Kazumi.entitlements
         ENABLE_HARDENED_RUNTIME: YES

@@ -20,6 +20,17 @@ struct MacPlayRequest: Identifiable, Equatable {
     var referer: String?
     var userAgent: String?
     var cookie: String?
+    /// 这一集属于哪份播放列表（线路 × 剧集）。带着它，播放器里就能直接选集。
+    var playlist: MacPlaylist?
+}
+
+/// 一份播放列表：哪条规则搜到的哪部番，以及全部线路与集数。
+struct MacPlaylist: Equatable {
+    var pluginName: String
+    var animeName: String
+    var roads: [Road]
+    var roadIndex: Int
+    var episodeIndex: Int
 }
 
 @MainActor

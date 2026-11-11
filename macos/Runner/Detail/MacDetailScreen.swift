@@ -134,36 +134,21 @@ struct MacDetailScreen: View {
         isLoading = false
     }
 
-    /// 点一集：能取到直链就直接放，取不到就说明要网页解析。
+    /// 点一集：把「规则 + 线路 + 集号」交给共用的解析，能取到直链就起播。
     private func play(road: Road, index: Int) {
         guard let plugin else { return }
-        guard index < road.identifier.count else {
-            message = "这一集没有地址（规则的线路数据不完整）。"
-            return
-        }
-        let raw = road.identifier[index]
-        let absolute = EpisodeURL.normalize(baseUrl: plugin.baseUrl, raw: raw)
-        let decoded = MediaUtility.decodeVideoSource(absolute)
-        guard MediaUtility.isMediaURL(decoded), let url = URL(string: decoded) else {
-            message = String(
-                localized: "这条线路给的是网页地址，要在网页里解析出地址才能播——那套 WebView 还没移植到 macOS。换一条直链线路试试。"
+        do {
+            let request = try MacEpisodePlayback.request(
+                plugin: plugin,
+                animeName: item.name,
+                roads: roads,
+                roadIndex: roadIndex,
+                episodeIndex: index
             )
-            return
+            app.play(request)
+            dismiss()
+        } catch {
+            message = error.localizedDescription
         }
-        let headers = plugin.buildHttpHeaders()
-        let cookie = PluginCookieStore.shared.cookieHeader(pluginName: plugin.name, url: decoded)
-        let title = road.data.indices.contains(index) && !road.data[index].isEmpty
-            ? "\(item.name) · \(road.data[index])"
-            : item.name
-        app.play(
-            MacPlayRequest(
-                url: url,
-                title: title,
-                referer: headers["referer"],
-                userAgent: PluginCookieStore.shared.userAgent(for: plugin.name) ?? headers["user-agent"],
-                cookie: cookie.isEmpty ? nil : cookie
-            )
-        )
-        dismiss()
     }
 }

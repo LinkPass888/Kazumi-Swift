@@ -32,6 +32,10 @@ struct MacPlayerScreen: View {
     @State private var dragStartVolume: Double = 100
     @State private var dragPreviewTime: Double?
     @State private var dragPreviewVolume: Double?
+    /// 这一集所属的播放列表：有它，控制条上就多一个「选集」。
+    @State private var playlist: MacPlaylist?
+    @State private var isShowingEpisodes = false
+
     /// 原生菜单这会儿开着没：`NSMenu.popUp` 是阻塞式的，前后正好一对。
     /// 开着的时候控制条不自动收（不然菜单跟着一起没了）。
     @State private var isNativeMenuOpen = false
@@ -93,6 +97,7 @@ struct MacPlayerScreen: View {
                 userAgent: request.userAgent,
                 cookie: request.cookie
             )
+            playlist = request.playlist
             controlsVisible = true
             // 取走就清掉：同一栏再回来不会重复起播。
             app.playRequest = nil
@@ -308,6 +313,18 @@ struct MacPlayerScreen: View {
 
                 Spacer(minLength: 8)
 
+                if playlist != nil {
+                    Button {
+                        isShowingEpisodes = true
+                    } label: {
+                        Label("选集", systemImage: "list.bullet")
+                    }
+                    .popover(isPresented: $isShowingEpisodes, arrowEdge: .bottom) {
+                        episodePanel
+                    }
+                    .help("选集")
+                }
+
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.8))
@@ -356,6 +373,101 @@ struct MacPlayerScreen: View {
 
     private var displayPosition: Double {
         isScrubbing ? scrubPosition : surface.currentTime
+    }
+
+    // MARK: - 选集
+
+    /// 当前线路（播放列表里选中的那条）。
+    private var currentRoad: Road? {
+        guard let playlist, playlist.roads.indices.contains(playlist.roadIndex) else { return nil }
+        return playlist.roads[playlist.roadIndex]
+    }
+
+    /// 选集面板：上面换线路，下面点集数。当前这一集带一个喇叭标记。
+    @ViewBuilder
+    private var episodePanel: some View {
+        if let playlist, let road = currentRoad {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(playlist.animeName)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                if playlist.roads.count > 1 {
+                    Picker(
+                        "线路",
+                        selection: Binding(
+                            get: { playlist.roadIndex },
+                            set: { self.playlist?.roadIndex = $0 }
+                        )
+                    ) {
+                        ForEach(Array(playlist.roads.enumerated()), id: \.offset) { index, item in
+                            Text(item.name.isEmpty ? "线路 \(index + 1)" : item.name)
+                                .tag(index)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                Divider()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(road.data.enumerated()), id: \.offset) { index, name in
+                            Button {
+                                startEpisode(index)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(name.isEmpty ? "第 \(index + 1) 集" : name)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                    if index == playlist.episodeIndex {
+                                        Image(systemName: "speaker.wave.2.fill")
+                                            .font(.caption2)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+            .frame(width: 260, height: 320)
+        }
+    }
+
+    /// 在播放器里换集：走与详情页同一份解析，成功后把播放列表换成新的那一集。
+    private func startEpisode(_ index: Int) {
+        guard let playlist else { return }
+        guard let plugin = app.plugins.plugin(named: playlist.pluginName) else {
+            inputHint = "这条规则已经不在本机了，回到「规则」栏装回来。"
+            return
+        }
+        do {
+            let request = try MacEpisodePlayback.request(
+                plugin: plugin,
+                animeName: playlist.animeName,
+                roads: playlist.roads,
+                roadIndex: playlist.roadIndex,
+                episodeIndex: index
+            )
+            self.playlist = request.playlist
+            isShowingEpisodes = false
+            model.open(
+                url: request.url,
+                title: request.title,
+                referer: request.referer,
+                userAgent: request.userAgent,
+                cookie: request.cookie
+            )
+        } catch {
+            inputHint = error.localizedDescription
+        }
     }
 
     // MARK: - 打开

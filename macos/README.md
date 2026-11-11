@@ -1,6 +1,7 @@
 # macOS 版
 
 真正的 macOS target，**不是**「Designed for iPad」，也**不是** Mac Catalyst。
+**只支持 Apple Silicon（arm64）：`ARCHS = arm64`，Intel Mac 不在支持范围。**
 
 - 「Designed for iPad」已废弃：iOS target 交给 macOS SDK 编，UIKit 模块直接解析不了。
 - Catalyst 不走：它把整套 UIKit 搬到 Mac 上，侧边栏、窗口、菜单栏这些 macOS 该有的东西
@@ -87,8 +88,8 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 竖拖调音量、播放中 4 秒自动收起；同时保留按钮、空格暂停、全屏这些鼠标/键盘路子
 （macOS 26 起带触屏的机器把触摸事件送进 SwiftUI 的 gesture，两边同一套代码）。
 
-还没接：播放器里的选集面板（详情页有线路/剧集列表，播放器内没有）、弹幕叠加、
-画中画、投屏、WebView 抓地址。
+还没接：弹幕叠加、画中画、投屏、WebView 抓地址（网页线路播不了）。
+播放器里的选集面板已经能用：控制条上的「选集」开线路与剧集，换集不用回详情页。
 
 ## 移植顺序（按依赖从底往上）
 
