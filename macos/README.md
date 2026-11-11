@@ -62,7 +62,10 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 | Cookie 口袋 | `Features/Plugins/Service/PluginCookieStore.swift` |
 | 日志 / 元信息 | `App/Support/KazumiLog.swift`、`KazumiAppInfo.swift` |
 
-界面只有壳：侧边栏 + 各栏的移植说明 + 「关于」设置页。
+界面：侧边栏 + 各栏的移植说明 + 「关于」设置页；**播放器**（`Runner/Player/`）已经能放
+本地文件和直链——mpv 用和 iOS 同一套输出方式（`wid` 指向 CAMetalLayer +
+`vo=gpu-next` / `vulkan` / `moltenvk`），播放/暂停、±10 秒、进度、音量、倍速、全屏都有。
+选集、弹幕、断流自愈、画中画还没接。
 
 ## 移植顺序（按依赖从底往上）
 
@@ -74,8 +77,9 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 3. **规则界面**：`Plugins/Views` + `Service`（`UIDocumentPicker` → `NSOpenPanel`，
    `UIPasteboard` → `NSPasteboard`，`presentationDetents` → 固定尺寸 sheet）。
 4. **页面**：推荐 → 时间表 → 详情 → 搜索 → 历史 / 收藏 / 我的 → 设置。
-5. **播放器**：MPVKit + MetalKit（`MTKView` 在 macOS 上照样能用），手势与 HUD 换成
-   AppKit 的鼠标/键盘事件；`AVAudioSession` 在 macOS 上不存在，音量与中断处理要另写。
+5. **播放器**（已起第一版）：`macos/Runner/Player/MacMPVEngine.swift` 是和 iOS 平行的一份
+   精简内核（1800 → 约 400 行），只做「打开就播」这一圈；iOS 那份里的选集、弹幕叠加、
+   断流自愈、画中画、命令 FIFO 还没搬。音频走 coreaudio，`AVAudioSession` 那套不需要。
 6. **iOS 独占功能**：画中画、投屏（AVRoutePickerView）、相册选图、后台播放、灵动岛。
    macOS 侧要么不做，要么换实现（例如选图用 `NSOpenPanel`）。
 

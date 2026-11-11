@@ -19,6 +19,7 @@ enum MacSection: String, CaseIterable, Identifiable {
     case history
     case library
     case profile
+    case player
     case settings
 
     var id: String { rawValue }
@@ -30,6 +31,7 @@ enum MacSection: String, CaseIterable, Identifiable {
         case .history: "历史"
         case .library: "收藏"
         case .profile: "我的"
+        case .player: "播放器"
         case .settings: "设置"
         }
     }
@@ -41,6 +43,7 @@ enum MacSection: String, CaseIterable, Identifiable {
         case .history: "clock.arrow.circlepath"
         case .library: "books.vertical"
         case .profile: "person.crop.circle"
+        case .player: "play.rectangle"
         case .settings: "gearshape"
         }
     }
@@ -58,6 +61,8 @@ enum MacSection: String, CaseIterable, Identifiable {
             "封面墙按窗口宽度算列数，选中态换成 macOS 的强调色描边。"
         case .profile:
             "统计卡与历史条带保留；分享 / 存档相关的按钮改成菜单面板入口。"
+        case .player:
+            "已经能放：本地文件与直链（mpv + gpu-next/MoltenVK）、播放暂停、±10 秒、进度、音量、倍速、全屏。选集、弹幕、断流自愈还没接。"
         case .settings:
             "设置页改成 Settings 窗口那套分组表单，文案沿用 iOS 的字符串目录。"
         }
@@ -78,7 +83,9 @@ struct MacRootView: View {
             .navigationTitle("Kazumi")
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
         } detail: {
-            if let selection {
+            if let selection, selection == .player {
+                MacPlayerScreen()
+            } else if let selection {
                 MacSectionPlaceholder(section: selection)
             } else {
                 ContentUnavailableView("选一栏看看", systemImage: "sidebar.left")
