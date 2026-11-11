@@ -26,19 +26,24 @@ struct PopularScreen: View {
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
+            // 卡片画法只看可用高这一个信号（Colo 8228 §4.1）：<760 叠压、≥760 现行画法。
+            // 与宽度档是两条独立判据，不共用常量、不互相读（Ato 8199）。
+            let overlayCard = size.height < Self.overlayCardMaxHeight
+            // 叠压卡「填满焦点区」的那个高：可用高 ＋ 卡片自己铺上去的顶部安全区。
+            let heroFillHeight = size.height + proxy.safeAreaInsets.top
             // 三档只按可用空间分（Colo 6687 §一）：A 单栏、B 宽档（再按宽高比分横式两栏／竖式英雄行）、C 矮屏。
             if size.width < Self.narrowMaxWidth {
                 narrowBody(size: size, safeTop: proxy.safeAreaInsets.top)
             } else if size.height >= Self.wideMinHeight, size.width > size.height,
                       Self.rightColumnWidth(forWidth: size.width) >= Self.rightColumnMinWidth {
                 // 右栏 ≥ 320（Colo 6822）：不到就回落单栏，不缩左栏、不压海报。
-                twoColumnBody(size: size)
+                twoColumnBody(size: size, overlayCard: overlayCard, heroFillHeight: heroFillHeight)
             } else if size.height < Self.wideMinHeight, size.width > size.height {
                 // C 档：宽但矮（iPhone 横屏 750×402）。货架整宽接在封面下面会被浮动
                 // tab 条压住，改成封面钉左、货架收进右栏自己滚（Colo 6886）。
                 compactTwoColumnBody(size: size, insets: proxy.safeAreaInsets)
             } else {
-                heroRowBody(size: size)
+                heroRowBody(size: size, overlayCard: overlayCard, heroFillHeight: heroFillHeight)
             }
         }
     }
@@ -74,6 +79,9 @@ struct PopularScreen: View {
     /// 否则 iPhone 横屏那种 874×402 宽度够、高度放不下封面，要落到矮屏档。
     private static let narrowMaxWidth: CGFloat = 700
     private static let wideMinHeight: CGFloat = 600
+    /// 叠压卡的高度门槛（Colo 8228 §4.1）：可用高 <760 才叠压。760 夹在 Duo 摊开 669／
+    /// iPad mini 横屏 744 与 iPad 11″ 横屏 820 之间。只给卡片画法用，别拿它定栏数。
+    private static let overlayCardMaxHeight: CGFloat = 760
 
     /// 两栏的左栏宽 = 封面高 × 0.67，右栏是剩下的（Colo 6683 / 6822）。
     private static func rightColumnWidth(forWidth width: CGFloat) -> CGFloat {
@@ -94,9 +102,11 @@ struct PopularScreen: View {
     ///
     /// 有侧栏的版面：封面宽由高反推，宽 = 高 × 0.67，比例恒为 2:3 一点不裁，
     /// 侧栏吃掉剩下的宽度（Colo 6683 第一条）。这一栏不跟着页面上下滚，分组那一栏自己滚。
-    private func twoColumnBody(size: CGSize) -> some View {
-        let coverHeight = Self.coverHeight(forWidth: size.width)
-        let columnWidth = (coverHeight * 0.67).rounded()
+    private func twoColumnBody(size: CGSize, overlayCard: Bool, heroFillHeight: CGFloat) -> some View {
+        // 叠压态封面填满焦点区可用高（Colo 8228 §4.2）；栏宽仍按现行公式算，不动右栏货架。
+        let baseCoverHeight = Self.coverHeight(forWidth: size.width)
+        let coverHeight = overlayCard ? heroFillHeight : baseCoverHeight
+        let columnWidth = (baseCoverHeight * 0.67).rounded()
         // 英雄行块跟移量 = 封面往下长的那截（1:1，Colo 7139）；宽档 pullScale=1、pullOffset=0，
         // 同 PopularHero.effectiveOffset 同一口径：coverHeight × min(dragPull,120) / 550。
         let heroFollowOffset = coverHeight * min(max(heroDragPull, 0), 120) / 550
@@ -105,15 +115,21 @@ struct PopularScreen: View {
             // 按在信息块、右栏货架、两栏缝上都不动。
             // 整个英雄行块跟封面 1:1 同偏移（Colo 7139：iPad 竖屏下拉时右栏也要下移），
             // 偏移量从拖动量同一个状态算，松手同一个弹簧回去。
-            leftColumn(coverHeight: coverHeight, columnWidth: columnWidth, dragPull: $heroDragPull)
+            leftColumn(
+                coverHeight: coverHeight,
+                columnWidth: columnWidth,
+                dragPull: $heroDragPull,
+                overlayCard: overlayCard
+            )
                 .frame(width: columnWidth)
                 .ignoresSafeArea(edges: .top)
                 .offset(y: heroFollowOffset)
 
             VStack(spacing: 0) {
                 // 标题 x=500（栏左缘 484 + 16）、圆钮贴右边缘 16，同一行，深色字压白底（Colo 6725）。
+                // 让开安全区再留 18（Ato 8217）。
                 PopularWideTopBar()
-                    .padding(.top, 12)
+                    .padding(.top, 18)
 
                 ScrollView {
                     // 宽档海报 132×198（Colo 6708：13 寸右栏 892 一行 6 张）。
@@ -144,7 +160,12 @@ struct PopularScreen: View {
 
     /// 两栏版面的左栏内容：封面纯美术在上，信息块在下面把剩下的高度填满（Colo 6691）。
     /// dragPull：拖动量外提（Colo 7139），右栏货架跟封面同一个状态同步位移。
-    private func leftColumn(coverHeight: CGFloat, columnWidth: CGFloat, dragPull: Binding<CGFloat>) -> some View {
+    private func leftColumn(
+        coverHeight: CGFloat,
+        columnWidth: CGFloat,
+        dragPull: Binding<CGFloat>,
+        overlayCard: Bool
+    ) -> some View {
         PopularHero(
             items: controller.heroItems,
             zoomNamespace: zoomNamespace,
@@ -152,15 +173,17 @@ struct PopularScreen: View {
             isOnScreen: true,
             coverHeightOverride: coverHeight,
             coverWidth: columnWidth,
-            // 左栏做成一张英雄卡：封面纯美术在上，信息块在下面把剩下的高度填满（Colo 6691）。
-            textPlacement: .below,
+            // 短屏叠压：封面填满、文字压底部渐隐（Colo 8228 §4.2）；
+            // 其余仍是「封面纯美术在上、信息块在下面」（Colo 6691）。
+            textPlacement: overlayCard ? .overlay : .below,
             // 标题和两颗圆钮收进右栏白底上，左栏一个字的没有（Colo 6725）。
             showsTopBar: false,
-            // 封面自己接下拉手势（Colo 6736）。
-            coverPullGesture: true,
+            // 封面自己接下拉手势（Colo 6736）；叠压态不做下拉放大（Colo 8228 §4.2，短屏没富余高度）。
+            coverPullGesture: !overlayCard,
             // 拖动量外提 + 整块跟移（Colo 7139：iPad 竖屏下拉，右栏 1:1 同偏移）。
             dragPullSource: dragPull,
-            blockPullOffset: true
+            blockPullOffset: true,
+            overlayWideCard: overlayCard
         )
     }
 
@@ -226,8 +249,9 @@ struct PopularScreen: View {
                 }
 
             VStack(spacing: 0) {
+                // 让开安全区再留 18（Ato 8217）。
                 PopularWideTopBar()
-                    .padding(.top, 12)
+                    .padding(.top, 18)
 
                 ScrollView {
                     shelves(tileWidth: 96)
@@ -254,8 +278,9 @@ struct PopularScreen: View {
 
     /// 英雄行（Colo 6687 §3 / §4）：iPad 竖屏和 iPhone 横屏都走这一档。
     /// 封面在左、比例恒 2:3 不裁，文字块在右垂直居中；货架整宽接在下面，跟着页面一起滚。
-    private func heroRowBody(size: CGSize) -> some View {
-        let coverHeight = Self.coverHeight(forWidth: size.width)
+    private func heroRowBody(size: CGSize, overlayCard: Bool, heroFillHeight: CGFloat) -> some View {
+        // 矮窗口（H<760）在竖式英雄行上同样改叠压：封面填满、文字压上去（Colo 8228 §4.2）。
+        let coverHeight = overlayCard ? heroFillHeight : Self.coverHeight(forWidth: size.width)
         // 封面宽上限（Colo 6826 / Ato 6832）：min(高 × 0.70 × 0.67, 容器宽 − 368)。
         // 第二个项就是「文字块正好 320」，11 寸 553→452、mini 531→376，13 寸恒等。
         // 字号本来就跟着封面宽走（coverTextScale），不用另外改。
@@ -279,9 +304,10 @@ struct PopularScreen: View {
                     coverHeightOverride: coverHeight,
                     coverWidth: coverWidth,
                     // 竖屏那档右栏要把简介和标签也带上（Ato 6720），iPhone 横屏那档还是原来那块。
-                    textPlacement: isWide ? .trailingFilled : .trailing,
+                    textPlacement: overlayCard ? .overlay : (isWide ? .trailingFilled : .trailing),
                     // 竖屏那档标题进右栏；手机那档照旧压在封面上，那七屏有基线锁着。
-                    showsTopBar: !isWide
+                    showsTopBar: !isWide,
+                    overlayWideCard: overlayCard
                 )
                 .environment(\.popularHeroTextWidth, textWidth)
                 // 上拉过界时往回补，封面钉在屏幕顶端不动，跟单栏那条同一个规矩。

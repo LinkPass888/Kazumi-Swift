@@ -91,6 +91,11 @@ struct PopularHero: View {
     /// C 档块底留白：底安全区 + 16（Colo 6940：402 − 21 − 16 = 365）。
     var compactBottomInset: CGFloat = PopularHero.compactTextBottomInset
 
+    /// 叠压卡（Colo 8228 §4.2）：可用高 <760 时封面填满整个焦点卡，番名/集数/圆点/按钮
+    /// 全压在底部渐隐上，不再单独占一条信息行；简介省略（详情页概览里有）。
+    /// 只由高度这一个信号决定，与宽度档无关。
+    var overlayWideCard: Bool = false
+
     /// 封面自己拖出来的位移（0…120），松手回弹到 0。
     @State private var dragPull: CGFloat = 0
     /// 这一下手指走过 8 点没有：走过是拖、没走过是点（Colo 6750 / 6763）。
@@ -459,7 +464,8 @@ struct PopularHero: View {
             // 标题贴屏最左，边距跟「我的」页系统大标题取齐 x=20（LP 7255 / Colo 7257 实机量得）；
             // 行顶 = tab 药丸实际底边 +8（Colo 7253）；量不到药丸时按 1032×1376 实测节奏回落
             // （tab 底 59.5、标题顶 67.5）。
-            PopularWideTopBar(leadingPadding: 20)
+            // 这一份压在封面大图上，仍是白字加阴影（Ato 8224）。
+            PopularWideTopBar(leadingPadding: 20, onLightBackground: false)
                 .padding(.top, (Self.tabBarBottomEdge() ?? Self.statusBarHeight + 26) + 8)
                 // 标题行和圆钮跟信息块同一个量：封面底边往下长多少就下移多少，
                 // 同一个状态（pullScale）、同一个弹簧（Ato 7241 / Colo 7236）。
@@ -495,7 +501,9 @@ struct PopularHero: View {
     /// 简介是异步来的，先占住位置再替换，免得数据一到整块往下推。
     private var infoCard: some View {
         // 手机竖屏（overlay 压图）居中（LP 7284 / Colo 7286）；below / trailingFilled 仍是左缘那套。
-        let centered = textPlacement == .overlay
+        // 叠压卡宽档左对齐（Colo 8228 §4.2），不跟手机一起居中。
+        let overlayStyle = textPlacement == .overlay
+        let centered = overlayStyle && !overlayWideCard
         return VStack(alignment: .leading, spacing: 0) {
             Text(current?.displayName ?? "")
                 .font(.system(size: title2Base * coverTextScale, weight: .bold))
@@ -522,7 +530,8 @@ struct PopularHero: View {
             // 手机竖屏：开始观看单独居中，收藏贴右缘（LP 7295，改掉 7286 的「整体居中」）；
             // 其余档照旧：below / trailingFilled 开始观看通栏，收藏同行右端。
             Group {
-                if centered {
+                // 手机 overlay 与叠压宽卡同一套：开始观看居中胶囊、收藏贴右缘（Colo 8228 §4.2）。
+                if overlayStyle {
                     ZStack {
                         playButton(expanded: false)
                             .frame(maxWidth: .infinity)
@@ -542,8 +551,11 @@ struct PopularHero: View {
             }
             .padding(.top, 10)
 
-            summarySlot
-                .padding(.top, 16)
+            // 叠压卡省略简介（Colo 8228 §4.2）：短封面压不下第 6 行。
+            if !overlayWideCard {
+                summarySlot
+                    .padding(.top, 16)
+            }
         }
         // 名称、简介跟着居中（multilineTextAlignment 沿环境往下传）。
         .multilineTextAlignment(centered ? .center : .leading)
@@ -1260,6 +1272,9 @@ struct PopularHero: View {
 struct PopularWideTopBar: View {
     /// 标题左边到栏左缘的距离：横屏那栏要 16（x=500），竖屏那栏是 0（x=677，跟信息块齐）。
     var leadingPadding: CGFloat = 16
+    /// 这排压在什么底色上：宽档两栏时它落在右栏白底上，字要深；压在封面大图上才用白字加阴影。
+    /// 文字颜色跟背景走（Ato 8224），不是恒定白。
+    var onLightBackground: Bool = true
 
     @Environment(AppRouter.self) private var router
 
@@ -1268,10 +1283,10 @@ struct PopularWideTopBar: View {
             Text("推荐")
                 .font(.largeTitle.weight(.semibold))
                 .tracking(-0.4)
-                // 恒定白（LP 7275 / Colo 7279）：与窄档标题同一套，不随系统深浅色变。
-                .foregroundStyle(Color.white)
-                // 白字得有一层才读得清（Colo 2864），两档同一层。
-                .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
+                // 白字给压在封面上的那档（LP 7275 / Colo 7279）；落在右栏白底上就换深字（Ato 8224）。
+                .foregroundStyle(onLightBackground ? Color.black.opacity(0.82) : Color.white)
+                // 白字得有一层才读得清（Colo 2864）；深字不加阴影。
+                .shadow(color: onLightBackground ? .clear : .black.opacity(0.30), radius: 8, y: 1)
                 .accessibilityAddTraits(.isHeader)
 
             Spacer()
@@ -1284,7 +1299,19 @@ struct PopularWideTopBar: View {
             }
         }
         .padding(.leading, leadingPadding)
-        .padding(.trailing, 16)
+        // 让开安全区再留 18（Ato 8217）：Duo 内屏横着时右边那 84 是相机那条，
+        // 系统时钟就压在上面——按 16 顶到窗口边，两颗钮就跟时钟挤同一行了。
+        .padding(.trailing, Self.windowSafeAreaInsets.right + 18)
+    }
+
+    /// 窗口的安全区：顶栏在这页里是压在封面/白底上的，读不到 safeAreaInsets，
+    /// 跟 `statusBarHeight` 一样直接问窗口要。
+    private static var windowSafeAreaInsets: UIEdgeInsets {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        let window = scene?.windows.first { $0.isKeyWindow } ?? scene?.windows.first
+        return window?.safeAreaInsets ?? .zero
     }
 }
 

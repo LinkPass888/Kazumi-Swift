@@ -266,6 +266,9 @@ struct PlayerScreen: View {
     @State private var containerSize: CGSize = .zero
     /// 播放页四周的安全区内缩（全屏时画面要绕过刘海，按它算窗口尺寸）。
     @State private var containerInsets = EdgeInsets()
+    /// 整个窗口的尺寸（含安全区）。画面按满宽算高要用它——containerSize 是安全区那块，
+    /// Duo 摊开上安全区那块只有 867 宽，拿它算会算矮（实测 511 而不是 535）。
+    @State private var windowSize: CGSize = .zero
     /// 上一次转屏请求的结果，显示在「播放信息」里（Colo 2026-10-28）：
     /// 分得清是系统没给（被拒＋原因），还是我们没请求（一直「未请求」）。
     @State private var lastOrientationResult = String(localized: "未请求")
@@ -436,11 +439,20 @@ struct PlayerScreen: View {
                 // 画面从 0 重新起播（LP 3624「切全屏进度归零」）。
                 // 铺满还是 16:9 由画面自己的 PlayerBoxModifier 决定。
                 VStack(spacing: 0) {
+                    // 常规宽度（Duo 内屏 951×669）：画面按**窗口满宽**定高（951 → 535），
+                    // 剩下的 134 才给选集区。不定这个高，VStack 把可用高度平摊，
+                    // 画面只拿到 318 高、再由 16:9 反推成 564 宽，左右各留 193 的
+                    // 黑带，16:9 的正片在里面再缩一次，四边都到不了（Duo 实测）。
+                    // 画面这个高是固定的，选集区是灵活的，压缩只会压到选集区。
                     playerArea(controller)
+                        .frame(height: fixedPictureHeight)
                     if !isFullscreen {
                         episodeArea(controller)
                     }
                 }
+                // 画面顶边贴窗口顶：不忽略顶部安全区的话，定好的 535 高会被顶上
+                // 那 24 压成 511，画面上方还留一条黑（Duo 实测）。
+                .ignoresSafeArea(.container, edges: ignoresWindowEdges ? .all : [])
             } else {
                 ProgressView()
                     .tint(.white)
@@ -471,6 +483,13 @@ struct PlayerScreen: View {
         // 竖屏全屏不做：先真的横过屏，之后用户又转回竖屏，才退出全屏。
         // 只看「现在是不是竖的」会误判——刚点全屏、屏幕还没来得及转的那一帧
         // 本来就是竖的，那样一进就被自己的判据弹出来（LP 2026-10-25 现场）。
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
+            }
+            .ignoresSafeArea()
+        }
         .background {
             GeometryReader { proxy in
                 Color.clear
@@ -1132,6 +1151,33 @@ struct PlayerScreen: View {
     /// 传 nil 会退回内容的固有比例（mpv 视图是方的，上一版就成了 382×382）。
     /// 换成容器自己的比例后 fit 的结果正好等于容器，全屏铺满——只改一个参数、
     /// 不改视图类型；改类型会把 mpv 拆掉重建、进度归零（3678）。
+    /// 只有常规宽度的非全屏才按窗口排：iPhone 竖屏那套已经过过评审，别动。
+    private var usesWindowPicture: Bool {
+        !isFullscreen && horizontalSizeClass == .regular
+    }
+
+    private var fixedPictureHeight: CGFloat? {
+        usesWindowPicture ? windowVideoHeight : nil
+    }
+
+    private var ignoresWindowEdges: Bool {
+        isFullscreen || usesWindowPicture
+    }
+
+    /// 非全屏时画面的高度：按**窗口满宽**再按 16:9 算（Duo 951 → 535）。
+    /// 用窗口宽而不是安全区宽——画面那层本来就忽略四边安全区。
+    private var windowVideoHeight: CGFloat {
+        let windowWidth = windowSize.width > 0
+            ? windowSize.width
+            : containerSize.width + containerInsets.leading + containerInsets.trailing
+        let windowHeight = windowSize.height > 0
+            ? windowSize.height
+            : containerSize.height + containerInsets.top + containerInsets.bottom
+        guard windowWidth > 0, boxAspectRatio > 0 else { return 0 }
+        // 优先保左右到边；只有算出来的高超出窗口，才改按高度收（Ato 8208）。
+        return min(windowWidth / max(boxAspectRatio, 0.1), windowHeight)
+    }
+
     private var boxAspectRatio: CGFloat {
         if isFullscreen, containerSize.width > 0, containerSize.height > 0 {
             // 常规宽度：画面层已经忽略四边安全区，比例得按**窗口**算，不然盒子

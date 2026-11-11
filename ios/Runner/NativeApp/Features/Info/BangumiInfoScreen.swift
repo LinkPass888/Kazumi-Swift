@@ -53,6 +53,17 @@ struct BangumiInfoScreen: View {
         containerSize.width >= 700 && containerSize.height < 600
     }
 
+    /// 宽屏三栏：只认可用宽度 ≥900（Colo 8228 §3.1）。不读高度、不读机型、不认姿态，
+    /// 也不和推荐页那个高度阈值共用常量（Ato 8199）。辅助功能字号下一律回落单栏堆叠。
+    private var threeColumn: Bool {
+        containerSize.width >= 900 && !dynamicTypeSize.isAccessibilitySize
+    }
+
+    /// 三栏每栏宽度：(可用宽 − 左右页边 16×2 − 栏间 24×2) / 3。
+    private var threeColumnWidth: CGFloat {
+        max(0, (containerSize.width - 80) / 3)
+    }
+
     /// 当前所在 Tab 的导航栈深度。四个 Tab 都算上，页面不关心自己在哪个 Tab。
     private var navigationDepth: Int {
         router.popularPath.count + router.timelinePath.count
@@ -147,7 +158,18 @@ struct BangumiInfoScreen: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        if isWideTier {
+                        if threeColumn {
+                            // 宽屏三栏（Colo 8228 §3）：封面 / 条目信息 / 简介三等分，
+                            // 只认可用宽度，不读高度、不认姿态（Ato 8199 / 8230）。
+                            title(controller)
+                            HStack(alignment: .top, spacing: 24) {
+                                coverColumn(controller)
+                                infoColumn(controller, coverHeight: 0)
+                                    .frame(width: threeColumnWidth, alignment: .topLeading)
+                                tabColumn(controller, proxy: proxy)
+                                    .frame(width: threeColumnWidth, alignment: .topLeading)
+                            }
+                        } else if isWideTier {
                             // 宽档两栏（§6.5）：左栏封面＋信息，右栏简介 / 标签 / 评论。
                             title(controller)
                             HStack(alignment: .top, spacing: 24) {
@@ -486,6 +508,17 @@ extension BangumiInfoScreen {
                 KazumiPalette.background(for: colorScheme)
                     .opacity(colorScheme == .dark ? 0.62 : 0.74)
             }
+    }
+
+    /// 三栏的栏 1：封面单独成图（Colo 8228 §3.3）。三栏下不再套 hero 的磨砂卡，
+    /// 三块平铺在页面底色上。
+    private func coverColumn(_ controller: InfoController) -> some View {
+        let width = threeColumnWidth
+        return BangumiRemoteImage(url: controller.item.largeImage)
+            .frame(width: width, height: width / Self.bigCoverAspectRatio)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .frame(width: width, alignment: .topLeading)
+            .accessibilityLabel(controller.item.displayName)
     }
 
     private func cover(_ item: BangumiItem, width: CGFloat, height: CGFloat) -> some View {
