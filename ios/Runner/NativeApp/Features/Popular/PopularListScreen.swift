@@ -172,11 +172,23 @@ extension PopularListScreen {
         }
 
         func loadFirstPage() async {
+            // `.task` 在这页上从详情页返回时会再跑一次（视图消失时任务被取消，
+            // 重新出现时重建）。以前这里无条件 `items.removeAll()`：第一页只要不是
+            // 立刻回来（冷缓存 / 慢网），网格先空一帧，ScrollView 的偏移被夹回 0，
+            // 数据回来就从顶上重新铺——#29 报的「左滑返回有概率回到列表顶部」。
+            // 已经有内容就不再重来：这一页只在首次进入时取。
+            guard Self.shouldReloadFirstPage(itemCount: items.count) else { return }
             items.removeAll()
             offset = 0
             reachedEnd = false
             isFailed = false
             await loadNext()
+        }
+
+        /// 首次取数到底要不要真的去取。抽成纯函数便于单测：
+        /// 列表里已经有内容时返回 false，空列表（首进 / 上次失败）返回 true。
+        nonisolated static func shouldReloadFirstPage(itemCount: Int) -> Bool {
+            itemCount == 0
         }
 
         func loadMoreIfNeeded(current item: BangumiItem) async {
