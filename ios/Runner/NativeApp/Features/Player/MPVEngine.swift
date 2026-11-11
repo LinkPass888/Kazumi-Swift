@@ -645,13 +645,39 @@ final class MPVEngine {
         guard time.isFinite, time >= 0 else { return }
         // 走异步命令表：断流时 `mpv_command` 的同步 seek 会等 demuxer 锁，
         // 在主线程上拖一下就卡住界面。命令仍然按提交顺序执行。
+        //
+        // `exact` 不能省：只写 `absolute` 时精度跟着 mpv 的 `--hr-seek` 默认值走，
+        // 会落到目标**之前**那个关键帧上——AniSkip 跳片头 / 片尾时就成了「没到点就
+        // 提前到了」，而且不同片源的关键帧间隔不一样，快慢不一致。
         submitAsyncCommand(
             "seek",
-            [String(format: "%.3f", time), "absolute"]
+            [String(format: "%.3f", time), "absolute+exact"]
         ) { [weak self] status in
-            guard status < 0 else { return }
-            self?.log("seek 失败 code=\(status) t=\(time)")
+            guard let self else { return }
+            guard status >= 0 else {
+                self.log("seek 失败 code=\(status) t=\(time)")
+                return
+            }
+            // 落点跟目标比一次（毫秒级）：跳 AniSkip 之后就能在播放器日志里确认
+            // 真的落在 AniSkip 给的 endTime 上，而不是前一个关键帧。
+            guard let landed = self.currentTimePosition else { return }
+            let delta = landed - time
+            // 只有真偏了才写日志：拖进度条一下就是几十次 seek，全记会刷屏。
+            guard abs(delta) > 0.05 else { return }
+            self.log(
+                "seek 落点偏了 目标=\(String(format: "%.3f", time)) "
+                    + "实际=\(String(format: "%.3f", landed)) "
+                    + "差=\(String(format: "%.3f", delta))"
+            )
         }
+    }
+
+    /// 内核当前的媒体时间（秒）。读不到返回 nil。
+    var currentTimePosition: Double? {
+        guard let handle else { return nil }
+        var value = Double(0)
+        guard mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &value) >= 0 else { return nil }
+        return value.isFinite ? value : nil
     }
 
     /// 已缓冲到的位置（进度条的缓冲段）。读不到就返回 0。
