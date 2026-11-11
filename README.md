@@ -2,7 +2,7 @@
 
 <img src="assets/images/logo/app-icon.png" width="140" alt="Kazumi 应用图标">
 
-# Kazumi Swift
+# Kazumi
 
 基于自定义规则的番剧采集与在线观看客户端，带弹幕。<br>
 原生 SwiftUI 实现，界面使用 iOS 26 的液态玻璃材质，随系统外观与辅助功能设置变化。

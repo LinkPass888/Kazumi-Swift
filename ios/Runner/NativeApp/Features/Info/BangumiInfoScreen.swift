@@ -203,7 +203,7 @@ struct BangumiInfoScreen: View {
                 } action: { _, scrolled in
                     // 顶上那格当 0，位移除以大标题高；量不到高就用 28 兜底，
                     // 这样不可能卡在 0（Ato 8463）。
-                    if !didCaptureScrollTop || scrolled < scrollTopOffset {
+                    if !didCaptureScrollTop {
                         scrollTopOffset = scrolled
                         didCaptureScrollTop = true
                     }
