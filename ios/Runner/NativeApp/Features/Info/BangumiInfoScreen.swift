@@ -43,9 +43,11 @@ struct BangumiInfoScreen: View {
     /// 大标题的高度，和栏里那行番名的出现进度（Ato 8300：跟着滚动位置连续变，
     /// 不是到点切换）。0 = 还没有，1 = 满。
     @State private var titleHeight: CGFloat = 0
-    /// 大标题顶在滚动内容里的位置，用命名坐标空间量；滚动中不再重量，
-    /// 但滚回顶部或摊开／合上换宽度时允许重量一次（Ato 8455）。
+    /// 大标题在命名坐标空间里量到的位置，以及顶上的基准位置。
+    /// 两个都用顶上那次量，滚动中不再重量；滚回顶部或摊开／合上换宽度时重量一次
+    /// （Ato 8455）。只用两者的差当锚点，顶上恒为 0，不会锁成一个大正数。
     @State private var titleAnchor: CGFloat = 0
+    @State private var anchorBaseline: CGFloat = 0
     @State private var didMeasureTitleAnchor = false
     @State private var anchorWidth: CGFloat = 0
     @State private var barTitleProgress: CGFloat = 0
@@ -332,10 +334,14 @@ struct BangumiInfoScreen: View {
                 let width = containerSize.width
                 let atTop = barTitleProgress <= 0
                 let widthChanged = abs(width - anchorWidth) > 0.5
-                guard !didMeasureTitleAnchor || atTop || widthChanged else { return }
-                didMeasureTitleAnchor = true
-                anchorWidth = width
-                titleAnchor = max(0, anchor)
+                if !didMeasureTitleAnchor || atTop || widthChanged {
+                    didMeasureTitleAnchor = true
+                    anchorWidth = width
+                    anchorBaseline = anchor
+                }
+                // 内容坐标也好、视口坐标也好，顶上量到的那一格就是 0；
+                // 滚下去时这个差只可能 ≤0，夹完仍为 0。
+                titleAnchor = max(0, anchor - anchorBaseline)
             }
     }
 
