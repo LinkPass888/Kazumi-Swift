@@ -76,6 +76,12 @@ targets:
       - path: ../ios/Runner/NativeApp/Features/Plugins/Service/PluginCookieStore.swift
       - path: ../ios/Runner/NativeApp/App/Support/KazumiLog.swift
       - path: ../ios/Runner/NativeApp/App/Support/KazumiAppInfo.swift
+      # 规则网络层要的代理开关与代理地址解析（两个都是纯 Foundation：
+      # 前者只读进程内状态，后者的 SettingsStore 只出现在注释里）。
+      - path: ../ios/Runner/NativeApp/App/Support/KazumiNetworkPolicy.swift
+      - path: ../ios/Runner/NativeApp/App/Support/ProxyURL.swift
+      # 规则市场列表里的「更新于 MM-dd」，读系统日期格式。
+      - path: ../ios/Runner/NativeApp/Design/SystemDateText.swift
       # 字符串目录直接借 iOS 那份：以后移植过来的页面不用再建一套。
       - path: ../ios/Runner/Localizable.xcstrings
         buildPhase: resources

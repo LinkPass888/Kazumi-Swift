@@ -15,6 +15,10 @@
 import Foundation
 import Fuzi
 
+// 类型名一律写 `Fuzi.XMLElement`：macOS 侧 Foundation 也导出了同名的 `XMLElement`
+// （iOS 侧没有），两边一起 import 时裸写这个名字在 macOS 上会报
+// "ambiguous for type lookup in this context"，写全名两边都对。
+
 struct XPathRuleStrategy: Sendable {
     func prepareSearchRequest(_ config: RuleExecutionConfig, keyword: String) throws -> PreparedRuleRequest {
         let encodedKeyword = encodeQueryComponent(keyword)
@@ -80,10 +84,10 @@ struct XPathRuleStrategy: Sendable {
 
         for (index, node) in nodes.enumerated() {
             do {
-                let name = try runSelector(.searchName, expression: config.searchName) { () -> XMLElement? in
+                let name = try runSelector(.searchName, expression: config.searchName) { () -> Fuzi.XMLElement? in
                     node.xpath(config.searchName).first
                 }?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let source = try runSelector(.searchResult, expression: config.searchResult) { () -> XMLElement? in
+                let source = try runSelector(.searchResult, expression: config.searchResult) { () -> Fuzi.XMLElement? in
                     node.xpath(config.searchResult).first
                 }?.attr("href")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if name.isEmpty || source.isEmpty {
@@ -151,7 +155,7 @@ struct XPathRuleStrategy: Sendable {
     func detectsCaptchaChallenge(
         _ raw: String,
         config: AntiCrawlerConfig,
-        htmlElement: XMLElement? = nil
+        htmlElement: Fuzi.XMLElement? = nil
     ) -> Bool {
         guard config.enabled else { return false }
         let detectValue = config.captchaDetectValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -172,7 +176,7 @@ struct XPathRuleStrategy: Sendable {
                 let parsed = htmlElement == nil ? (try? documentElement(raw)) : nil
                 defer { withExtendedLifetime(parsed) {} }
                 guard let root = htmlElement ?? parsed?.root else { return false }
-                let node: XMLElement? = try? runSelector(.captchaDetectValue, expression: detectValue) {
+                let node: Fuzi.XMLElement? = try? runSelector(.captchaDetectValue, expression: detectValue) {
                     root.xpath(detectValue).first
                 }
                 return node != nil
@@ -188,7 +192,7 @@ struct XPathRuleStrategy: Sendable {
         ]
         for (field, expression) in fallbackSelectors {
             if expression.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
-            let node: XMLElement? = try? runSelector(field, expression: expression) {
+            let node: Fuzi.XMLElement? = try? runSelector(field, expression: expression) {
                 root.xpath(expression).first
             }
             if node != nil { return true }
@@ -201,7 +205,7 @@ struct XPathRuleStrategy: Sendable {
     /// 解析出的文档与它的根节点。两者必须一起被持有。
     struct ParsedHTML {
         let document: HTMLDocument
-        let root: XMLElement
+        let root: Fuzi.XMLElement
     }
 
     /// 解析 HTML，并**连同文档一起**返回。
@@ -252,7 +256,7 @@ struct XPathRuleStrategy: Sendable {
     }
 
     /// 对应 Dart 的 `node is Element ? node.outerHtml : node.text`。
-    private func fragment(_ node: XMLElement) -> String {
+    private func fragment(_ node: Fuzi.XMLElement) -> String {
         node.rawXML
     }
 
