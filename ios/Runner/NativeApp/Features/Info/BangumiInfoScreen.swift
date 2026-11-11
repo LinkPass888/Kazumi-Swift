@@ -43,6 +43,8 @@ struct BangumiInfoScreen: View {
     /// 大标题的高度，和栏里那行番名的出现进度（Ato 8300：跟着滚动位置连续变，
     /// 不是到点切换）。0 = 还没有，1 = 满。
     @State private var titleHeight: CGFloat = 0
+    /// 大标题顶在滚动内容里的位置，用命名坐标空间量一次，滚动时不变。
+    @State private var titleAnchor: CGFloat = 0
     @State private var barTitleProgress: CGFloat = 0
 
     /// B 档：宽且不矮。
@@ -189,14 +191,17 @@ struct BangumiInfoScreen: View {
                 }
                 .scrollIndicators(.hidden)
                 .containerRelativeFrame(.horizontal)
+                // 锚点与滚动量共用的坐标空间：内容里的位置，滚的时候不动。
+                .coordinateSpace(.named("detailScroll"))
                 // 顶部滚动边缘效果交回系统的 .soft（其余二十多个页面同一条）。
                 .scrollEdgeEffectStyle(.soft, for: .top)
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    geometry.contentOffset.y + geometry.contentInsets.top
+                    // 只取滚动量：contentInsets.top 在上滑过程中会变，掺进算式会让
+                    // 进度涨一下又倒回去（Fuck 8448 / Ato 8449）。
+                    geometry.contentOffset.y
                 } action: { _, scrolled in
-                    // 大标题开始钻进栏底时从 0 起，整个钻进去时到 1；往回滚原路退回。
                     barTitleProgress = titleHeight > 0
-                        ? min(max(scrolled / titleHeight, 0), 1)
+                        ? min(max((scrolled - titleAnchor) / titleHeight, 0), 1)
                         : 0
                 }
             }
@@ -317,6 +322,11 @@ struct BangumiInfoScreen: View {
                 proxy.size.height
             } action: { height in
                 titleHeight = height
+            }
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .named("detailScroll")).minY
+            } action: { anchor in
+                titleAnchor = max(0, anchor)
             }
     }
 
