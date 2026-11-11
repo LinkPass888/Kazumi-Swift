@@ -67,3 +67,6 @@ android/build/reports/problems/
 .clinerules/
 .flutter-leftovers/
 intent-opportunities.md
+
+# macOS flow: Info.plist 由 xcodegen 按 macos/project.yml 生成
+/macos/Runner/Info.plist
