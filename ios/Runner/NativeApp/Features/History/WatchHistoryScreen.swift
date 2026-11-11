@@ -62,7 +62,14 @@ struct WatchHistoryScreen: View {
         .toolbar {
             if !records.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("清空") { isConfirmingClear = true }
+                    // 删全部有二次确认兜着，这一颗不用删除红：跟返回按钮一样用系统的
+                    // 黑/白（Color.primary），也不跟主题色走。
+                    Button {
+                        isConfirmingClear = true
+                    } label: {
+                        Text("清空")
+                            .foregroundStyle(Color.primary)
+                    }
                 }
             }
         }
