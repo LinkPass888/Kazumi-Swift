@@ -30,6 +30,10 @@ struct MacPlayerScreen: View {
     @State private var dragStartVolume: Double = 100
     @State private var dragPreviewTime: Double?
     @State private var dragPreviewVolume: Double?
+    /// 倍速面板自己握开关：iOS 那份早就不用系统 `Menu` 了（PlayerScreen 里
+    /// 「倍速面板：自己握开关，好让控制层知道菜单还开着」），系统菜单在播放层上
+    /// 点不动、开合状态也拿不到，同一套坑别在 macOS 再踩一遍。
+    @State private var isShowingSpeedPanel = false
 
     private static let speedChoices: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
@@ -65,6 +69,14 @@ struct MacPlayerScreen: View {
                         .transition(.opacity)
                 }
                 Spacer(minLength: 0)
+                if model.title != nil, controlsVisible, isShowingSpeedPanel {
+                    HStack {
+                        Spacer(minLength: 0)
+                        speedPanel
+                    }
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+                }
                 if model.title != nil, controlsVisible {
                     controlBar
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -82,14 +94,15 @@ struct MacPlayerScreen: View {
         .task(id: hideToken) {
             guard controlsVisible, surface.isPlaying, model.title != nil else { return }
             try? await Task.sleep(for: .seconds(4))
-            guard controlsVisible, surface.isPlaying, dragAxis == nil, !isScrubbing, !isShowingURLSheet else { return }
+            guard controlsVisible, surface.isPlaying, dragAxis == nil, !isScrubbing,
+                  !isShowingURLSheet, !isShowingSpeedPanel else { return }
             withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
         }
         .onDisappear { model.stop() }
     }
 
     private var hideToken: String {
-        "\(controlsVisible)-\(surface.isPlaying)-\(model.title == nil)"
+        "\(controlsVisible)-\(surface.isPlaying)-\(model.title == nil)-\(isShowingSpeedPanel)"
     }
 
     // MARK: - 手势层
@@ -101,6 +114,10 @@ struct MacPlayerScreen: View {
                 surface.togglePlay()
             }
             .onTapGesture {
+                if isShowingSpeedPanel {
+                    isShowingSpeedPanel = false
+                    return
+                }
                 withAnimation(.easeOut(duration: 0.2)) { controlsVisible.toggle() }
             }
             .gesture(
@@ -295,15 +312,11 @@ struct MacPlayerScreen: View {
                     .frame(width: 110)
                     .tint(.white)
 
-                Menu(model.speed == 1 ? "1x" : String(format: "%gx", model.speed)) {
-                    ForEach(Self.speedChoices, id: \.self) { choice in
-                        Button(String(format: "%gx", choice)) {
-                            model.speed = choice
-                        }
-                    }
+                Button(model.speed == 1 ? "1x" : String(format: "%gx", model.speed)) {
+                    isShowingSpeedPanel.toggle()
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 62)
+                .frame(width: 52)
+                .help("倍速")
 
                 Button {
                     Task { await captureFrame() }
@@ -322,6 +335,46 @@ struct MacPlayerScreen: View {
         }
         .padding(14)
         .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    /// 倍速面板：竖着列出来，选完就收，还开着的那一档带勾。
+    private var speedPanel: some View {
+        VStack(spacing: 2) {
+            ForEach(Self.speedChoices, id: \.self) { choice in
+                Button {
+                    model.speed = choice
+                    isShowingSpeedPanel = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(String(format: "%gx", choice))
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer(minLength: 6)
+                        if abs(model.speed - choice) < 0.001 {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(
+                    abs(model.speed - choice) < 0.001
+                        ? AnyShapeStyle(Color.white.opacity(0.16))
+                        : AnyShapeStyle(Color.clear),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                )
+            }
+        }
+        .padding(4)
+        .frame(width: 104)
+        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.white.opacity(0.14), lineWidth: 1)
+        )
+        .foregroundStyle(.white)
     }
 
     private var displayPosition: Double {
