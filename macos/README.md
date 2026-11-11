@@ -70,7 +70,11 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 两边共用。内核里 iOS 独占的只有 4 处（`UIWindowScene`、画中画探测、`UIImage` 截图 PNG、
 `setNeedsLayout`），都按 `os(iOS)` / `os(macOS)` 分开了；`MPVMetalView` 同一个文件里
 是 UIView 与 NSView 两套宿主。macOS 因此直接继承缓冲判断、断流原位重连、首帧、
-进度与截图逻辑，只补了自己缺的：内核音量（这边没有 `AVAudioSession`）、鼠标与键盘操作。
+进度与截图逻辑，只补了自己缺的：内核音量（这边没有 `AVAudioSession`）、输入。
+
+输入按「触屏 + 鼠标键盘」两套给：单击唤出/收起控制条、双击播放暂停、横拖找进度、
+竖拖调音量、播放中 4 秒自动收起；同时保留按钮、空格暂停、全屏这些鼠标/键盘路子
+（macOS 26 起带触屏的机器把触摸事件送进 SwiftUI 的 gesture，两边同一套代码）。
 
 还没接：选集、弹幕叠加、画中画、投屏。
 

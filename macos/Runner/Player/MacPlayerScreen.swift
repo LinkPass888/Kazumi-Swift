@@ -3,8 +3,11 @@
 //  Kazumi (macOS)
 //
 //  macOS 侧的播放页。内核用的是 iOS 那份共享的 MPVEngine + PlayerSurfaceModel，
-//  所以缓冲判断、首帧、断流自愈、进度、截图都和手机上一个逻辑；
-//  这里只有 macOS 自己的一圈交互：打开文件 / 直链、鼠标拖进度、空格暂停、全屏。
+//  所以缓冲判断、首帧、断流自愈、进度、截图都和手机上一个逻辑。
+//
+//  输入按「触屏 + 鼠标键盘」两套来：单击唤出/收起控制条，双击播放暂停，
+//  横拖找进度、竖拖调音量；同时保留了按钮、空格暂停、全屏这些鼠标/键盘的路子
+//  （macOS 26 起带触屏的机器把手势当触摸事件送进来，SwiftUI 的 gesture 两边通吃）。
 //
 //  还没接的部分（等 macOS 页面按阶段移植过去）：选集、弹幕叠加、画中画、投屏。
 //
@@ -20,6 +23,14 @@ struct MacPlayerScreen: View {
     @State private var scrubPosition: Double = 0
     @State private var inputHint: String?
 
+    // 触屏/鼠标手势
+    @State private var controlsVisible = true
+    @State private var dragAxis: Axis?
+    @State private var dragStartTime: Double = 0
+    @State private var dragStartVolume: Double = 100
+    @State private var dragPreviewTime: Double?
+    @State private var dragPreviewVolume: Double?
+
     private static let speedChoices: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
     private var surface: PlayerSurfaceModel { model.surface }
@@ -30,6 +41,9 @@ struct MacPlayerScreen: View {
 
             MacPlayerContainer(model: model)
                 .ignoresSafeArea()
+                .allowsHitTesting(false)
+
+            gestureLayer
 
             if model.title == nil {
                 emptyState
@@ -39,11 +53,21 @@ struct MacPlayerScreen: View {
                 errorState(message)
             }
 
+            if let time = dragPreviewTime {
+                seekHUD(time)
+            } else if let volume = dragPreviewVolume {
+                volumeHUD(volume)
+            }
+
             VStack(spacing: 0) {
-                topBar
+                if controlsVisible || model.title == nil {
+                    topBar
+                        .transition(.opacity)
+                }
                 Spacer(minLength: 0)
-                if model.title != nil {
+                if model.title != nil, controlsVisible {
                     controlBar
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
             .padding(16)
@@ -54,7 +78,84 @@ struct MacPlayerScreen: View {
                 openURL(text)
             }
         }
+        // 播着的时候控制条自己收起来，鼠标/手指一动再出来。
+        .task(id: hideToken) {
+            guard controlsVisible, surface.isPlaying, model.title != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            guard controlsVisible, surface.isPlaying, dragAxis == nil, !isScrubbing, !isShowingURLSheet else { return }
+            withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
+        }
         .onDisappear { model.stop() }
+    }
+
+    private var hideToken: String {
+        "\(controlsVisible)-\(surface.isPlaying)-\(model.title == nil)"
+    }
+
+    // MARK: - 手势层
+
+    private var gestureLayer: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                surface.togglePlay()
+            }
+            .onTapGesture {
+                withAnimation(.easeOut(duration: 0.2)) { controlsVisible.toggle() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        if dragAxis == nil {
+                            dragAxis = abs(value.translation.width) >= abs(value.translation.height)
+                                ? .horizontal
+                                : .vertical
+                            dragStartTime = surface.currentTime
+                            dragStartVolume = model.volume
+                        }
+                        if dragAxis == .horizontal {
+                            // 400 点的拖动铺满整段视频，短片子也不会手抖跳太远。
+                            let span = max(surface.duration, 1)
+                            let delta = Double(value.translation.width) / 400 * span
+                            dragPreviewTime = min(max(0, dragStartTime + delta), max(surface.duration, 0))
+                        } else if dragAxis == .vertical {
+                            let next = min(max(0, dragStartVolume - Double(value.translation.height) * 0.35), 100)
+                            dragPreviewVolume = next
+                            model.volume = next
+                        }
+                    }
+                    .onEnded { _ in
+                        if dragAxis == .horizontal, let target = dragPreviewTime {
+                            surface.seek(to: target)
+                        }
+                        dragAxis = nil
+                        dragPreviewTime = nil
+                        dragPreviewVolume = nil
+                    }
+            )
+    }
+
+    private func seekHUD(_ time: Double) -> some View {
+        Text("\(Self.clock(time)) / \(Self.clock(surface.duration))")
+            .font(.system(size: 16, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.black.opacity(0.6), in: Capsule())
+            .allowsHitTesting(false)
+    }
+
+    private func volumeHUD(_ volume: Double) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: volume <= 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+            Text("\(Int(volume.rounded()))")
+                .font(.system(size: 16, weight: .semibold, design: .monospaced))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.black.opacity(0.6), in: Capsule())
+        .allowsHitTesting(false)
     }
 
     // MARK: - 空状态 / 报错
@@ -240,6 +341,7 @@ struct MacPlayerScreen: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         inputHint = nil
         model.open(url: url)
+        controlsVisible = true
     }
 
     /// 截图走共享的引擎（screenshot-raw → 临时 PNG），打开 Finder 定位到那一张。
@@ -260,6 +362,7 @@ struct MacPlayerScreen: View {
         }
         inputHint = nil
         model.open(url: url)
+        controlsVisible = true
     }
 
     private static func clock(_ seconds: Double) -> String {
