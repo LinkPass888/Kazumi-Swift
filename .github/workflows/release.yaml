@@ -15,8 +15,6 @@ on:
 env:
   SCHEME: Runner
   PROJECT: ios/Runner.xcodeproj
-  MAC_SCHEME: Kazumi
-  MAC_PROJECT: macos/Kazumi.xcodeproj
   # 规则开发者凭据在原生版本中通过 Keychain / Info.plist 注入，这里保留同一套 Secret 出口。
   DANDANAPI_APPID: ${{ secrets.DANDANAPI_APPID }}
   DANDANAPI_KEY: ${{ secrets.DANDANAPI_KEY }}
@@ -101,87 +99,6 @@ jobs:
           name: ios_outputs
           path: Kazumi_ios_*.ipa
           if-no-files-found: error
-
-  # macOS 版：和 iOS 同一次发版一起出包。产物是不签名的 .zip（里面是 Kazumi.app），
-  # 和 iOS 那个 no_sign ipa 一样属于侧载用的包，正式分发要另外签名 + 公证。
-  build-macos:
-    name: "Release for macOS"
-    runs-on: "xcode-27"
-    permissions:
-      contents: read
-    steps:
-      - name: Clone repository
-        uses: actions/checkout@v7
-
-      - name: Extract tag name
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-
-      - name: Echo build progress
-        run: echo "Kazumi_macos_${tag} build progress"
-
-      - name: Show Xcode and SDK version
-        run: |
-          xcodebuild -version
-          xcrun --sdk macosx --show-sdk-version
-
-      - name: Install build tools
-        run: brew install xcodegen xcbeautify
-
-      - name: Generate Xcode project
-        run: xcodegen generate --spec macos/project.yml --project macos
-
-      - name: Resolve Swift Packages
-        run: |
-          set -o pipefail
-          xcodebuild -project "$MAC_PROJECT" -scheme "$MAC_SCHEME" -resolvePackageDependencies \
-            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-mac" | xcbeautify
-
-      - name: Build (no codesign)
-        env:
-          DANDAN_APP_ID: ${{ secrets.DANDANAPI_APPID }}
-          DANDAN_APP_SECRET: ${{ secrets.DANDANAPI_KEY }}
-        run: |
-          set -o pipefail
-          xcodebuild build \
-            -project "$MAC_PROJECT" \
-            -scheme "$MAC_SCHEME" \
-            -configuration Release \
-            -destination "generic/platform=macOS" \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData-mac" \
-            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-mac" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
-            DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
-            | xcbeautify
-
-      - name: Package unsigned dmg
-        run: |
-          set -euo pipefail
-          APP_PATH="$RUNNER_TEMP/DerivedData-mac/Build/Products/Release/Kazumi.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "未找到 Kazumi.app：$APP_PATH" >&2
-            exit 1
-          fi
-          # 摆成标准的拖拽安装盘：Kazumi.app + /Applications 的软链。
-          STAGE="$RUNNER_TEMP/dmg-stage"
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE"
-          cp -R "$APP_PATH" "$STAGE/Kazumi.app"
-          ln -s /Applications "$STAGE/Applications"
-          hdiutil create -volname "Kazumi" -srcfolder "$STAGE" -fs HFS+ \
-            -format UDZO -ov "Kazumi_macos_${tag}_no_sign.dmg"
-          ls -lh "Kazumi_macos_${tag}_no_sign.dmg"
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos_outputs
-          path: Kazumi_macos_*.dmg
-          if-no-files-found: error
-
 
   # Mac Catalyst：与 iOS 同一个工程，编出能拖拽安装的 Mac App。
   build-catalyst:
@@ -298,7 +215,7 @@ jobs:
   release:
     name: "Release"
     runs-on: "ubuntu-latest"
-    needs: [build-ios, build-macos, build-catalyst]
+    needs: [build-ios, build-catalyst]
     permissions:
       contents: write
     steps:
@@ -330,12 +247,6 @@ jobs:
           name: ios_outputs
           path: ios_outputs
 
-      - name: Download macOS app
-        uses: actions/download-artifact@v8
-        with:
-          name: macos_outputs
-          path: macos_outputs
-
       - name: Download Catalyst app
         uses: actions/download-artifact@v8
         with:
@@ -345,7 +256,6 @@ jobs:
       - name: List release files
         run: |
           ls -l ios_outputs
-          ls -l macos_outputs
           ls -l catalyst_outputs
 
       - name: Create release
@@ -354,5 +264,4 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             ios_outputs/Kazumi_ios_*.ipa
-            macos_outputs/Kazumi_macos_*.dmg
             catalyst_outputs/Kazumi_catalyst_*.dmg

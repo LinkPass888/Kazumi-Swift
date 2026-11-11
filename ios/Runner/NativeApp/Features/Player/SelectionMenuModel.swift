@@ -6,7 +6,7 @@
 //
 //  渲染交给平台，各自用原生控件：
 //    * iOS   —— UIButton + UIMenu（`SystemMenuButton.swift`）
-//    * macOS —— NSButton + NSMenu（`macos/Runner/Player/MacSelectionMenu.swift`）
+//    * macOS —— 走 Mac Catalyst，同一套 UIKit 原样复用，不再有 AppKit 的一份
 //
 //  为什么不用 SwiftUI `Menu`：播放状态每 250ms 刷新一次视图，SwiftUI 菜单会在
 //  屏幕上留下一份点了不执行的旧副本，也不把开合状态告诉代码（控制条自动隐藏
