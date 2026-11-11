@@ -26,8 +26,8 @@ brew install xcodegen xcbeautify
 
 ```bash
 # 克隆仓库
-git clone https://github.com/LinkPass888/Kazumi-iOS.git
-cd Kazumi-iOS
+git clone https://github.com/LinkPass888/Kazumi-Swift.git
+cd Kazumi-Swift
 
 # 生成 Xcode 工程
 xcodegen generate --spec ios/project.yml --project ios

@@ -62,7 +62,7 @@
 
 发布的是**未签名 ipa**，要自己签名后装进手机，系统要求 iOS 26 及以上。
 
-1. 从 [Releases](https://github.com/LinkPass888/Kazumi-iOS/releases/latest) 下载最新 ipa
+1. 从 [Releases](https://github.com/LinkPass888/Kazumi-Swift/releases/latest) 下载最新 ipa
 2. 用 [AltStore](https://altstore.io/)、[Sideloadly](https://sideloadly.io/) 这类工具装进去，自备 Apple ID 签名
 
 ## 从源码构建
