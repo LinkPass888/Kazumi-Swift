@@ -160,7 +160,7 @@ struct ChangelogBullet: Identifiable, Equatable {
 enum ChangelogLoader {
     /// main 分支上的 raw 地址；换仓库只改这一处。
     static let url = URL(
-        string: "https://raw.githubusercontent.com/LinkPass888/Kazumi-iOS/main/CHANGELOG.md"
+        string: "https://raw.githubusercontent.com/LinkPass888/Kazumi-Swift/main/CHANGELOG.md"
     )!
 
     static func fetch() async throws -> String {

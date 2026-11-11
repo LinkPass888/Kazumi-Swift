@@ -38,9 +38,9 @@ enum KazumiAppInfo {
     static let ruleAPILevel = 9
 
     static let projectURL = URL(string: "https://kazumi.app/")!
-    static let sourceURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS")!
-    static let issuesURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/issues")!
-    static let releasesURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/releases")!
+    static let sourceURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift")!
+    static let issuesURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/issues")!
+    static let releasesURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/releases")!
     /// 官方频道（原版的 Telegram 入口）。
     static let telegramURL = URL(string: "https://t.me/linkpass666")!
     static let iconAuthorURL = URL(string: "https://www.pixiv.net/users/66219277")!
@@ -57,8 +57,8 @@ enum KazumiAppInfo {
     static let mpvURL = URL(string: "https://mpv.io")!
     static let fuziURL = URL(string: "https://github.com/cezheng/Fuzi")!
     static let anime4KURL = URL(string: "https://github.com/bloc97/Anime4K")!
-    static let licenseURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/blob/main/LICENSE")!
+    static let licenseURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/blob/main/LICENSE")!
     /// 原版「开源」一节里的「贡献指南」，指向仓库里的 CONTRIBUTING.md（static/doc/CONTRIBUTING.md）。
-    static let contributingURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/blob/main/static/doc/CONTRIBUTING.md")!
-    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/LinkPass888/Kazumi-iOS/releases/latest")!
+    static let contributingURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/blob/main/static/doc/CONTRIBUTING.md")!
+    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/LinkPass888/Kazumi-Swift/releases/latest")!
 }
