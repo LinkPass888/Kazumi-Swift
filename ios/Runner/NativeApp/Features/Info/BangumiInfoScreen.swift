@@ -1147,6 +1147,17 @@ extension BangumiInfoScreen {
 }
 
 /// 问系统当前这一格工具栏是不是竖栏（iOS 27.1 起才有这个环境值）。
+#if targetEnvironment(macCatalyst)
+/// Mac Catalyst 的 SwiftUI 没有 `\.toolbarVerticalEdge`（那是 iOS 27.1 的工具栏布局）。
+/// 探不到就按横栏走，与 `isVerticalBar` 的默认值一致，界面不受影响。
+private struct VerticalBarProbe: ViewModifier {
+    let onChange: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        content.onAppear { onChange(false) }
+    }
+}
+#else
 private struct VerticalBarProbe: ViewModifier {
     let onChange: (Bool) -> Void
 
@@ -1170,3 +1181,4 @@ private struct VerticalBarProbeInner: ViewModifier {
         }
     }
 }
+#endif
