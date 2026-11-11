@@ -3527,7 +3527,7 @@ struct PlayerScreen: View {
         // 拿最新那份一比规则名不一样就整个 bail，这条源存的进度就用不上了。
         // 没带源进来时（历史页进）记录本身就是那个源，按番剧号取。
         // 历史卡片进来时源还没重建，用卡片上带的那条规则名。
-        let pluginName = controller.source?.pluginName ?? controller.resumeRule ?? ""
+        let pluginName = controller.effectivePluginName
         let record = pluginName.isEmpty
             ? library.record(for: controller.bangumiID)
             : library.record(for: controller.bangumiID, pluginName: pluginName)
@@ -4504,7 +4504,7 @@ struct PlayerScreen: View {
     private func downloadRecordKey(_ controller: PlayerController) -> String {
         DownloadRecord.key(
             bangumiID: controller.bangumiID,
-            pluginName: controller.source?.pluginName ?? "",
+            pluginName: controller.effectivePluginName,
             road: controller.selectedRoad
         )
     }
@@ -4526,7 +4526,7 @@ struct PlayerScreen: View {
             bangumiID: controller.bangumiID,
             title: controller.source?.itemName ?? "",
             coverURL: "",
-            pluginName: controller.source?.pluginName ?? "",
+            pluginName: controller.effectivePluginName,
             road: roadIndex,
             // 条目身份一起存：回放时它才是接口模式要的 vod_id（LP 5508/5512）。
             itemSource: controller.source?.detailURL ?? "",
@@ -4868,9 +4868,16 @@ private func persistWatchProgress(
     if duration > 0, progress >= duration - 5 {
         progress = 0
     }
-    let source = controller.source
+    // 离线从历史进来时播放源可能一直没重建出来：规则名按卡片上那条算，
+    // 剧名退回已经存过的记录。用空串去写会新建一条空白历史，本次离线进度
+    // 就回不到原来那张卡片上（#27）。
+    let pluginName = controller.effectivePluginName
     let entry = library.entry(for: controller.bangumiID)
-    let storedName = source?.itemName ?? ""
+    let storedName = [
+        controller.source?.itemName,
+        library.record(for: controller.bangumiID, pluginName: pluginName)?.bangumiName,
+        entry?.displayName,
+    ].compactMap { $0 }.first { !$0.isEmpty } ?? ""
     let storedImage = entry?.imageURL ?? ""
     // 走 store 那一个入口写进度：同一「规则 + 番剧」只留一份记录，
     // 每一集各带自己的线路号（main 的 History.progresses）。
@@ -4878,7 +4885,7 @@ private func persistWatchProgress(
         bangumiID: controller.bangumiID,
         bangumiName: storedName,
         imageURL: storedImage,
-        pluginName: source?.pluginName ?? "",
+        pluginName: pluginName,
         episodeNumber: controller.currentEpisode,
         // 原生这边只有 URL，没有集标题，留空由历史页回退成「第 N 话」。
         episodeTitle: "",
