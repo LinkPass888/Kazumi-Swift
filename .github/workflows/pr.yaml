@@ -23,6 +23,8 @@ on:
 env:
   SCHEME: Runner
   PROJECT: ios/Runner.xcodeproj
+  MAC_SCHEME: Kazumi
+  MAC_PROJECT: macos/Kazumi.xcodeproj
 
 jobs:
   build-ios:
@@ -99,4 +101,75 @@ jobs:
         with:
           name: ios_outputs
           path: Kazumi_ios_*.ipa
+          if-no-files-found: error
+
+  # macOS 版：真 macOS target（不是 Catalyst / Designed for iPad），
+  # 工程同样由 xcodegen 生成，源码里有一半是和 iOS 共用的那几层。
+  # 只 build、不跑测试，和 iOS 那条一样。
+  build-macos:
+    if: ${{ github.event_name == 'workflow_dispatch' || ! github.event.pull_request.draft }}
+    name: "Build for macOS"
+    runs-on: "xcode-27"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      - name: Show Xcode and SDK version
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Install build tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec macos/project.yml --project macos
+
+      # 这一步会把 MPVKit 的 macOS 切片一起拉下来：包解析失败就说明这个 tag
+      # 没有 macOS 二进制，播放器的移植路线要另找答案。
+      - name: Resolve Swift Packages
+        run: |
+          set -o pipefail
+          xcodebuild -project "$MAC_PROJECT" -scheme "$MAC_SCHEME" -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-mac" | xcbeautify
+
+      - name: Build (no codesign)
+        env:
+          DANDAN_APP_ID: ${{ secrets.DANDANAPI_APPID }}
+          DANDAN_APP_SECRET: ${{ secrets.DANDANAPI_KEY }}
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project "$MAC_PROJECT" \
+            -scheme "$MAC_SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-mac" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-mac" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
+            DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
+            | xcbeautify
+
+      - name: Package canary app
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData-mac/Build/Products/Release/Kazumi.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "未找到 Kazumi.app：$APP_PATH" >&2
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" Kazumi_macos_canary.zip
+          ls -lh Kazumi_macos_canary.zip
+
+      - name: Upload canary app
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos_outputs
+          path: Kazumi_macos_canary.zip
           if-no-files-found: error
