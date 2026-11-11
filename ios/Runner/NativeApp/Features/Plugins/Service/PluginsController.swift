@@ -63,7 +63,7 @@ final class PluginsController {
 
     /// 规则存储文件：Application Support/Kazumi/rules/v2/plugins.json。
     static var defaultFileURL: URL {
-        AppEnvironment.rulesRoot
+        AppStoragePaths.rulesRoot
             .appending(path: "v2", directoryHint: .isDirectory)
             .appending(path: "plugins.json")
     }

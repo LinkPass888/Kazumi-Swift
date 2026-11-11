@@ -5,6 +5,7 @@
 #     module UIKit），这条路已经废弃；macOS 版必须是真正的 macOS target。
 #   * 源码分两块：macos/Runner 下是 macOS 自己的入口与界面；ios/Runner/NativeApp 下是
 #     与 iOS 共用的底层，按层往下加（见 sources 里的注释），加一层 CI 编一层。
+#     现在共用到的深度：规则模型 / 规则引擎 / 规则网络层 / 规则控制器 / 播放内核。
 #
 # 生成工程：xcodegen generate --spec macos/project.yml --project macos
 # 产物路径：macos/Kazumi.xcodeproj，scheme 名称 Kazumi，产物 Kazumi.app
@@ -73,6 +74,12 @@ targets:
       - path: ../ios/Runner/NativeApp/Features/Plugins/Network
       # RuleHTTPClient 的 cookie 口袋（只有这个文件不依赖 AppEnvironment）。
       - path: ../ios/Runner/NativeApp/Features/Plugins/Service/PluginCookieStore.swift
+      # 规则控制器：读盘 / 安装 / 删除 / 目录刷新。它要的 `rulesRoot` 原来在
+      # AppEnvironment 里（那个类带界面依赖），已经拆到 AppStoragePaths 这个纯路径段。
+      - path: ../ios/Runner/NativeApp/Features/Plugins/Service/PluginsController.swift
+      - path: ../ios/Runner/NativeApp/Features/Plugins/Service/PluginValidityTracker.swift
+      # 存储目录的唯一出处（iOS 的 AppEnvironment 与这边共用）。
+      - path: ../ios/Runner/NativeApp/App/Support/AppStoragePaths.swift
       - path: ../ios/Runner/NativeApp/App/Support/KazumiLog.swift
       - path: ../ios/Runner/NativeApp/App/Support/KazumiAppInfo.swift
       # 规则网络层要的代理开关与代理地址解析（两个都是纯 Foundation：

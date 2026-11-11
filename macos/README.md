@@ -45,8 +45,8 @@ xcodebuild -project macos/Kazumi.xcodeproj -scheme Kazumi -configuration Debug \
 dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UDZO` 生成，
 是标准的拖拽安装盘；不签名所以首次打开要右键「打开」或 `xattr -dr com.apple.quarantine`。
 
-包体现在是「壳」的大小（1～2 MB）：播放内核 MPVKit 虽然在工程里，但还没有任何代码
-引用它的符号，链接时会整个 dead-strip 掉。播放器移植进来之后才会变成百 MB 级。
+包体现在 36 MB 上下：播放内核 MPVKit 真的被符号引用了（之前只有壳的时候是 1.4 MB，
+链接期整个被 dead-strip）。
 
 两条都**只 build，不跑测试**——和 iOS 那条一样。
 
@@ -59,11 +59,22 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 | 规则模型 | `Features/Plugins/Model` |
 | 规则引擎 | `Features/Plugins/Engine` |
 | 规则网络层 | `Features/Plugins/Network` |
+| 规则控制器 | `Features/Plugins/Service/PluginsController.swift`（读盘 / 安装 / 删除 / 目录刷新） |
 | Cookie 口袋 | `Features/Plugins/Service/PluginCookieStore.swift` |
+| 存储目录 | `App/Support/AppStoragePaths.swift`（从 `AppEnvironment` 拆出来的纯路径段，两边共用） |
 | 日志 / 元信息 | `App/Support/KazumiLog.swift`、`KazumiAppInfo.swift` |
 
-界面：侧边栏 + 各栏的移植说明 + 「关于」设置页；**播放器**（`Runner/Player/`）已经能放
-本地文件和直链。
+界面：
+
+- **规则**（`Runner/Rules/`）：本机装了哪些规则；从规则仓库装新的、更新、删除都走共用的
+  `PluginsController`，落盘路径与 iOS 同一条（Application Support/Kazumi/rules/v2/plugins.json）。
+- **搜索**（`Runner/Search/`）：拿本机全部规则并发搜一次，结果按规则分组。没复制 iOS 的
+  `PluginSearchService`——那个类带着验证码 WebView 流程；这里用 generation 丢掉过期结果。
+- **详情**（`Runner/Detail/`）：规则引擎拉章节，按线路列剧集；点一集把地址连同规则的
+  UA / referer / 登录 cookie 递给播放器。只有直链线路能直接播——网页地址要在
+  `VideoSourceWebView` 里捞 m3u8/mp4，那条路还没移植。
+- **播放器**（`Runner/Player/`）：本地文件、直链，以及上面那条「搜索 → 剧集 → 播」的路。
+- 推荐 / 时间表 / 历史 / 收藏 / 我的仍是占位说明。
 
 播放器**没有另写一份内核**：`ios/Runner/NativeApp/Features/Player` 下的
 `MPVEngine.swift`、`MPVMetalView.swift`、`PlayerSurfaceModel.swift` 等直接进 macOS target，
@@ -76,7 +87,8 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
 竖拖调音量、播放中 4 秒自动收起；同时保留按钮、空格暂停、全屏这些鼠标/键盘路子
 （macOS 26 起带触屏的机器把触摸事件送进 SwiftUI 的 gesture，两边同一套代码）。
 
-还没接：选集、弹幕叠加、画中画、投屏。
+还没接：播放器里的选集面板（详情页有线路/剧集列表，播放器内没有）、弹幕叠加、
+画中画、投屏、WebView 抓地址。
 
 ## 移植顺序（按依赖从底往上）
 
@@ -87,6 +99,7 @@ dmg 用 `hdiutil create -srcfolder <Kazumi.app + Applications 软链> -format UD
    Application Support）、`LibraryStore`、`SettingsStore`、`AppRouter`。
 3. **规则界面**：`Plugins/Views` + `Service`（`UIDocumentPicker` → `NSOpenPanel`，
    `UIPasteboard` → `NSPasteboard`，`presentationDetents` → 固定尺寸 sheet）。
+   已完成的部分：规则列表 / 仓库安装 / 删除（`Runner/Rules/`）；规则编辑器与导入导出没搬。
 4. **页面**：推荐 → 时间表 → 详情 → 搜索 → 历史 / 收藏 / 我的 → 设置。
 5. **播放器**（已共享内核）：ios 那份 `MPVEngine` / `PlayerSurfaceModel` 就是 macOS 的
    内核，不再有平行实现。剩下没搬的是长在 iOS 界面里的东西：选集面板、弹幕叠层

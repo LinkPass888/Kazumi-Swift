@@ -17,6 +17,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct MacPlayerScreen: View {
+    @Environment(MacAppModel.self) private var app
+
     @State private var model = MacPlayerModel()
     @State private var isShowingURLSheet = false
     @State private var isScrubbing = false
@@ -80,6 +82,20 @@ struct MacPlayerScreen: View {
             MacPlayerURLSheet { text in
                 openURL(text)
             }
+        }
+        // 从搜索/详情页递过来的那一条：视图刚出现时这一条已经在，也会在 id 变化时再来。
+        .task(id: app.playRequest?.id) {
+            guard let request = app.playRequest else { return }
+            model.open(
+                url: request.url,
+                title: request.title,
+                referer: request.referer,
+                userAgent: request.userAgent,
+                cookie: request.cookie
+            )
+            controlsVisible = true
+            // 取走就清掉：同一栏再回来不会重复起播。
+            app.playRequest = nil
         }
         // 播着的时候控制条自己收起来，鼠标/手指一动再出来。
         .task(id: hideToken) {

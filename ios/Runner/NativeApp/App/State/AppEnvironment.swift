@@ -136,14 +136,9 @@ final class AppEnvironment {
         await UpdateNotificationScheduler.shared.reschedule(watching: watching)
     }
 
-    /// App 的 Application Support 目录。
+    /// App 的 Application Support 目录（唯一出处见 `AppStoragePaths`）。
     nonisolated private static var applicationSupportRoot: URL {
-        (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL.temporaryDirectory
+        AppStoragePaths.applicationSupportRoot
     }
 
     /// App 的「文稿」目录。放进这里的文件在「文件」App 的「我的 iPhone > App 名」下看得见。
@@ -158,7 +153,7 @@ final class AppEnvironment {
 
     /// 存储根目录（Step 3 的 JSON 存储与 WebDAV 备份都基于它）。
     nonisolated static var storageRoot: URL {
-        applicationSupportRoot.appending(path: "Kazumi", directoryHint: .isDirectory)
+        AppStoragePaths.storageRoot
     }
 
     /// 图片缓存目录。
@@ -257,7 +252,7 @@ final class AppEnvironment {
 
     /// 规则目录（内置规则与订阅规则）。
     static var rulesRoot: URL {
-        storageRoot.appending(path: "rules", directoryHint: .isDirectory)
+        AppStoragePaths.rulesRoot
     }
 
     /// 检查剩余空间（对应原 iOS 通道的 getAvailableStorage）。

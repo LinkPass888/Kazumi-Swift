@@ -14,6 +14,8 @@ import SwiftUI
 
 /// 侧边栏六个栏目，与 iOS 版一一对应。
 enum MacSection: String, CaseIterable, Identifiable {
+    case search
+    case rules
     case popular
     case timeline
     case history
@@ -26,6 +28,8 @@ enum MacSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .search: "搜索"
+        case .rules: "规则"
         case .popular: "推荐"
         case .timeline: "时间表"
         case .history: "历史"
@@ -38,6 +42,8 @@ enum MacSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .search: "magnifyingglass"
+        case .rules: "list.bullet.rectangle"
         case .popular: "sparkles.tv"
         case .timeline: "calendar"
         case .history: "clock.arrow.circlepath"
@@ -51,6 +57,10 @@ enum MacSection: String, CaseIterable, Identifiable {
     /// 这一栏在 macOS 上要单独处理的地方。移植完一栏就删一条。
     var status: String {
         switch self {
+        case .search:
+            "已经能用：按本机全部规则一起搜，点结果看线路与剧集。"
+        case .rules:
+            "已经能用：从规则仓库安装 / 删除规则。"
         case .popular:
             "叠压头图与横向货架要按 macOS 的窗口宽度重排，不能照搬 iPad 的三栏比例。"
         case .timeline:
@@ -70,7 +80,8 @@ enum MacSection: String, CaseIterable, Identifiable {
 }
 
 struct MacRootView: View {
-    @State private var selection: MacSection? = .popular
+    @Environment(MacAppModel.self) private var app
+    @State private var selection: MacSection? = .search
 
     var body: some View {
         NavigationSplitView {
@@ -83,15 +94,26 @@ struct MacRootView: View {
             .navigationTitle("Kazumi")
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
         } detail: {
-            if let selection, selection == .player {
-                MacPlayerScreen()
-            } else if let selection {
-                MacSectionPlaceholder(section: selection)
+            if let section = selection {
+                switch section {
+                case .search:
+                    MacSearchScreen()
+                case .rules:
+                    MacRulesScreen()
+                case .player:
+                    MacPlayerScreen()
+                default:
+                    MacSectionPlaceholder(section: section)
+                }
             } else {
                 ContentUnavailableView("选一栏看看", systemImage: "sidebar.left")
             }
         }
         .navigationSplitViewStyle(.balanced)
+        // 详情页点了「这一集」就把侧边栏切到播放器：播放请求连同地址与请求头一起过去。
+        .onChange(of: app.playRequest?.id) { _, newValue in
+            if newValue != nil { selection = .player }
+        }
     }
 }
 
