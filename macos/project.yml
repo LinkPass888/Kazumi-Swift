@@ -93,6 +93,8 @@ targets:
       - path: ../ios/Runner/NativeApp/Features/Player/PlaybackCachePolicy.swift
       - path: ../ios/Runner/NativeApp/Features/Player/PlayerErrorMessage.swift
       - path: ../ios/Runner/NativeApp/Features/Player/PlayerSurfaceModel.swift
+      # 「选一项」菜单的数据模型（渲染各走各平台的原生控件）。
+      - path: ../ios/Runner/NativeApp/Features/Player/SelectionMenuModel.swift
       # 硬解档位（从 SettingsStore 里拆出来的纯枚举，SettingsStore 本身带界面依赖）。
       - path: ../ios/Runner/NativeApp/App/State/HardwareDecodeMode.swift
       # 「mpv: ...」这条日志口袋。

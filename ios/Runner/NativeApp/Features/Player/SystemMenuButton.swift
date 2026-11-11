@@ -10,15 +10,9 @@ import SwiftUI
 import UIKit
 
 struct SystemMenuButton: UIViewRepresentable {
-    struct Selection {
-        struct Option {
-            var title: String
-            var isSelected: Bool
-            var action: () -> Void
-        }
-
-        var options: [Option]
-    }
+    /// 菜单数据模型和 macOS 共用一份（`SelectionMenuModel.swift`）。
+    /// 这里只留一个旧名字，播放器里那些 `SystemMenuButton.Selection(...)` 一行都不用改。
+    typealias Selection = SelectionMenuModel
 
     struct Item {
         var title: String

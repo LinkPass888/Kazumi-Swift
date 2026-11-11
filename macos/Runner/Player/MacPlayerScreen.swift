@@ -30,10 +30,9 @@ struct MacPlayerScreen: View {
     @State private var dragStartVolume: Double = 100
     @State private var dragPreviewTime: Double?
     @State private var dragPreviewVolume: Double?
-    /// 倍速面板自己握开关：iOS 那份早就不用系统 `Menu` 了（PlayerScreen 里
-    /// 「倍速面板：自己握开关，好让控制层知道菜单还开着」），系统菜单在播放层上
-    /// 点不动、开合状态也拿不到，同一套坑别在 macOS 再踩一遍。
-    @State private var isShowingSpeedPanel = false
+    /// 原生菜单这会儿开着没：`NSMenu.popUp` 是阻塞式的，前后正好一对。
+    /// 开着的时候控制条不自动收（不然菜单跟着一起没了）。
+    @State private var isNativeMenuOpen = false
 
     private static let speedChoices: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
@@ -69,14 +68,6 @@ struct MacPlayerScreen: View {
                         .transition(.opacity)
                 }
                 Spacer(minLength: 0)
-                if model.title != nil, controlsVisible, isShowingSpeedPanel {
-                    HStack {
-                        Spacer(minLength: 0)
-                        speedPanel
-                    }
-                    .padding(.bottom, 8)
-                    .transition(.opacity)
-                }
                 if model.title != nil, controlsVisible {
                     controlBar
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -95,14 +86,14 @@ struct MacPlayerScreen: View {
             guard controlsVisible, surface.isPlaying, model.title != nil else { return }
             try? await Task.sleep(for: .seconds(4))
             guard controlsVisible, surface.isPlaying, dragAxis == nil, !isScrubbing,
-                  !isShowingURLSheet, !isShowingSpeedPanel else { return }
+                  !isShowingURLSheet, !isNativeMenuOpen else { return }
             withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
         }
         .onDisappear { model.stop() }
     }
 
     private var hideToken: String {
-        "\(controlsVisible)-\(surface.isPlaying)-\(model.title == nil)-\(isShowingSpeedPanel)"
+        "\(controlsVisible)-\(surface.isPlaying)-\(model.title == nil)-\(isNativeMenuOpen)"
     }
 
     // MARK: - 手势层
@@ -114,10 +105,6 @@ struct MacPlayerScreen: View {
                 surface.togglePlay()
             }
             .onTapGesture {
-                if isShowingSpeedPanel {
-                    isShowingSpeedPanel = false
-                    return
-                }
                 withAnimation(.easeOut(duration: 0.2)) { controlsVisible.toggle() }
             }
             .gesture(
@@ -312,10 +299,24 @@ struct MacPlayerScreen: View {
                     .frame(width: 110)
                     .tint(.white)
 
-                Button(model.speed == 1 ? "1x" : String(format: "%gx", model.speed)) {
-                    isShowingSpeedPanel.toggle()
-                }
-                .frame(width: 52)
+                // 倍速走原生 NSMenu（iOS 那边是 UIButton + UIMenu）：菜单对象
+                // 活在 SwiftUI 之外，250ms 的状态刷新不会把它换成旧副本。
+                MacSelectionMenu(
+                    model: SelectionMenuModel(
+                        options: Self.speedChoices.map { choice in
+                            SelectionMenuModel.Option(
+                                title: String(format: "%gx", choice),
+                                isSelected: abs(model.speed - choice) < 0.001
+                            ) {
+                                model.speed = choice
+                            }
+                        }
+                    ),
+                    title: model.speed == 1 ? "1x" : String(format: "%gx", model.speed),
+                    minWidth: 52,
+                    onOpenChanged: { isNativeMenuOpen = $0 }
+                )
+                .frame(width: 66)
                 .help("倍速")
 
                 Button {
@@ -335,46 +336,6 @@ struct MacPlayerScreen: View {
         }
         .padding(14)
         .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    /// 倍速面板：竖着列出来，选完就收，还开着的那一档带勾。
-    private var speedPanel: some View {
-        VStack(spacing: 2) {
-            ForEach(Self.speedChoices, id: \.self) { choice in
-                Button {
-                    model.speed = choice
-                    isShowingSpeedPanel = false
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(String(format: "%gx", choice))
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer(minLength: 6)
-                        if abs(model.speed - choice) < 0.001 {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .background(
-                    abs(model.speed - choice) < 0.001
-                        ? AnyShapeStyle(Color.white.opacity(0.16))
-                        : AnyShapeStyle(Color.clear),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                )
-            }
-        }
-        .padding(4)
-        .frame(width: 104)
-        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.white.opacity(0.14), lineWidth: 1)
-        )
-        .foregroundStyle(.white)
     }
 
     private var displayPosition: Double {
