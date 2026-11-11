@@ -43,13 +43,9 @@ struct BangumiInfoScreen: View {
     /// 大标题的高度，和栏里那行番名的出现进度（Ato 8300：跟着滚动位置连续变，
     /// 不是到点切换）。0 = 还没有，1 = 满。
     @State private var titleHeight: CGFloat = 0
-    /// 大标题在命名坐标空间里量到的位置，以及顶上的基准位置。
-    /// 两个都用顶上那次量，滚动中不再重量；滚回顶部或摊开／合上换宽度时重量一次
-    /// （Ato 8455）。只用两者的差当锚点，顶上恒为 0，不会锁成一个大正数。
-    @State private var titleAnchor: CGFloat = 0
-    @State private var anchorBaseline: CGFloat = 0
-    @State private var didMeasureTitleAnchor = false
-    @State private var anchorWidth: CGFloat = 0
+    /// 顶上的滚动量：只往上取最小值，记一次就够（Ato 8463）。
+    @State private var scrollTopOffset: CGFloat = 0
+    @State private var didCaptureScrollTop = false
     @State private var barTitleProgress: CGFloat = 0
 
     /// B 档：宽且不矮。
@@ -196,8 +192,6 @@ struct BangumiInfoScreen: View {
                 }
                 .scrollIndicators(.hidden)
                 .containerRelativeFrame(.horizontal)
-                // 锚点与滚动量共用的坐标空间：内容里的位置，滚的时候不动。
-                .coordinateSpace(.named("detailScroll"))
                 // 顶部滚动边缘效果交回系统的 .soft（其余二十多个页面同一条）。
                 .scrollEdgeEffectStyle(.soft, for: .top)
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -205,9 +199,14 @@ struct BangumiInfoScreen: View {
                     // 进度涨一下又倒回去（Fuck 8448 / Ato 8449）。
                     geometry.contentOffset.y
                 } action: { _, scrolled in
-                    barTitleProgress = titleHeight > 0
-                        ? min(max((scrolled - titleAnchor) / titleHeight, 0), 1)
-                        : 0
+                    // 顶上那格当 0，位移除以大标题高；量不到高就用 28 兜底，
+                    // 这样不可能卡在 0（Ato 8463）。
+                    if !didCaptureScrollTop || scrolled < scrollTopOffset {
+                        scrollTopOffset = scrolled
+                        didCaptureScrollTop = true
+                    }
+                    let height = titleHeight > 0 ? titleHeight : 28
+                    barTitleProgress = min(max((scrolled - scrollTopOffset) / height, 0), 1)
                 }
             }
 
@@ -328,21 +327,7 @@ struct BangumiInfoScreen: View {
             } action: { height in
                 titleHeight = height
             }
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.frame(in: .named("detailScroll")).minY
-            } action: { anchor in
-                let width = containerSize.width
-                let atTop = barTitleProgress <= 0
-                let widthChanged = abs(width - anchorWidth) > 0.5
-                if !didMeasureTitleAnchor || atTop || widthChanged {
-                    didMeasureTitleAnchor = true
-                    anchorWidth = width
-                    anchorBaseline = anchor
-                }
-                // 内容坐标也好、视口坐标也好，顶上量到的那一格就是 0；
-                // 滚下去时这个差只可能 ≤0，夹完仍为 0。
-                titleAnchor = max(0, anchor - anchorBaseline)
-            }
+
     }
 
     /// 标签条 + 标签面板。宽档放进右栏（§6.5），窄档接在 hero 下面。
