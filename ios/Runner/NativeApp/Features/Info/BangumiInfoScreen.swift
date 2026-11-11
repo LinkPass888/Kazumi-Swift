@@ -47,6 +47,8 @@ struct BangumiInfoScreen: View {
     @State private var scrollTopOffset: CGFloat = 0
     @State private var didCaptureScrollTop = false
     @State private var barTitleProgress: CGFloat = 0
+    /// 栏是不是竖的（Duo 合上／摊开横屏）：是就不放那行番名。
+    @State private var isVerticalBar = false
 
     /// B 档：宽且不矮。
     private var isWideTier: Bool {
@@ -221,11 +223,21 @@ struct BangumiInfoScreen: View {
         }
         // 出入场由值驱动：状态变化本身不在动画事务里，只有结果被动画化。
         .animation(.easeOut(duration: 0.2), value: toastMessage)
-        // 栏里那行番名交给系统自己的标题：大标题滚出去之后才设上去，滚回来清掉。
-        // 不能塞自定义视图——Duo 合上时栏是竖的，Apple 规定自定义视图做的工具栏项
-        // 在竖栏里永远不显示，同一段代码在 iPad / iPhone 上出得来，在 Duo 上不出。
-        .navigationTitle(barTitleProgress >= 0.5 ? controller.item.displayName : "")
-        .toolbarTitleDisplayMode(.inline)
+        // Duo 合上或摊开横屏时栏是竖的，系统不给自定义视图做的工具栏项留位置
+        // （Apple《Vertical bars》：竖栏只排带图标的项）。所以先问系统这一格是不是竖栏，
+        // 是就不放那行番名，横栏上照旧渐显（Ato 8475）。
+        .modifier(VerticalBarProbe { isVerticalBar = $0 })
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                if !isVerticalBar {
+                    Text(controller.item.displayName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .opacity(barTitleProgress)
+                        .accessibilityHidden(barTitleProgress < 0.5)
+                }
+            }
+        }
         // 顶部那排交给系统：系统返回键 + 系统工具栏按钮，玻璃底与间距由系统给
         // （LP 2026-11-11 / Apple《Adopting Liquid Glass》）。
         .toolbar {
@@ -1134,3 +1146,27 @@ extension BangumiInfoScreen {
     }
 }
 
+/// 问系统当前这一格工具栏是不是竖栏（iOS 27.1 起才有这个环境值）。
+private struct VerticalBarProbe: ViewModifier {
+    let onChange: (Bool) -> Void
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 27.1, *) {
+            content.modifier(VerticalBarProbeInner(onChange: onChange))
+        } else {
+            content
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct VerticalBarProbeInner: ViewModifier {
+    let onChange: (Bool) -> Void
+    @Environment(\.toolbarVerticalEdge) private var edge
+
+    func body(content: Content) -> some View {
+        content.onChange(of: edge, initial: true) { _, newValue in
+            onChange(newValue != nil)
+        }
+    }
+}
