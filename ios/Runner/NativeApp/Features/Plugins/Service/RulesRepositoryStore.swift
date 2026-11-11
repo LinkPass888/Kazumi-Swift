@@ -71,6 +71,37 @@ final class RulesRepositoryStore {
         persist()
     }
 
+    // MARK: 设置备份
+
+    /// 备份导出：自定义仓库列表，内置仓库不写（它每台机器都有）。
+    /// 条目形状与 `RulesRepository` 的 Codable 输出一致：url / name / ruleCount。
+    static func backupJSON() -> [JSONValue] {
+        load().map { repository in
+            var object: [String: JSONValue] = ["url": .string(repository.url)]
+            if let name = repository.name, !name.isEmpty { object["name"] = .string(name) }
+            if let ruleCount = repository.ruleCount { object["ruleCount"] = .int(ruleCount) }
+            return .object(object)
+        }
+    }
+
+    /// 备份恢复：按地址去重加回列表，已在本机的跳过；返回新增个数。
+    /// 恢复是合并而不是覆盖——本机后加的仓库不会被备份删掉。
+    @discardableResult
+    func restoreBackup(_ entries: [JSONValue]) -> Int {
+        var added = 0
+        // 倒着加：`add` 每次都插到首位，倒序插完就还原成备份里的顺序（第一条仍是生效那条）。
+        for entry in entries.reversed() {
+            guard let object = entry.objectValue,
+                  let url = object["url"]?.stringValue,
+                  !custom.contains(where: { $0.url == url }) else { continue }
+            let name = object["name"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+            let ruleCount = object["ruleCount"]?.intValue
+            add(RulesRepository(id: url, url: url, name: name, ruleCount: ruleCount))
+            added += 1
+        }
+        return added
+    }
+
     // MARK: 落盘
 
     private func persist() {
