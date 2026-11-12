@@ -107,7 +107,7 @@ struct SyncBackupScreen: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(omitExplanation)
                     // 只说备份了什么：不写「云端也有一份」，否则会以为收藏也备了。
-                    Text("备份只包含应用设置。追番、观看历史、下载与播放器日志不在备份里。")
+                    Text("备份包含应用设置、已安装的规则和添加的规则仓库。追番、观看历史、下载与播放器日志不在备份里。")
                 }
             }
 
@@ -310,14 +310,25 @@ struct SyncBackupScreen: View {
         }
     }
 
+    /// 备份正文：设置 + 已安装的规则（整份定义）+ 添加的规则仓库。
+    /// 返回 nil 表示一条设置都没有，与原来的空备份判定一致。
+    private func backupText() -> String? {
+        let snapshot = settings.backupSnapshot(omitCredentials: settings.settingsBackupOmitCredentials)
+        guard !snapshot.isEmpty else { return nil }
+        return SettingsBackup.encode(
+            snapshot,
+            rules: environment.plugins.pluginList.map { $0.toJSON() },
+            ruleSources: RulesRepositoryStore.backupJSON()
+        )
+    }
+
     private func exportBackup() {
         backupMessageScope = .clipboard
-        let snapshot = settings.backupSnapshot(omitCredentials: settings.settingsBackupOmitCredentials)
-        guard !snapshot.isEmpty else {
+        guard let text = backupText() else {
             setBackupResult(String(localized: "没有可导出的设置"), isError: true)
             return
         }
-        UIPasteboard.general.string = SettingsBackup.encode(snapshot)
+        UIPasteboard.general.string = text
         // 提示是一闪而过的浮条：只说结果，不塞建议。长句子会把条子撑成两行、盖住下面的行。
         setBackupResult(String(localized: "已复制到剪贴板"), isError: false)
     }
@@ -375,14 +386,52 @@ struct SyncBackupScreen: View {
         guard let payload = pendingPayload else { return }
         pendingPayload = nil
         let count = settings.applyBackup(payload.settings)
-        setBackupResult(String(localized: "已恢复 \(count) 项设置"), isError: false)
+        // 规则按整份定义还原：同名覆盖、没有的新增（走导入规则同一个入口，
+        // 于是落盘、内存列表、排序三件事都由它负责）。
+        let rules = payload.rules
+            .map { Plugin(json: $0) }
+            .filter { !$0.name.isEmpty && !$0.requiresNewerClient }
+        let sources = payload.ruleSources
+        Task { @MainActor in
+            var restoredRules = 0
+            var ruleFailure: String?
+            if !rules.isEmpty {
+                do {
+                    try await environment.plugins.updatePlugins(rules)
+                    restoredRules = rules.count
+                } catch {
+                    ruleFailure = error.localizedDescription
+                }
+            }
+            // 仓库恢复是合并：本机已有的按地址跳过，不删任何一条。
+            let addedSources = sources.isEmpty ? 0 : RulesRepositoryStore().restoreBackup(sources)
+            if let ruleFailure {
+                setBackupResult(ruleFailure, isError: true)
+                return
+            }
+            let message = Self.restoreResultMessage(settings: count, rules: restoredRules, sources: addedSources)
+            setBackupResult(message, isError: false)
+        }
+    }
+
+    /// 恢复结果：备份里带了规则/仓库才提它们；只有设置时保持原来那句话。
+    private static func restoreResultMessage(settings count: Int, rules: Int, sources: Int) -> String {
+        if rules > 0, sources > 0 {
+            return String(localized: "已恢复 \(count) 项设置、\(rules) 条规则、\(sources) 个规则仓库")
+        }
+        if rules > 0 {
+            return String(localized: "已恢复 \(count) 项设置、\(rules) 条规则")
+        }
+        if sources > 0 {
+            return String(localized: "已恢复 \(count) 项设置、\(sources) 个规则仓库")
+        }
+        return String(localized: "已恢复 \(count) 项设置")
     }
 
     /// 导出到文件：内容与剪贴板那份完全一样，只是走文件系统。
     func exportBackupToFile() {
         backupMessageScope = .file
-        let snapshot = settings.backupSnapshot(omitCredentials: settings.settingsBackupOmitCredentials)
-        guard !snapshot.isEmpty else {
+        guard let text = backupText() else {
             setBackupResult(String(localized: "没有可导出的设置"), isError: true)
             return
         }
@@ -392,7 +441,7 @@ struct SyncBackupScreen: View {
         let name = "kazumi-settings-\(Self.fileStampText()).json"
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(name)
         do {
-            try Data(SettingsBackup.encode(snapshot).utf8).write(to: tempURL, options: .atomic)
+            try Data(text.utf8).write(to: tempURL, options: .atomic)
         } catch {
             setBackupResult(String(localized: "存不到这个位置，可能是空间不够，或者没有写入权限"), isError: true)
             return
@@ -517,6 +566,13 @@ struct SyncBackupScreen: View {
             String(localized: "备份时间：\(Self.timestampText(payload.exportedAt))\n")
                 + String(localized: "共 \(payload.count) 项设置，将覆盖当前设置。"),
         ]
+        // 规则与仓库只说会怎么合并，不说会删什么：恢复这两样都是合并，不覆盖。
+        if payload.ruleCount > 0 {
+            blocks.append(String(localized: "备份里还有 \(payload.ruleCount) 条规则，会一起合并进来，同名规则以备份为准。"))
+        }
+        if payload.ruleSourceCount > 0 {
+            blocks.append(String(localized: "备份里还有 \(payload.ruleSourceCount) 个规则仓库，会一起加进来。"))
+        }
         if payload.settings.keys.contains(where: SettingsBackup.credentialKeys.contains) {
             blocks.append(String(localized: "恢复后请检查追番同步、多设备同步和自定义弹幕接口的凭据。"))
         }

@@ -6,7 +6,7 @@
 //  用 WKWebView 的 WKUserScript + script message handler 复刻 InAppWebView 的
 //  addUserScripts / addJavaScriptHandler 行为。
 //
-//  桥接协议（与 Dart 端脚本完全一致，改动必须两边同步）：
+//  桥接协议沿用上游脚本的通道名；本地 JavaScript 与 WKScriptMessageHandler 必须同步修改：
 //    JS → App：CaptchaImageBridge / CaptchaStatusBridge / CaptchaGoneBridge /
 //              ButtonClickedBridge / CaptchaLogBridge
 //    App → JS：脚本模板中调用 window.flutter_inappwebview.callHandler(...)，

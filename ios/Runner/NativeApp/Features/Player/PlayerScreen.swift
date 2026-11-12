@@ -266,6 +266,9 @@ struct PlayerScreen: View {
     @State private var containerSize: CGSize = .zero
     /// 播放页四周的安全区内缩（全屏时画面要绕过刘海，按它算窗口尺寸）。
     @State private var containerInsets = EdgeInsets()
+    /// 整个窗口的尺寸（含安全区）。画面按满宽算高要用它——containerSize 是安全区那块，
+    /// Duo 摊开上安全区那块只有 867 宽，拿它算会算矮（实测 511 而不是 535）。
+    @State private var windowSize: CGSize = .zero
     /// 上一次转屏请求的结果，显示在「播放信息」里（Colo 2026-10-28）：
     /// 分得清是系统没给（被拒＋原因），还是我们没请求（一直「未请求」）。
     @State private var lastOrientationResult = String(localized: "未请求")
@@ -405,9 +408,21 @@ struct PlayerScreen: View {
     @Environment(SettingsStore.self) private var settings
     /// 主题色分深浅两档，菜单跟着走（Colo 3344）。
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dismiss) private var dismiss
     /// 由现有 UIScene 通知维护的播放策略标志；诊断另外读取实际 activationState。
     @State private var sceneIsActive = true
+
+    /// 常规宽度（iPad、Duo 内屏）：全屏就地铺开，不转屏、不强制横屏
+    /// （Colo 7725 §4.2 A）。compact（手机、外屏）保持原来的横屏全屏。
+    private var usesInlineFullscreen: Bool { horizontalSizeClass == .regular }
+
+    /// 画面层的安全区忽略范围：常规宽度四边都吃满窗口，让 16:9 画面左右到边
+    /// （Colo 7725 §4.2 B）；其余沿用原来的「全屏上下、竖屏不吃」。
+    private var videoIgnoredSafeAreaEdges: Edge.Set {
+        if usesInlineFullscreen { return .all }
+        return isFullscreen ? [.top, .bottom] : []
+    }
 
     /// 画面那一半（body 的前半截）。
     ///
@@ -424,11 +439,20 @@ struct PlayerScreen: View {
                 // 画面从 0 重新起播（LP 3624「切全屏进度归零」）。
                 // 铺满还是 16:9 由画面自己的 PlayerBoxModifier 决定。
                 VStack(spacing: 0) {
+                    // 常规宽度（Duo 内屏 951×669）：画面按**窗口满宽**定高（951 → 535），
+                    // 剩下的 134 才给选集区。不定这个高，VStack 把可用高度平摊，
+                    // 画面只拿到 318 高、再由 16:9 反推成 564 宽，左右各留 193 的
+                    // 黑带，16:9 的正片在里面再缩一次，四边都到不了（Duo 实测）。
+                    // 画面这个高是固定的，选集区是灵活的，压缩只会压到选集区。
                     playerArea(controller)
+                        .frame(height: fixedPictureHeight)
                     if !isFullscreen {
                         episodeArea(controller)
                     }
                 }
+                // 画面顶边贴窗口顶：不忽略顶部安全区的话，定好的 535 高会被顶上
+                // 那 24 压成 511，画面上方还留一条黑（Duo 实测）。
+                .ignoresSafeArea(.container, edges: ignoresWindowEdges ? .all : [])
             } else {
                 ProgressView()
                     .tint(.white)
@@ -462,6 +486,13 @@ struct PlayerScreen: View {
         .background {
             GeometryReader { proxy in
                 Color.clear
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
+            }
+            .ignoresSafeArea()
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
                     .onAppear {
                         logLifecycleSnapshot("onAppear")
                         containerSize = proxy.size
@@ -470,11 +501,13 @@ struct PlayerScreen: View {
                     .onChange(of: proxy.size) { _, size in
                         containerSize = size
                         containerInsets = proxy.safeAreaInsets
-                        if size.width > size.height {
+                        // 常规宽度不按宽高猜方向：不转屏，也就没有「横过以后又转回去」
+                        // 这回事（Colo 7725 §4.2 A）。
+                        if !usesInlineFullscreen, size.width > size.height {
                             sawLandscape = true
                             landscapeExitTask?.cancel()
                             landscapeExitTask = nil
-                        } else if isFullscreen, sawLandscape {
+                        } else if !usesInlineFullscreen, isFullscreen, sawLandscape {
                             sawLandscape = false
                             // 等竖屏稳住再退：转屏途中会报几帧中间尺寸，见一帧竖的
                             // 就退全屏会把正在进行的转屏打断（@developer3 4308 的第四条）。
@@ -790,7 +823,7 @@ struct PlayerScreen: View {
             // 开着系统竖屏锁时其它页面会继续停在横屏。
             isFullscreen = false
             sawLandscape = false
-            if isWindowLandscape {
+            if !usesInlineFullscreen, isWindowLandscape {
                 requestOrientation(.portrait, releaseAfterSuccess: true)
             } else {
                 releaseOrientation()
@@ -1118,8 +1151,43 @@ struct PlayerScreen: View {
     /// 传 nil 会退回内容的固有比例（mpv 视图是方的，上一版就成了 382×382）。
     /// 换成容器自己的比例后 fit 的结果正好等于容器，全屏铺满——只改一个参数、
     /// 不改视图类型；改类型会把 mpv 拆掉重建、进度归零（3678）。
+    /// 只有常规宽度的非全屏才按窗口排：iPhone 竖屏那套已经过过评审，别动。
+    private var usesWindowPicture: Bool {
+        !isFullscreen && horizontalSizeClass == .regular
+    }
+
+    private var fixedPictureHeight: CGFloat? {
+        usesWindowPicture ? windowVideoHeight : nil
+    }
+
+    private var ignoresWindowEdges: Bool {
+        isFullscreen || usesWindowPicture
+    }
+
+    /// 非全屏时画面的高度：按**窗口满宽**再按 16:9 算（Duo 951 → 535）。
+    /// 用窗口宽而不是安全区宽——画面那层本来就忽略四边安全区。
+    private var windowVideoHeight: CGFloat {
+        let windowWidth = windowSize.width > 0
+            ? windowSize.width
+            : containerSize.width + containerInsets.leading + containerInsets.trailing
+        let windowHeight = windowSize.height > 0
+            ? windowSize.height
+            : containerSize.height + containerInsets.top + containerInsets.bottom
+        guard windowWidth > 0, boxAspectRatio > 0 else { return 0 }
+        // 优先保左右到边；只有算出来的高超出窗口，才改按高度收（Ato 8208）。
+        return min(windowWidth / max(boxAspectRatio, 0.1), windowHeight)
+    }
+
     private var boxAspectRatio: CGFloat {
         if isFullscreen, containerSize.width > 0, containerSize.height > 0 {
+            // 常规宽度：画面层已经忽略四边安全区，比例得按**窗口**算，不然盒子
+            // 按安全区那块的比例铺，左右两侧留出竖条那么宽的黑边。
+            if usesInlineFullscreen {
+                let window = fullscreenVideoSize
+                if window.width > 0, window.height > 0 {
+                    return window.width / window.height
+                }
+            }
             return containerSize.width / containerSize.height
         }
         return aspectRatioMode.frameAspectRatio
@@ -1212,7 +1280,7 @@ struct PlayerScreen: View {
             // 遮罩就从安全区下沿起画、离窗口顶差那一点（LP 2026-10-28 反复报的）。
             // 顶栏自己有 padding(.top, playerTopInset)，按钮不会顶到刘海下面；
             // 横屏用 landscapePlayerTopInset = 0，直接贴窗口顶。
-            .ignoresSafeArea(.container, edges: isFullscreen ? [.top, .bottom] : [])
+            .ignoresSafeArea(.container, edges: videoIgnoredSafeAreaEdges)
 
             // HUD 一律放在画面从上往下 1/4 处、水平居中（LP 2026-10-28 第 11 条 / Colo）：
             // 亮度 / 音量横条、横滑的秒数、长按倍速的胶囊、双击的播放 / 暂停都在这一条线上。
@@ -1277,7 +1345,7 @@ struct PlayerScreen: View {
         // 底部那 21 的 home 区不忽略画面就矮一截、底下露一条黑缝（LP 2026-10-27）；
         // 顶部不忽略，顶部遮罩就从安全区下沿起画、离窗口顶差一点（LP 2026-10-28）。
         // 控制层自己另外忽略底边，留在安全区里排，不受这里影响。
-        .ignoresSafeArea(.container, edges: isFullscreen ? [.top, .bottom] : [])
+        .ignoresSafeArea(.container, edges: videoIgnoredSafeAreaEdges)
         .background(Color.black)
         // MPVolumeView 得在视图树里，才拿得到它内部的音量滑杆。
         .background(
@@ -1311,7 +1379,9 @@ struct PlayerScreen: View {
     private func interactiveSurface(_ controller: PlayerController) -> some View {
         GeometryReader { proxy in
             // 全屏用窗口尺寸，竖屏用播放区自己的尺寸（两者在竖屏下相同）。
-            let surfaceSize = isFullscreen ? fullscreenVideoSize : proxy.size
+            let surfaceSize = isFullscreen && !usesInlineFullscreen
+                ? fullscreenVideoSize
+                : proxy.size
             // 全屏时画面（874×402）比播放区（750×382）大，而 GeometryReader 的内容
             // 默认贴**左上角**——不居中就会整体偏右 62（LP 2026-10-27「视频偏右」）。
             // 外面再套一层居中的 frame，竖屏下两者同尺寸、没有影响。
@@ -1569,9 +1639,15 @@ struct PlayerScreen: View {
         }
         .opacity(controlsShown || (isSurfaceLocked && unlockAffordanceShown) ? 1 : 0)
         .animation(.easeOut(duration: 0.2), value: controlsVisible)
+        // 常规宽度：画面吃到窗口边，控制层仍留在安全区里，逐边让开
+        // （竖条只压一边，不能拿 max() 一把套两边，Colo 7725 §4.2 B / §4.3）。
+        .safeAreaPadding(usesInlineFullscreen ? containerInsets : EdgeInsets())
         // 全屏时底栏离**窗口**下沿 12，不是离 home 那条安全区 12
         // （横屏底部还有 21 的内缩，不忽略的话底栏会悬在半空，LP 2026-10-27）。
-        .ignoresSafeArea(.container, edges: isFullscreen ? .bottom : [])
+        .ignoresSafeArea(
+            .container,
+            edges: isFullscreen && !usesInlineFullscreen ? .bottom : []
+        )
     }
 
 
@@ -1849,7 +1925,8 @@ struct PlayerScreen: View {
             exitFullscreen()
         } else {
             isFullscreen = true
-            enterLandscape()
+            // 常规宽度不转屏：只收起选集区、藏状态栏（Colo 7725 §4.2 A）。
+            if !usesInlineFullscreen { enterLandscape() }
         }
         showControls()
         noteInteraction()
@@ -1906,7 +1983,7 @@ struct PlayerScreen: View {
         guard isFullscreen else { return }
         isFullscreen = false
         sawLandscape = false
-        requestOrientation(.portrait)
+        if !usesInlineFullscreen { requestOrientation(.portrait) }
         showControls()
     }
 
@@ -3090,7 +3167,7 @@ struct PlayerScreen: View {
         Group {
             // 全屏就是横屏（竖屏那颗全屏键是唯一入口），直接看它，
             // 不等量出来的宽度——初值 0 会先画一帧单行再跳成两行（Colo 3627）。
-            if isFullscreen || width >= 600 {
+            if width >= 600 || (isFullscreen && !usesInlineFullscreen) {
                 landscapeTransport(controller)
             } else {
                 portraitTransport
@@ -3527,7 +3604,7 @@ struct PlayerScreen: View {
         // 拿最新那份一比规则名不一样就整个 bail，这条源存的进度就用不上了。
         // 没带源进来时（历史页进）记录本身就是那个源，按番剧号取。
         // 历史卡片进来时源还没重建，用卡片上带的那条规则名。
-        let pluginName = controller.source?.pluginName ?? controller.resumeRule ?? ""
+        let pluginName = controller.effectivePluginName
         let record = pluginName.isEmpty
             ? library.record(for: controller.bangumiID)
             : library.record(for: controller.bangumiID, pluginName: pluginName)
@@ -4504,7 +4581,7 @@ struct PlayerScreen: View {
     private func downloadRecordKey(_ controller: PlayerController) -> String {
         DownloadRecord.key(
             bangumiID: controller.bangumiID,
-            pluginName: controller.source?.pluginName ?? "",
+            pluginName: controller.effectivePluginName,
             road: controller.selectedRoad
         )
     }
@@ -4526,7 +4603,7 @@ struct PlayerScreen: View {
             bangumiID: controller.bangumiID,
             title: controller.source?.itemName ?? "",
             coverURL: "",
-            pluginName: controller.source?.pluginName ?? "",
+            pluginName: controller.effectivePluginName,
             road: roadIndex,
             // 条目身份一起存：回放时它才是接口模式要的 vod_id（LP 5508/5512）。
             itemSource: controller.source?.detailURL ?? "",
@@ -4868,9 +4945,16 @@ private func persistWatchProgress(
     if duration > 0, progress >= duration - 5 {
         progress = 0
     }
-    let source = controller.source
+    // 离线从历史进来时播放源可能一直没重建出来：规则名按卡片上那条算，
+    // 剧名退回已经存过的记录。用空串去写会新建一条空白历史，本次离线进度
+    // 就回不到原来那张卡片上（#27）。
+    let pluginName = controller.effectivePluginName
     let entry = library.entry(for: controller.bangumiID)
-    let storedName = source?.itemName ?? ""
+    let storedName = [
+        controller.source?.itemName,
+        library.record(for: controller.bangumiID, pluginName: pluginName)?.bangumiName,
+        entry?.displayName,
+    ].compactMap { $0 }.first { !$0.isEmpty } ?? ""
     let storedImage = entry?.imageURL ?? ""
     // 走 store 那一个入口写进度：同一「规则 + 番剧」只留一份记录，
     // 每一集各带自己的线路号（main 的 History.progresses）。
@@ -4878,7 +4962,7 @@ private func persistWatchProgress(
         bangumiID: controller.bangumiID,
         bangumiName: storedName,
         imageURL: storedImage,
-        pluginName: source?.pluginName ?? "",
+        pluginName: pluginName,
         episodeNumber: controller.currentEpisode,
         // 原生这边只有 URL，没有集标题，留空由历史页回退成「第 N 话」。
         episodeTitle: "",

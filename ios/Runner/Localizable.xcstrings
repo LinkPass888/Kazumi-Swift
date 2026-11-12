@@ -3828,16 +3828,6 @@
         }
       }
     },
-    "备份只包含应用设置。追番、观看历史、下载与播放器日志不在备份里。":{
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"備份只包含應用程式設定。追番、觀看紀錄、下載與播放器日誌不在備份裡。"
-          }
-        }
-      }
-    },
     "备份文件格式跟当前版本对不上（缺少或多余的字段）。":{
       "localizations":{
         "zh-Hant":{
@@ -14265,7 +14255,67 @@
     "这个片源投不出去":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"這個片源無法投放"}}}},
     "换一个片源，或回到本机播放。":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"更換片源，或回到本機播放。"}}}},
     "已回到本机播放":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"已回到本機播放"}}}},
-    "去「全部」里安装一条规则。":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"到「全部」裡安裝一條規則。"}}}}
+    "去「全部」里安装一条规则。":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"到「全部」裡安裝一條規則。"}}}},
+    "备份包含应用设置、已安装的规则和添加的规则仓库。追番、观看历史、下载与播放器日志不在备份里。":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"備份包含應用程式設定、已安裝的規則和新增的規則倉庫。追番、觀看紀錄、下載與播放器日誌不在備份裡。"
+          }
+        }
+      }
+    },
+    "备份里还有 %@ 条规则，会一起合并进来，同名规则以备份为准。":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"備份裡還有 %@ 條規則，會一起合併進來，同名規則以備份為準。"
+          }
+        }
+      }
+    },
+    "备份里还有 %@ 个规则仓库，会一起加进来。":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"備份裡還有 %@ 個規則倉庫，會一起加進來。"
+          }
+        }
+      }
+    },
+    "已恢复 %@ 项设置、%@ 条规则":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"已回復 %@ 項設定、%@ 條規則"
+          }
+        }
+      }
+    },
+    "已恢复 %@ 项设置、%@ 个规则仓库":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"已回復 %@ 項設定、%@ 個規則倉庫"
+          }
+        }
+      }
+    },
+    "已恢复 %@ 项设置、%@ 条规则、%@ 个规则仓库":{
+      "localizations":{
+        "zh-Hant":{
+          "stringUnit":{
+            "state":"translated",
+            "value":"已回復 %@ 項設定、%@ 條規則、%@ 個規則倉庫"
+          }
+        }
+      }
+    }
   },
   "version":"1.0"
 }

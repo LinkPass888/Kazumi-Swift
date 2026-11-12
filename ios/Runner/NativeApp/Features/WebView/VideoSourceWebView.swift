@@ -331,7 +331,7 @@ final class VideoSourceWebView: NSObject {
 
     // MARK: - JS 资源
 
-    /// InAppWebView 的 callHandler shim，使 Dart 端脚本可以原样复用。
+    /// 兼容上游 InAppWebView 脚本的 callHandler 名称，实际转发到 WebKit 消息通道，不依赖 Flutter SDK。
     private static let callHandlerShim = """
     window.flutter_inappwebview = window.flutter_inappwebview || {};
     window.flutter_inappwebview.callHandler = function(name, ...args) {

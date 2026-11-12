@@ -37,20 +37,6 @@ enum KazumiThemeMode: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
-enum HardwareDecodeMode: String, CaseIterable, Identifiable, Sendable {
-    case videotoolbox
-    case videotoolboxCopy = "videotoolbox-copy"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .videotoolbox: String(localized: "直通")
-        case .videotoolboxCopy: String(localized: "非直通")
-        }
-    }
-}
-
 /// 超分辨率档位：关 / 效率 / 质量，三档。
 ///
 /// 数值沿用原版 Anime4K 设置的存储值（1=关闭，2=效率，3=质量），

@@ -5,8 +5,7 @@
 //  对应原版「第三方许可证」页（Flutter 的 LicensePage + 注册进
 //  LicenseRegistry 的条目，见 lib/services/network/bangumi_data_licenses.dart）。
 //
-//  原生这边不引第三方 Swift 包（播放内核 KSPlayer 走 SPM，Xcode 自带它的
-//  许可信息），要展示的是仓库 licenses/ 下随包一起打进 App 的许可文本：
+//  此页直接展示仓库 licenses/ 下随包一起打进 App 的许可文本：
 //  bangumi-data 的署名、ech_http 的依赖许可、m3e 的分词库等。
 //  文件在 project.yml 里以 folder reference 打进 bundle，运行时按目录枚举。
 //

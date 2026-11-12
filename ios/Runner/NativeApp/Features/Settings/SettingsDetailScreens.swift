@@ -29,11 +29,9 @@ private struct KazumiSettingsDetailStyle: ViewModifier {
         content
             .scrollEdgeEffectStyle(.soft, for: .top)
             // 二级页内容限宽 700 居中（§6.4），跟设置首页同一套数（Ato 7028）：
-            // 限宽 700、居中、行内缩 16（行宽 668）。maxWidth 只封顶不撑宽，
-            // 窄屏自然满宽，所以不必等探针量到宽。
+            // maxWidth 只封顶不撑宽，窄屏自然满宽，所以不必等探针量到宽。
             .frame(maxWidth: 700)
             .frame(maxWidth: .infinity)
-            .contentMargins(.horizontal, 16, for: .scrollContent)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.large)
             .scrollContentBackground(.hidden)

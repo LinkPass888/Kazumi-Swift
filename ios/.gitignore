@@ -1,25 +1,15 @@
-# 原生工程的 Xcode 工程由 XcodeGen 生成，不纳入版本管理。
-Runner.xcodeproj
-Runner.xcworkspace
-xcuserdata
+# 工程由 XcodeGen 生成；配置以 project.yml 为准。
+Runner.xcodeproj/
+Runner.xcworkspace/
+
+# Xcode 本机状态与编译缓存
 **/xcuserdata/
-**/DerivedData/
-DerivedData/
-**/Pods/
-**/.symlinks/
+*.xcuserstate
 *.mode1v3
 *.mode2v3
 *.moved-aside
 *.pbxuser
 *.perspectivev3
-**/*sync/
-.sconsign.dblite
-.tags*
-**/.vagrant/
-# 构建产物：仅忽略与 xcodeproj 同级的 profile 目录/文件，
-# 注意不能写成裸 `profile`——那会在大小写不敏感的文件系统上误伤
-# Runner/NativeApp/Features/Profile/（「我的」页面源码）。
-/profile
-**/.generated/
+**/DerivedData/
 **/SourcePackages/
 .build/

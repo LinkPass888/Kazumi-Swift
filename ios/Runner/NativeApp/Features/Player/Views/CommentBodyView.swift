@@ -534,6 +534,11 @@ enum CommentToken: Hashable {
     /// 两种表情码（Colo 3333）：
     /// * `bgm38` 这种静态小图，在 `/img/smiles/tv/38.gif`；
     /// * `musume_67` 这种动态表情，在 `/img/smiles/musume/musume_67.gif`。
+    ///
+    /// 上游 BBCode 语法里另有一批旧表情码，这边不认、按普通文字显示：
+    /// `(=A=)` `(=w=)` `(-w=)` `(S_S)` `(=v=)` `(@_@)` `(=W=)` `(TAT)`
+    /// `(T_T)` `(=\'=)` `(=3=)` `(= =\')` `(=///=)` `(=.,=)` `(:P)` `(LOL)`。
+    /// 要补齐时按这份码表加分支。
     static func emoticonURL(for code: String) -> String? {
         let lowered = code.lowercased()
         if lowered.hasPrefix("bgm") {

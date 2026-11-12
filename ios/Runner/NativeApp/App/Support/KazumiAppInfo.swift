@@ -3,7 +3,7 @@
 //  Kazumi
 //
 //  运行时元信息。数值全部来自 Info.plist / Build Settings，
-//  与原 pubspec.yaml 的 `version: 2.4.8+20408` 保持同步。
+//  版本号由 ios/project.yml 的 MARKETING_VERSION / CURRENT_PROJECT_VERSION 注入。
 //
 
 import Foundation
@@ -18,7 +18,7 @@ enum KazumiAppInfo {
     }
 
     static var bundleIdentifier: String {
-        Bundle.main.bundleIdentifier ?? "com.example.kazumi"
+        Bundle.main.bundleIdentifier ?? "com.linkpass.kazumi"
     }
 
     /// 对应原工程 ApiEndpoints.version（用于规则 API 级别与 Bangumi 请求 UA）。
@@ -38,9 +38,9 @@ enum KazumiAppInfo {
     static let ruleAPILevel = 9
 
     static let projectURL = URL(string: "https://kazumi.app/")!
-    static let sourceURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS")!
-    static let issuesURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/issues")!
-    static let releasesURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/releases")!
+    static let sourceURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift")!
+    static let issuesURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/issues")!
+    static let releasesURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/releases")!
     /// 官方频道（原版的 Telegram 入口）。
     static let telegramURL = URL(string: "https://t.me/linkpass666")!
     static let iconAuthorURL = URL(string: "https://www.pixiv.net/users/66219277")!
@@ -57,8 +57,8 @@ enum KazumiAppInfo {
     static let mpvURL = URL(string: "https://mpv.io")!
     static let fuziURL = URL(string: "https://github.com/cezheng/Fuzi")!
     static let anime4KURL = URL(string: "https://github.com/bloc97/Anime4K")!
-    static let licenseURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/blob/main/LICENSE")!
+    static let licenseURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/blob/main/LICENSE")!
     /// 原版「开源」一节里的「贡献指南」，指向仓库里的 CONTRIBUTING.md（static/doc/CONTRIBUTING.md）。
-    static let contributingURL = URL(string: "https://github.com/LinkPass888/Kazumi-iOS/blob/main/static/doc/CONTRIBUTING.md")!
-    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/LinkPass888/Kazumi-iOS/releases/latest")!
+    static let contributingURL = URL(string: "https://github.com/LinkPass888/Kazumi-Swift/blob/main/static/doc/CONTRIBUTING.md")!
+    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/LinkPass888/Kazumi-Swift/releases/latest")!
 }

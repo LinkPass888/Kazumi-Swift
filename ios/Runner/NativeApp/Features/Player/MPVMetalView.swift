@@ -2,7 +2,7 @@
 //  MPVMetalView.swift
 //  Kazumi
 //
-//  承载 mpv gpu-next / MoltenVK 输出的原生 Metal 视图。
+//  承载 mpv gpu-next / MoltenVK 输出的原生 Metal 视图（UIView；Mac Catalyst 共用同一份实现）。
 //  mpv 通过 wid 持有 metalLayer，并在自己的渲染线程直接提交 drawable。
 //
 
@@ -19,13 +19,22 @@ final class MPVMetalLayer: CAMetalLayer {
             if Thread.isMainThread {
                 super.drawableSize = newValue
             } else {
-                performSelector(onMainThread: #selector(applyDrawableSize(_:)), with: NSValue(cgSize: newValue), waitUntilDone: false)
+                performSelector(
+                    onMainThread: #selector(applyDrawableSize(_:)),
+                    with: Self.boxSize(newValue),
+                    waitUntilDone: false
+                )
             }
         }
     }
 
     @objc private func applyDrawableSize(_ value: NSValue) {
         drawableSize = value.cgSizeValue
+    }
+
+    private static func boxSize(_ size: CGSize) -> NSValue {
+        // NSValue 的 cgSize:/cgSizeValue 是 UIKit 加的类别。
+        NSValue(cgSize: size)
     }
 }
 

@@ -4,7 +4,7 @@
 //
 //  与原版 Flutter 版「观看历史」同步格式对齐的读写层。
 //
-//  原版布局（lib/services/sync/webdav.dart，实测样本见 hive-format-findings.md）：
+//  原版布局（lib/services/sync/webdav.dart，箱体格式见 HiveBox.swift 头部）：
 //    kazumiSync/history/snapshot.json          全量快照，schemaVersion 1
 //    kazumiSync/history/changes/<deviceId>.jsonl 每设备一份追加式事件日志
 //

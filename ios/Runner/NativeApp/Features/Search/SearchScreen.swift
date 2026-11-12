@@ -29,9 +29,6 @@ struct SearchScreen: View {
     @Environment(AppRouter.self) private var router
     @Environment(\.dismiss) private var dismiss
     @Environment(LibraryStore.self) private var library
-    /// 最近搜索每颗胶囊的最小宽度跟着字号长：写死 96 点时最大字号下
-    /// 「轻小说改」被挤成一列，只能截成「轻…」（Ato 6571）。
-    @ScaledMetric(relativeTo: .footnote) private var recentChipMinWidth: CGFloat = 96
     /// 量到的页面尺寸（§6.0：列数与限宽都按容器算，不按整屏）。
     @State private var containerSize: CGSize = .zero
 
@@ -280,11 +277,10 @@ struct SearchScreen: View {
                 }
                 .padding(.horizontal, 20)
 
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: recentChipMinWidth), spacing: 8)],
-                    alignment: .leading,
-                    spacing: 8
-                ) {
+                // 流式排法照详情页那排标签（`KazumiFlowLayout`）：每颗胶囊按自己文字的
+                // 宽度拉长，一行装不下就整颗换到下一行——不再挤在等宽格子里把番名
+                // 折成两行。只有单颗比整行还宽时才在胶囊里折行，绝不出现省略号。
+                KazumiFlowLayout(spacing: 8, rowSpacing: 8) {
                     ForEach(recents.prefix(8), id: \.self) { keyword in
                         Button {
                             // LP 3072：历史里那条写人话（后宫），点它搜索框里要放查询串
@@ -294,11 +290,10 @@ struct SearchScreen: View {
                         } label: {
                             Text(readable(keyword))
                                 .font(.footnote)
-                                // 搜过的词不截：装不下就折行，胶囊自己长高（Ato 6571）。
-                                .multilineTextAlignment(.center)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
-                                .frame(maxWidth: .infinity)
                                 .background(
                                     Capsule(style: .continuous)
                                         .fill(Color.secondary.opacity(0.12))

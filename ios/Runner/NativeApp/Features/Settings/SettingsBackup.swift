@@ -42,10 +42,18 @@ enum SettingsBackup {
     struct Payload {
         /// 键名 -> 设置值。
         var settings: [String: JSONValue]
+        /// 已安装的规则，整份定义（自己导入的规则原样在内，不是只记个名字）。
+        var rules: [JSONValue]
+        /// 添加的规则仓库（自定义仓库列表）。
+        var ruleSources: [JSONValue]
         /// 备份创建时间；备份里没写或格式不对时为 nil。
         var exportedAt: Date?
         /// 可恢复的设置项数量。
         var count: Int { settings.count }
+        /// 可恢复的规则条数。
+        var ruleCount: Int { rules.count }
+        /// 可恢复的规则仓库个数。
+        var ruleSourceCount: Int { ruleSources.count }
     }
 
     /// 备份格式不对时抛出，消息可直接展示给用户。
@@ -95,20 +103,46 @@ enum SettingsBackup {
         for (key, value) in rawSettings where isSupportedValue(value) {
             settings[key] = value
         }
-        return Payload(settings: settings, exportedAt: parseDate(json["exportedAt"].stringValue ?? ""))
+        // 规则与规则仓库是后加的可选段：老备份（只有 settings）照样能导入，
+        // 所以 `version` 不递增——递增会让旧版客户端整份拒收这边导出的备份。
+        // 旧版读备份只取 settings，多出来的两个键它直接忽略。
+        let rules = (json["rules"].arrayValue ?? []).filter { entry in
+            guard let name = entry.objectValue?["name"]?.stringValue else { return false }
+            return !name.isEmpty
+        }
+        let sources = (json["ruleSources"].arrayValue ?? []).filter { entry in
+            guard let url = entry.objectValue?["url"]?.stringValue else { return false }
+            return URL(string: url)?.scheme?.lowercased() == "https"
+        }
+        return Payload(
+            settings: settings,
+            rules: rules,
+            ruleSources: sources,
+            exportedAt: parseDate(json["exportedAt"].stringValue ?? "")
+        )
     }
 
     /// 把设置编码成备份文本。
-    static func encode(_ settings: [String: JSONValue], exportedAt: Date = Date()) -> String {
+    ///
+    /// `rules` 是每条规则的整份定义（`Plugin.toJSON()`），`ruleSources` 是自定义
+    /// 规则仓库列表。两个都是可选段：空的时候不写键，省得旧备份比对出噪音。
+    static func encode(
+        _ settings: [String: JSONValue],
+        rules: [JSONValue] = [],
+        ruleSources: [JSONValue] = [],
+        exportedAt: Date = Date()
+    ) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        let payload = JSONValue.dictionary([
-            ("app", .string(appIdentifier)),
-            ("version", .int(version)),
-            ("exportedAt", .string(formatter.string(from: exportedAt))),
-            ("settings", .object(settings)),
-        ])
-        return payload.serialized(pretty: false)
+        var object: [String: JSONValue] = [
+            "app": .string(appIdentifier),
+            "version": .int(version),
+            "exportedAt": .string(formatter.string(from: exportedAt)),
+            "settings": .object(settings),
+        ]
+        if !rules.isEmpty { object["rules"] = .array(rules) }
+        if !ruleSources.isEmpty { object["ruleSources"] = .array(ruleSources) }
+        return JSONValue.object(object).serialized(pretty: false)
     }
 
     /// 只保留标量与字符串列表（与原版 _encodeValue / _decodeValue 一致）。

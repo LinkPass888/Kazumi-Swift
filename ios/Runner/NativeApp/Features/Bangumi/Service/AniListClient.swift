@@ -224,7 +224,7 @@ final class AniListClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // AniList 会挡掉没带 User-Agent 的请求（直接 403），显式带一个。
-        request.setValue("Kazumi-iOS/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Kazumi-Swift/1.0", forHTTPHeaderField: "User-Agent")
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "query": query,
             "variables": variables,

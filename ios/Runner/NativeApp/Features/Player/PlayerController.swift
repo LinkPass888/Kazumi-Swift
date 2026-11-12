@@ -152,7 +152,14 @@ final class PlayerController {
         // 地址一摘，容器就会拆掉引擎（`dismantleUIView` → `engine.stop()`），
         // 解析期间不会再有上一集的声音。
         playbackURL = nil
-        // 从观看历史进入时路由只带 bangumiID / 集数，没有播放源；
+        // 从观看历史进去时路由只带 bangumiID / 集数，没有播放源，得联网搜一次。
+        // 本地已经下好这一集就先离线起播：断网时那个搜索必然失败，不能让它把
+        // 本地文件挡在外面（#27）。在线列表随后在后台补回来，不挡播放。
+        if source == nil, let local = localFile?(currentEpisode) {
+            startLocalPlayback(local)
+            refreshEpisodeListInBackground()
+            return
+        }
         // 先按历史里的规则名把播放源重建出来，再走正常的起播流程。
         if source == nil {
             await resolveSourceFromHistory()
@@ -206,18 +213,9 @@ final class PlayerController {
                 if let local = localFile?(currentEpisode) {
                     appendLog(String(localized: "解析剧集失败，改用本地文件：\(String(describing: error.localizedDescription))"))
                     applyHeaders(plugin: plugin)
-                    // 在线列表拿不到：选集退回这份下载记录，已下载的集列出来能点，
-                    // 其余留空格子由界面画灰（Colo v3 第 9 条）。
-                    let numbers = (downloadedNumbers?() ?? []).sorted()
-                    if let last = numbers.last, last > 0 {
-                        var padded = Array(repeating: "", count: last)
-                        for number in numbers where number <= last {
-                            padded[number - 1] = "local://\(number)"
-                        }
-                        episodes = padded
-                        isOfflineEpisodeList = true
-                    }
                     playbackURL = local.absoluteString
+                    // 在线列表拿不到：选集退回这份下载记录（Colo v3 第 9 条）。
+                    applyOfflineEpisodeListIfNeeded()
                     phase = .ready
                     await loadDanmaku()
                     return
@@ -383,7 +381,7 @@ final class PlayerController {
     /// 历史里只存了规则名（`WatchRecord.sourceRuleName`），没有详情页地址，
     /// 因此先用规则搜一次番剧名，拿第一条（优先同名）结果的 `src` 当详情页。
     /// 失败就保持 `source` 为空，由 `start()` 报「没找到这部剧的播放源」。
-    private func resolveSourceFromHistory() async {
+    private func resolveSourceFromHistory(announce: Bool = true) async {
         // 按卡片上那一条规则取（Fuck 4875）：同一部番在好几个源下各有一份记录，
         // 按番剧号取「最新那份」会拿错源——卡片写着 B 源，放出来是 A 源。
         guard let library else { return }
@@ -397,7 +395,10 @@ final class PlayerController {
             return
         }
 
-        phase = .searchingSource
+        // 后台补列表（`announce: false`）时不改 phase：那会把加载圈盖回正在播的画面。
+        if announce {
+            phase = .searchingSource
+        }
         appendLog(String(localized: "正在查找播放源：\(String(describing: plugin.name))"))
         do {
             let trace = try await engine.search(
@@ -426,6 +427,115 @@ final class PlayerController {
             )
         } catch {
             appendLog(String(localized: "查找播放源失败：\(String(describing: error.localizedDescription))"))
+        }
+    }
+
+    // MARK: 离线播放
+
+    /// 本地已有这一集：直接离线起播（#27 / Colo 5174）。
+    ///
+    /// 从观看历史进去时路由只带规则名，播放源得联网搜一次；断网时那一步必然
+    /// 失败，以前就停在那里报「没找到这部剧的播放源」，本地明明下好了也放不了
+    /// （#27）。这里先把本地那份放起来，选集退回下载记录，在线列表交给
+    /// `refreshEpisodeListInBackground()` 在后台补。
+    private func startLocalPlayback(_ url: URL) {
+        isEpisodeIncomplete = false
+        playbackURL = url.absoluteString
+        applyOfflineEpisodeListIfNeeded()
+        phase = .ready
+        KazumiLogBuffer.player("离线播放：本地文件（第 \(currentEpisode) 集）")
+        // 弹幕是联网请求：别让它拖住起播和后台补列表（断网时它要等到超时）。
+        Task { await loadDanmaku() }
+    }
+
+    /// 选集退回下载记录：已下载的集能点，其余留空格子由界面画灰（Colo v3 第 9 条）。
+    /// 已经有在线列表时不动它。
+    private func applyOfflineEpisodeListIfNeeded() {
+        guard episodes.isEmpty else { return }
+        let list = Self.offlineEpisodeList(numbers: downloadedNumbers?() ?? [])
+        guard !list.isEmpty else { return }
+        episodes = list
+        isOfflineEpisodeList = true
+    }
+
+    /// 在线列表抓不到时用下载记录拼一份选集：第 N 集写成一个占位地址
+    /// （界面凭它判定这一格点得动，点下去由本地文件那条路接住），没下到的集留空串。
+    /// 纯函数，单测直接调（`PlayerOfflinePlaybackTests`）。
+    nonisolated static func offlineEpisodeList(numbers: [Int]) -> [String] {
+        let downloaded = Set(numbers.filter { $0 > 0 }).sorted()
+        guard let last = downloaded.last else { return [] }
+        var padded = Array(repeating: "", count: last)
+        for number in downloaded {
+            padded[number - 1] = "local://\(number)"
+        }
+        return padded
+    }
+
+    /// 这次播放算哪条规则的（#27）：卡片带了规则名就认它——历史进度、下载
+    /// 记录、`PlayerScreen.localFile` 三处都是按它归档的；从详情页进来的才用
+    /// 播放源自己的规则名。断网时播放源恒为空，拿空串写进度会新建一条空白
+    /// 历史，本次离线进度就回不到原来那张卡片上。纯函数，单测直接调。
+    nonisolated static func resolvedPluginName(sourceName: String?, resumeRule: String?) -> String {
+        if let resumeRule, !resumeRule.isEmpty { return resumeRule }
+        return sourceName ?? ""
+    }
+
+    /// 观看历史、下载记录、下载中心都按同一个规则名取记录（#27）。
+    var effectivePluginName: String {
+        Self.resolvedPluginName(sourceName: source?.pluginName, resumeRule: resumeRule)
+    }
+
+    /// 离线起播之后，在后台把在线选集补回来（#27）。
+    ///
+    /// 只补 `source` / `roads` / `episodes`，**不碰** `phase` 和 `playbackURL`：
+    /// phase 一变，画面上就盖回那层加载圈，正在放的画面被它挡住。断网时这里
+    /// 什么都拿不到，界面就留在「只显示已下载的」那份列表上。
+    private func refreshEpisodeListInBackground() {
+        guard episodes.isEmpty || isOfflineEpisodeList else { return }
+        Task { [weak self] in
+            await self?.refreshEpisodeListQuietly()
+        }
+    }
+
+    private func refreshEpisodeListQuietly() async {
+        let generation = startGeneration
+        let episode = currentEpisode
+        if source == nil {
+            await resolveSourceFromHistory(announce: false)
+            guard generation == startGeneration else { return }
+        }
+        guard let source, let plugin = plugins.plugin(named: source.pluginName) else {
+            KazumiLogBuffer.player("在线列表没补回来，继续用本地选集")
+            return
+        }
+        // 直链源没有章节可抓，选集就留在下载记录那份。
+        guard (source.directMediaURL ?? "").isEmpty else { return }
+        do {
+            let trace = try await engine.queryChapters(
+                RuleExecutionConfig(plugin: plugin),
+                source: source.detailURL,
+                cancelToken: cancelToken
+            )
+            // 期间换过集、或者已经不在放本地文件了：这份列表就没用了。
+            guard generation == startGeneration, currentEpisode == episode,
+                  playbackURL?.hasPrefix("file://") ?? false,
+                  !trace.roads.isEmpty else { return }
+            // 历史里记的那条线路优先，装不下这一集就换一条装得下的：集数一律按
+            // 「下标 + 1」对齐，正在放的那一集不会被对到别的集上。
+            let preferred = resumeRoad ?? 0
+            let candidates = [preferred] + trace.roads.indices.filter { $0 != preferred }
+            guard let road = candidates.first(where: {
+                trace.roads.indices.contains($0)
+                    && trace.roads[$0].data.indices.contains(episode - 1)
+            }) else { return }
+            roads = trace.roads
+            selectedRoad = road
+            episodes = trace.roads[road].data
+            isOfflineEpisodeList = false
+            KazumiLogBuffer.player("在线列表已补回（第 \(episode) 集）")
+        } catch {
+            KazumiLogBuffer.player("在线列表没补回来，继续用本地选集")
+            return
         }
     }
 

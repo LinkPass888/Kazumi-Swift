@@ -10,7 +10,7 @@
 //    kazumiSync/history/snapshot.json              读写
 //    kazumiSync/history/changes/<deviceId>.jsonl   读写（只写自己那一份）
 //    kazumiSync/danmakuShield/<deviceId>.json      读写（文件名必须 32 位十六进制）
-//    kazumiSync/collectibles.tmp                   只读（Hive 箱体，见 hive-format-findings.md）
+//    kazumiSync/collectibles.tmp                   只读（Hive 箱体，格式见 HiveBox.swift 头部）
 //    kazumiSync/collectchanges.tmp                 只读
 //    kazumiSync/histories.tmp                      不碰（旧版账本，原版自己都只在没有快照时才读）
 //

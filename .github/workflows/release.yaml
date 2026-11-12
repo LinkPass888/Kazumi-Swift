@@ -100,10 +100,127 @@ jobs:
           path: Kazumi_ios_*.ipa
           if-no-files-found: error
 
+  # Mac Catalyst：与 iOS 同一个工程，编出能拖拽安装的 Mac App。
+  build-catalyst:
+    name: "Release for Mac Catalyst"
+    runs-on: "xcode-27"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
+      - name: Extract tag name
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Show Xcode and SDK version
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Install build tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Resolve Swift Packages
+        run: |
+          set -o pipefail
+          xcodebuild -project "$PROJECT" -scheme "$SCHEME" -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-catalyst" | xcbeautify
+
+      - name: Build (no codesign)
+        env:
+          DANDAN_APP_ID: ${{ secrets.DANDANAPI_APPID }}
+          DANDAN_APP_SECRET: ${{ secrets.DANDANAPI_KEY }}
+        run: |
+          # 浅包校验（MPVKit 静态库壳）会判失败，但编译链接已完成：只容忍这一种。
+          set -o pipefail
+          set +e
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "platform=macOS,variant=Mac Catalyst" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-catalyst" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-catalyst" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            SUPPORTS_MACCATALYST=YES \
+            DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
+            DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
+            2>&1 | tee "$RUNNER_TEMP/catalyst-build.log" | xcbeautify
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            if grep -q "does not use shallow bundles" "$RUNNER_TEMP/catalyst-build.log"; then
+              echo "只有浅包校验失败，编译与链接已完成，继续打包"
+            else
+              echo "构建失败（不是浅包校验）" >&2
+              exit "$status"
+            fi
+          fi
+
+      - name: Package unsigned Catalyst dmg
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$RUNNER_TEMP/DerivedData-catalyst/Build/Products" -type d -name 'Runner.app' -print -quit)"
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "未找到 Catalyst 的 Runner.app" >&2
+            exit 1
+          fi
+          # MPVKit 的 framework 原样留着（浅包只影响 Xcode 的 Validate），只查依赖齐全。
+          # 校验主二进制的第三方依赖都在包里（@rpath / @executable_path 引用）。
+          # 注意别用 `grep 'Lib.*\.framework'`：那会连 /System/Library/... 一起命中。
+          BIN="$APP_PATH/Contents/MacOS/Kazumi"
+          BUILT_ARCHS="$(lipo -archs "$BIN")"
+          if [ "$BUILT_ARCHS" != "arm64" ]; then
+            echo "Catalyst 主程序出现了非 arm64 切片: $BUILT_ARCHS" >&2
+            exit 1
+          fi
+          MISSING=0
+          while read -r ref; do
+            case "$ref" in
+              /System/*|/usr/lib/*) continue ;;
+              @rpath/*) rel="${ref#@rpath/}" ;;
+              @executable_path/*) rel="${ref#@executable_path/}" ;;
+              *) continue ;;
+            esac
+            target="$APP_PATH/Contents/Frameworks/$rel"
+            if [ ! -e "$target" ]; then
+              echo "缺失依赖: $ref -> $target" >&2
+              MISSING=1
+            fi
+          done < <(otool -L "$BIN" | awk 'NR>1 {print $1}' | grep -E '^@(rpath|executable_path)/')
+          if [ "$MISSING" -ne 0 ]; then
+            echo "包内依赖不完整，dmg 打出来也起不来" >&2
+            exit 1
+          fi
+          # arm64 二进制至少要 ad-hoc 签名才能跑。
+          codesign --force --deep --sign - "$APP_PATH"
+          STAGE="$RUNNER_TEMP/catalyst-dmg-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -R "$APP_PATH" "$STAGE/Kazumi.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Kazumi" -srcfolder "$STAGE" -fs HFS+ \
+            -format UDZO -ov "Kazumi_catalyst_${tag}_no_sign.dmg"
+          ls -lh "Kazumi_catalyst_${tag}_no_sign.dmg"
+
+      - name: Upload Catalyst artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: catalyst_outputs
+          path: Kazumi_catalyst_*.dmg
+          if-no-files-found: error
+
   release:
     name: "Release"
     runs-on: "ubuntu-latest"
-    needs: [build-ios]
+    needs: [build-ios, build-catalyst]
     permissions:
       contents: write
     steps:
@@ -135,8 +252,16 @@ jobs:
           name: ios_outputs
           path: ios_outputs
 
+      - name: Download Catalyst app
+        uses: actions/download-artifact@v8
+        with:
+          name: catalyst_outputs
+          path: catalyst_outputs
+
       - name: List release files
-        run: ls -l ios_outputs
+        run: |
+          ls -l ios_outputs
+          ls -l catalyst_outputs
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -144,3 +269,4 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             ios_outputs/Kazumi_ios_*.ipa
+            catalyst_outputs/Kazumi_catalyst_*.dmg

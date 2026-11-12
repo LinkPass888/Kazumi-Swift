@@ -26,12 +26,10 @@ struct BangumiInfoScreen: View {
     @State private var didFailToLoad = false
     @State private var isShowingSources = false
     @State private var selectedTab: InfoTab = .overview
-    /// 顶栏底边与大标题底边（同一个全局坐标里量）：两者相遇那一刻开始交接。
-    /// 都实测，不写字面量——标题行数、字号、宽窄档、横竖屏都由它自己带出来。
-    @State private var barBottom: CGFloat = 0
-    @State private var titleBottom: CGFloat = 0
     /// 浮起那颗「开始观看」的高度，量出来给正文底部留白用。
     @State private var startPlayingButtonHeight: CGFloat = 0
+    /// 追番菜单实测高度：栏 2 的文字区按它扣，菜单下沿才跟封面下沿齐平。
+    @State private var collectMenuHeight: CGFloat = 36
     @State private var toastMessage: String?
     /// 添加到时间表但番剧还没标成在看时，先弹确认。
     @State private var pendingTimelineItem: BangumiItem?
@@ -42,6 +40,15 @@ struct BangumiInfoScreen: View {
     @State private var sourceNavigationRevision: UInt = 0
     /// 量到的页面尺寸（§6.0：列数与封面宽都按容器算，不按整屏）。
     @State private var containerSize: CGSize = .zero
+    /// 大标题的高度，和栏里那行番名的出现进度（Ato 8300：跟着滚动位置连续变，
+    /// 不是到点切换）。0 = 还没有，1 = 满。
+    @State private var titleHeight: CGFloat = 0
+    /// 顶上的滚动量：只往上取最小值，记一次就够（Ato 8463）。
+    @State private var scrollTopOffset: CGFloat = 0
+    @State private var didCaptureScrollTop = false
+    @State private var barTitleProgress: CGFloat = 0
+    /// 栏是不是竖的（Duo 合上／摊开横屏）：是就不放那行番名。
+    @State private var isVerticalBar = false
 
     /// B 档：宽且不矮。
     private var isWideTier: Bool {
@@ -51,6 +58,18 @@ struct BangumiInfoScreen: View {
     /// C 档：宽但矮（§六之二）。
     private var isShortTier: Bool {
         containerSize.width >= 700 && containerSize.height < 600
+    }
+
+    /// 宽屏三栏：只认可用宽度 ≥860（Colo 8355 定的最小可读栏宽 260 × 3 + 80）。不读高度、不读机型、不认姿态，
+    /// 也不和推荐页那个高度阈值共用常量（Ato 8199）。辅助功能字号下一律回落单栏堆叠。
+    private var threeColumn: Bool {
+        containerSize.width >= 860 && !dynamicTypeSize.isAccessibilitySize
+    }
+
+    /// 三栏每栏宽度：(可用宽 − 左右页边 16×2 − 栏间 24×2) / 3。
+    /// Duo 内屏可用宽 867 时每栏 262.33（Colo 8355）；阈值 860 即最小可读栏宽 260。
+    private var threeColumnWidth: CGFloat {
+        max(0, (containerSize.width - 80) / 3)
     }
 
     /// 当前所在 Tab 的导航栈深度。四个 Tab 都算上，页面不关心自己在哪个 Tab。
@@ -65,7 +84,6 @@ struct BangumiInfoScreen: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
@@ -80,15 +98,9 @@ struct BangumiInfoScreen: View {
         }
         .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
         // 与列表卡片同 ID、同命名空间：从卡片点进来时原地放大，返回时收回去。
         // 找不到对应源视图（如从播放页推入）时系统自动回落到默认转场。
         .kazumiZoomDestination(id: bangumiID, namespace: zoomNamespace)
-        // 自绘顶栏会连带关掉系统返回手势，这里把它接回来。
-        .background {
-            KazumiSwipeBackEnabler()
-                .frame(width: 0, height: 0)
-        }
         .task {
             if controller == nil {
                 await load()
@@ -141,12 +153,26 @@ struct BangumiInfoScreen: View {
     // MARK: - 内容
 
     private func content(_ controller: InfoController) -> some View {
-        ZStack(alignment: isWideTier ? .bottomLeading : .bottomTrailing) {
+        // 「开始观看」所有宽度统一右下角（Colo 7725 §3.2，旧 §6.5「宽档靠左」作废）。
+        ZStack(alignment: .bottomTrailing) {
             // ScrollViewReader 包在外面：展开评论的回复时要喊这个列表滚一滚（Colo 3366）。
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        if isWideTier {
+                        if threeColumn {
+                            // 宽屏三栏（Colo 8228 §3）：封面 / 条目信息 / 简介三等分，
+                            // 只认可用宽度，不读高度、不认姿态（Ato 8199 / 8230）。
+                            title(controller)
+                            HStack(alignment: .top, spacing: 24) {
+                                coverColumn(controller)
+                                // 最小高不是钉死高（Colo 8398）：常规内容下栏 2 正好封面高、
+                                // 菜单下沿齐平；行数或字号涨了往下长，不靠缩字。
+                                infoColumn(controller, coverHeight: threeColumnWidth / Self.bigCoverAspectRatio)
+                                    .frame(width: threeColumnWidth, alignment: .topLeading)
+                                tabColumn(controller, proxy: proxy)
+                                    .frame(width: threeColumnWidth, alignment: .topLeading)
+                            }
+                        } else if isWideTier {
                             // 宽档两栏（§6.5）：左栏封面＋信息，右栏简介 / 标签 / 评论。
                             title(controller)
                             HStack(alignment: .top, spacing: 24) {
@@ -167,12 +193,22 @@ struct BangumiInfoScreen: View {
                     .padding(.bottom, contentBottomPadding)
                 }
                 .scrollIndicators(.hidden)
-                // 顶部渐进模糊：只作用顶部那一条，不叠材质、不加底色。
+                .containerRelativeFrame(.horizontal)
+                // 顶部滚动边缘效果交回系统的 .soft（其余二十多个页面同一条）。
                 .scrollEdgeEffectStyle(.soft, for: .top)
-                // 顶栏吸附在安全区（不再是 ScrollView 的兄弟节点）：内容从它下方滚过去，
-                // 顶部模糊才盖得住标题那一行；否则模糊只能铺在顶栏下面，内容滚上来是硬切一刀。
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    topBar(controller)
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    // 只取滚动量：contentInsets.top 在上滑过程中会变，掺进算式会让
+                    // 进度涨一下又倒回去（Fuck 8448 / Ato 8449）。
+                    geometry.contentOffset.y
+                } action: { _, scrolled in
+                    // 顶上那格当 0，位移除以大标题高；量不到高就用 28 兜底，
+                    // 这样不可能卡在 0（Ato 8463）。
+                    if !didCaptureScrollTop {
+                        scrollTopOffset = scrolled
+                        didCaptureScrollTop = true
+                    }
+                    let height = titleHeight > 0 ? titleHeight : 28
+                    barTitleProgress = min(max((scrolled - scrollTopOffset) / height, 0), 1)
                 }
             }
 
@@ -187,8 +223,28 @@ struct BangumiInfoScreen: View {
         }
         // 出入场由值驱动：状态变化本身不在动画事务里，只有结果被动画化。
         .animation(.easeOut(duration: 0.2), value: toastMessage)
-        // 导航标题给无障碍与系统用；页面内的 inline 那份因此不再重复朗读。
-        .navigationTitle(controller.item.displayName)
+        // Duo 合上或摊开横屏时栏是竖的，系统不给自定义视图做的工具栏项留位置
+        // （Apple《Vertical bars》：竖栏只排带图标的项）。所以先问系统这一格是不是竖栏，
+        // 是就不放那行番名，横栏上照旧渐显（Ato 8475）。
+        .modifier(VerticalBarProbe { isVerticalBar = $0 })
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                if !isVerticalBar {
+                    Text(controller.item.displayName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .opacity(barTitleProgress)
+                        .accessibilityHidden(barTitleProgress < 0.5)
+                }
+            }
+        }
+        // 顶部那排交给系统：系统返回键 + 系统工具栏按钮，玻璃底与间距由系统给
+        // （LP 2026-11-11 / Apple《Adopting Liquid Glass》）。
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                moreMenu(controller)
+            }
+        }
         .sheet(isPresented: $isShowingSources) {
             let current = controller
             // 点结果：先关面板、再往右推进播放页（LP 3273 / Colo 3275）。
@@ -262,22 +318,19 @@ struct BangumiInfoScreen: View {
 
     // MARK: - 顶栏
 
-    /// 展开态标题（28pt bold）。不再主动淡出：让它随内容滚进顶部模糊里，
-    /// 只在最后一小段行程里收掉，顶栏那份同一时间接上（见 titleRevealProgress），
-    /// 避开两份标题同时半透明重叠的那几帧。
+    /// 展开态标题（28pt bold）。顶栏交给系统后，这份留在页面上，顶栏那行是系统的番名。
     private func title(_ controller: InfoController) -> some View {
         Text(controller.item.displayName)
             .font(.title.weight(.bold))
             .foregroundStyle(.primary)
             .lineLimit(2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(1 - titleRevealProgress)
-            // 交接点按标题真实底边量（Colo 7983 §3.1）：宽窄档、行数、字号、横竖屏都会重测。
             .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.frame(in: .global).maxY
-            } action: { bottom in
-                titleBottom = bottom
+                proxy.size.height
+            } action: { height in
+                titleHeight = height
             }
+
     }
 
     /// 标签条 + 标签面板。宽档放进右栏（§6.5），窄档接在 hero 下面。
@@ -298,24 +351,6 @@ struct BangumiInfoScreen: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    /// 返回键 + 居中的折叠标题 + 更多菜单。
-    ///
-    /// 滚动内容顶部是 17pt semibold 的标题（与时间表卡片番剧名同号同重）；
-    /// 往上滑到阈值后，这里出现居中 17pt semibold 的一份，与返回键同行。
-    /// 两份同号同重，衔接时不像换了一个控件。
-    ///
-    /// 不再给顶栏加 `.ultraThinMaterial` 背景条：滚动时那一条灰底会横在
-    /// 内容上方，与页面背景断开。
-    /// 展开态标题 → 顶栏居中标题的交接进度（0…1），两处共用同一个值。
-    /// 只用透明度接力，不给顶栏那份加位移或缩放，避免两份同时在视野里跳。
-    ///
-    /// 交接只发生在最后 10pt：大标题先随内容滚进顶部模糊里（不主动淡出），
-    /// 滚过自身高度后顶栏那份在 10pt 行程内接上，中间不会有两份都半透明的帧。
-    private var titleRevealProgress: CGFloat {
-        let travel: CGFloat = 10
-        return min(1, max(0, (barBottom - titleBottom) / travel))
-    }
-
     /// 正文底部留白：要够浮起那颗「开始观看」的高度加 12 点，
     /// 标签云最后一行才能滚到按钮上方（Colo 6553）。
     /// 默认字号按钮 44 高，算出来 78，仍取原来的 96，默认版面不变。
@@ -323,77 +358,31 @@ struct BangumiInfoScreen: View {
         max(96, startPlayingButtonHeight + 34)
     }
 
-    private func topBar(_ controller: InfoController) -> some View {
-        let progress = titleRevealProgress
-        return HStack(spacing: 10) {
-            barButton(symbol: "chevron.left", label: "返回") {
-                dismiss()
-            }
-
-            // 中间那段弹性空间：标题在弹性宽度里居中，且始终占位，
-            // 折叠与否都不影响两侧按钮的位置。
-            Text(controller.item.displayName)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .opacity(progress)
-                .accessibilityHidden(true)
-
-            Menu {
-                Button {
-                    copyTitle(controller)
-                } label: {
-                    Label("复制标题", systemImage: "doc.on.doc")
-                }
-                Button {
-                    saveCover(controller)
-                } label: {
-                    Label("保存封面", systemImage: "square.and.arrow.down")
-                }
-                Button {
-                    openExternally(controller)
-                } label: {
-                    Label("外部打开", systemImage: "safari")
-                }
+    /// 右上角「更多」：走系统工具栏按钮，玻璃底、间距、点按反馈都由系统给。
+    private func moreMenu(_ controller: InfoController) -> some View {
+        Menu {
+            Button {
+                copyTitle(controller)
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(
-                        width: KazumiGlassMetrics.barButtonSize,
-                        height: KazumiGlassMetrics.barButtonSize
-                    )
+                Label("复制标题", systemImage: "doc.on.doc")
             }
-            .buttonStyle(.plain)
-            .kazumiGlassCapsule(interactive: true)
-            .accessibilityLabel("更多")
+            Button {
+                saveCover(controller)
+            } label: {
+                Label("保存封面", systemImage: "square.and.arrow.down")
+            }
+            Button {
+                openExternally(controller)
+            } label: {
+                Label("外部打开", systemImage: "safari")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
         }
-        .padding(.leading, KazumiGlassMetrics.barEdgeInset)
-        .padding(.trailing, KazumiGlassMetrics.barEdgeInset)
-        .padding(.top, 4)
-        .padding(.bottom, 8)
-        // 栏底边（含下边距）就是内容顶：量给标题交接用。
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.frame(in: .global).maxY
-        } action: { bottom in
-            barBottom = bottom
-        }
-    }
-
-    /// 顶栏圆形玻璃按钮，尺寸与间距取自 KazumiGlassMetrics。
-    private func barButton(symbol: String, label: LocalizedStringKey, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 20, weight: .semibold))
-                .frame(
-                    width: KazumiGlassMetrics.barButtonSize,
-                    height: KazumiGlassMetrics.barButtonSize
-                )
-        }
-        .buttonStyle(.plain)
-        .kazumiGlassCapsule(interactive: true)
-        .accessibilityLabel(label)
+        // 只这一颗按系统 label 色，跟返回键一致（LP 8419 / Ato 8423）；
+        // 整页不设 tint，收藏菜单那些系统控件仍跟主题色走。
+        .tint(.primary)
+        .accessibilityLabel("更多")
     }
 }
 
@@ -487,6 +476,17 @@ extension BangumiInfoScreen {
             }
     }
 
+    /// 三栏的栏 1：封面单独成图（Colo 8228 §3.3）。三栏下不再套 hero 的磨砂卡，
+    /// 三块平铺在页面底色上。
+    private func coverColumn(_ controller: InfoController) -> some View {
+        let width = threeColumnWidth
+        return BangumiRemoteImage(url: controller.item.largeImage)
+            .frame(width: width, height: width / Self.bigCoverAspectRatio)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .frame(width: width, alignment: .topLeading)
+            .accessibilityLabel(controller.item.displayName)
+    }
+
     private func cover(_ item: BangumiItem, width: CGFloat, height: CGFloat) -> some View {
         BangumiRemoteImage(url: item.largeImage)
             .frame(width: width, height: height)
@@ -495,6 +495,9 @@ extension BangumiInfoScreen {
 
     /// 大封面的宽高比：详情页封面一律 0.67（简报定的；网格小卡另算，不走这个）。
     private static let bigCoverAspectRatio: CGFloat = 0.67
+
+    /// 追番菜单与文字区之间的间距（Colo 8365 D7：菜单与最后一行 ≥8）。
+    private static let collectMenuGap: CGFloat = 8
 
     /// 内容行宽：容器宽减左右各 16，最宽 950（§6.0：量容器，不量整屏）。
     private var infoRowWidth: CGFloat {
@@ -567,12 +570,27 @@ extension BangumiInfoScreen {
             // 文字区压缩优先级最高：整块等比缩，宁可字小一点。
             .minimumScaleFactor(0.75)
             .layoutPriority(1)
-
-            Spacer(minLength: 6)
+            // 文字区至少撑到「封面高 − 菜单占位」，菜单就自然落在封面下沿
+            // （Colo 8365 D7：菜单下沿 ＝ 封面下沿 ±1）；行数或字号涨了文字区
+            // 继续往下长、菜单跟着下移，不靠缩字（Colo 8398 D8）。
+            //
+            // 这里用「文字区最小高」而不是尾部 Spacer：三栏时这一列和标签栏并排，
+            // 尾部 Spacer 会把列拉到标签栏那么高，菜单就被顶到封面下沿以下。
+            // 扣掉的高度用实测值：36 只是 minHeight，字号一大菜单自己会长过 36
+            // （Fuck 8411），写死 44 会让菜单下沿沉到封面下沿下面。
+            .frame(
+                minHeight: max(0, coverHeight - collectMenuHeight - Self.collectMenuGap),
+                alignment: .topLeading
+            )
 
             // 追番按钮钉在信息列底部，状态只换文案与图标，不换位置与尺寸。
             collectMenu(controller)
-                .frame(minWidth: 96, minHeight: 36, alignment: .leading)
+                // 三栏下按钮 27.7 高、容器 36，默认居中会让按钮下沿离封面下沿差 4 点，
+                // 这里改成贴底（Colo 8365 D7：菜单下沿 ＝ 封面下沿 ±1）。
+                .frame(minWidth: 96, minHeight: 36, alignment: threeColumn ? .bottomLeading : .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    collectMenuHeight = height
+                }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         // 至少和封面一样高，行多了往下长（Colo 3013）：行数是变的——有排名没排名、
@@ -826,9 +844,8 @@ extension BangumiInfoScreen {
         } action: { height in
             startPlayingButtonHeight = height
         }
-        // 宽档「开始观看」跟着左栏靠左（§6.5），不横跨整屏。
-        .padding(.leading, isWideTier ? 18 : 0)
-        .padding(.trailing, isWideTier ? 0 : 18)
+        // 右下角：右 18、下 22，宽档窄档同一个位置（Colo 7725 §3.2）。
+        .padding(.trailing, 18)
         .padding(.bottom, 22)
         .accessibilityLabel("开始观看")
     }
@@ -1129,3 +1146,39 @@ extension BangumiInfoScreen {
     }
 }
 
+/// 问系统当前这一格工具栏是不是竖栏（iOS 27.1 起才有这个环境值）。
+#if targetEnvironment(macCatalyst)
+/// Mac Catalyst 的 SwiftUI 没有 `\.toolbarVerticalEdge`（那是 iOS 27.1 的工具栏布局）。
+/// 探不到就按横栏走，与 `isVerticalBar` 的默认值一致，界面不受影响。
+private struct VerticalBarProbe: ViewModifier {
+    let onChange: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        content.onAppear { onChange(false) }
+    }
+}
+#else
+private struct VerticalBarProbe: ViewModifier {
+    let onChange: (Bool) -> Void
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 27.1, *) {
+            content.modifier(VerticalBarProbeInner(onChange: onChange))
+        } else {
+            content
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct VerticalBarProbeInner: ViewModifier {
+    let onChange: (Bool) -> Void
+    @Environment(\.toolbarVerticalEdge) private var edge
+
+    func body(content: Content) -> some View {
+        content.onChange(of: edge, initial: true) { _, newValue in
+            onChange(newValue != nil)
+        }
+    }
+}
+#endif

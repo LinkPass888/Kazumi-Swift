@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         请填写以下内容，以方便我们进行问题定位和修复。
-        填写前，请先查看 [Issues 列表](https://github.com/Predidit/Kazumi/issues) 查看是否已经有和你主题重复的 Issue。重复 Issue 会被关闭。
+        填写前，请先查看 [Issues 列表](https://github.com/LinkPass888/Kazumi-Swift/issues) 查看是否已经有和你主题重复的 Issue。重复 Issue 会被关闭。
         如果你的 Kazumi 版本不为最新版，请先更新再重试查看问题是否仍然存在。旧版本的 Issue 可能不会被处理，因为新版可能已经修复了问题。 
 
   - type: textarea
@@ -30,7 +30,7 @@ body:
     id: os-version
     attributes:
       label: 系统版本
-      description: '所使用的系统版本，例如 “Windows 11 25H2”, “Android 15”, “iOS 26.5”'
+      description: '所使用的系统版本，例如 “iOS 26.5”, “iPadOS 26.5”, “macOS 26.5（Mac Catalyst）”'
     validations:
       required: true
 
@@ -78,7 +78,7 @@ body:
     attributes:
       label: 提交前确认
       options:
-        - label: 我已经查看了 [Issues 列表](https://github.com/Predidit/Kazumi/issues) ，没有发现重复问题。
+        - label: 我已经查看了 [Issues 列表](https://github.com/LinkPass888/Kazumi-Swift/issues) ，没有发现重复问题。
           required: true
         - label: 我已经提交了日志信息，并说明了问题和复现步骤。
           required: true

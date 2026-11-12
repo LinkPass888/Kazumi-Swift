@@ -2,12 +2,14 @@
 
 <img src="assets/images/logo/app-icon.png" width="140" alt="Kazumi 应用图标">
 
-# Kazumi for iOS
+# Kazumi
 
 基于自定义规则的番剧采集与在线观看客户端，带弹幕。<br>
-原生 SwiftUI 实现，界面使用 iOS 26 的液态玻璃材质，随系统外观与辅助功能设置变化。
+原生 SwiftUI 实现，界面使用 iOS 26 的液态玻璃材质，随系统外观与辅助功能设置变化；<br>
+同一份界面通过 Mac Catalyst 也能在 Apple Silicon 的 Mac 上运行。
 
 ![iOS 26+](https://img.shields.io/badge/iOS-26%2B-black?style=for-the-badge&logo=apple)
+![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black?style=for-the-badge&logo=apple)
 ![SwiftUI](https://img.shields.io/badge/Swift-SwiftUI-F05138?style=for-the-badge&logo=swift)
 ![version](https://img.shields.io/badge/version-3.0.4-2E8B57?style=for-the-badge)
 ![license](https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge)
@@ -60,21 +62,36 @@
 
 ## 安装
 
-发布的是**未签名 ipa**，要自己签名后装进手机，系统要求 iOS 26 及以上。
+发布的是**未签名 ipa**（iOS / iPadOS 26 及以上）与**未签名 dmg**（macOS 26 及以上，Apple Silicon）。两者都不带签名，也不公证，需要自己处理安装。
 
-1. 从 [Releases](https://github.com/LinkPass888/Kazumi-iOS/releases/latest) 下载最新 ipa
+### iOS / iPadOS
+
+1. 从 [Releases](https://github.com/LinkPass888/Kazumi-Swift/releases/latest) 下载最新的 `Kazumi_ios_*_no_sign.ipa`
 2. 用 [AltStore](https://altstore.io/)、[Sideloadly](https://sideloadly.io/) 这类工具装进去，自备 Apple ID 签名
+
+### macOS（Mac Catalyst）
+
+1. 从同一个 [Releases](https://github.com/LinkPass888/Kazumi-Swift/releases/latest) 下载最新的 `Kazumi_catalyst_*_no_sign.dmg`，打开后把 Kazumi 拖进「应用程序」
+2. 首次启动右键点 Kazumi →「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/Kazumi.app`
+
+Mac 版与 iOS 共用同一个工程和界面：窗口沿用 iPad 版布局，可缩放、有系统菜单栏；投屏、画中画、后台与锁屏播放这类 iOS 独占能力在 Mac 上不可用。**Intel Mac 不在支持范围**（仅 arm64）。
 
 ## 从源码构建
 
 ```bash
 brew install xcodegen
 xcodegen generate --spec ios/project.yml --project ios
+
+# iOS
 xcodebuild -project ios/Runner.xcodeproj -scheme Runner \
   -destination 'generic/platform=iOS' build
+
+# macOS（Mac Catalyst）
+xcodebuild -project ios/Runner.xcodeproj -scheme Runner \
+  -destination 'platform=macOS,variant=Mac Catalyst' build
 ```
 
-需要 Xcode 27 的工具链（iOS 27 SDK）。
+需要 Xcode 27 的工具链（iOS 27 SDK；Catalyst 构建同时用 macOS SDK）。CI 的 `build-catalyst` job 会把 Catalyst 产物打成免签名 dmg。
 
 ## 常见问题
 
