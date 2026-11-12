@@ -119,6 +119,10 @@ struct MPVSnapshot: Sendable {
 @MainActor
 final class MPVEngine {
     private(set) var handle: OpaquePointer?
+    /// 每建/销毁一次内核换一个代号。迟到的异步任务光看 `handle != nil` 不够：
+    /// 同一个 MPVEngine 实例 stop() 后又 start() 时 handle 又是非 nil，
+    /// 但那一帧属于上一代内核，不能接着用。
+    private var kernelGeneration: UInt64 = 0
     private var pump: MPVEventPump?
     private weak var metalView: MPVMetalView?
 
@@ -274,6 +278,7 @@ final class MPVEngine {
             return
         }
         handle = mpv
+        kernelGeneration &+= 1
 
         var wid = Int64(Int(bitPattern: Unmanaged.passUnretained(view.metalLayer).toOpaque()))
         let widStatus = mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid)
@@ -637,6 +642,9 @@ final class MPVEngine {
 
     func setSpeed(_ rate: Float) {
         guard rate.isFinite, rate > 0 else { return }
+        // libmpv 的 C API 不接受 NULL handle；Swift 把它导成 Optional，不 guard 就
+        // 会在引擎 stop() 之后静默传 nil 进去，内核里直接解引用崩掉。
+        guard let handle else { return }
         var value = Double(rate)
         mpv_set_property(handle, "speed", MPV_FORMAT_DOUBLE, &value)
     }
@@ -682,6 +690,7 @@ final class MPVEngine {
 
     /// 已缓冲到的位置（进度条的缓冲段）。读不到就返回 0。
     var playableTime: Double {
+        guard let handle else { return 0 }
         var value = Double(0)
         guard mpv_get_property(handle, "demuxer-cache-time", MPV_FORMAT_DOUBLE, &value) >= 0 else {
             return 0
@@ -734,6 +743,9 @@ final class MPVEngine {
 
     /// 读一个字符串属性。mpv 分配的那块内存必须还回去，否则每开一次信息页漏一点。
     private func stringProperty(_ name: String) -> String? {
+        // 崩溃栈那一帧：画中画取帧任务恢复时引擎已 stop()，nil handle 被传给
+        // mpv_get_property，libmpv 在 +0x48 解引用 NULL。读不到就当没这个值。
+        guard let handle else { return nil }
         var raw: UnsafeMutablePointer<CChar>?
         guard mpv_get_property(handle, name, MPV_FORMAT_STRING, &raw) >= 0, let raw else {
             return nil
@@ -961,14 +973,46 @@ final class MPVEngine {
         return (frame, timing?.time ?? .nan, timing?.paused ?? true)
     }
 
+    /// 迟到的取帧任务还能不能往下走：内核还在，而且还是它出发时那一代。
+    /// 纯函数，让单元测试不用起一个真的 mpv 也能锁住这条时序。
+    nonisolated static func shouldContinuePictureInPictureCapture(
+        hasHandle: Bool, entryGeneration: UInt64, currentGeneration: UInt64
+    ) -> Bool {
+        hasHandle && entryGeneration == currentGeneration
+    }
+
+    private func isPictureInPictureEngineAlive(_ generation: UInt64) -> Bool {
+        Self.shouldContinuePictureInPictureCapture(
+            hasHandle: handle != nil,
+            entryGeneration: generation,
+            currentGeneration: kernelGeneration
+        )
+    }
+
     /// 画中画取帧：直接读解码后的原始帧，不依赖窗口或 Metal drawable。
     /// 0.25 秒拿不到就放走本轮，不让慢回执把 33ms 节拍压到 4fps。
     func captureRawFrameForPictureInPicture() async -> PiPCapturedFrame? {
+        // 播放页退场 / 换集会在 await 期间 stop()：handle 被 mpv_terminate_destroy
+        // 并置 nil，而画中画的取帧 Task 是之前挂起、现在才恢复的。进、出每个
+        // await 都查一次，别让迟到的任务再碰已销毁的句柄（包括下面那两条诊断日志）。
+        let generation = kernelGeneration
+        guard isPictureInPictureEngineAlive(generation) else {
+            pipFrameMissSince = nil
+            return nil
+        }
         let triedBGRA = !pipUsesLegacyScreenshotRaw
         var result = await rawScreenshot(timeout: 0.25, pictureInPicture: true)
+        guard isPictureInPictureEngineAlive(generation) else {
+            pipFrameMissSince = nil
+            return nil
+        }
         // 第三参数在当前内核明确回错时立刻用旧式两参数补一次；之后不再探测。
         if result.frame == nil, triedBGRA, pipUsesLegacyScreenshotRaw {
             result = await rawScreenshot(timeout: 0.25, pictureInPicture: true)
+            guard isPictureInPictureEngineAlive(generation) else {
+                pipFrameMissSince = nil
+                return nil
+            }
         }
         guard let frame = result.frame else {
             if pipFrameMissSince == nil { pipFrameMissSince = Date() }
@@ -1070,12 +1114,18 @@ final class MPVEngine {
 
     func stop() {
         setPictureInPictureFrameFeedActive(false)
+        // 先作废这一代：挂起的取帧任务恢复时不能认成「新内核还活着」。
+        kernelGeneration &+= 1
         eventPumpGeneration &+= 1
         pump?.stop()
         pump = nil
         // 引擎要没了，还等着的命令不能继续挂着。
         failPendingCommands(-1)
         pipBGRACommandIDs.removeAll(keepingCapacity: true)
+        // 换集 / 退场后重新开始一轮：旧引擎留下的「缺帧计时」不该让新内核
+        // 一开机就走到诊断分支，也不该让迟到的取帧任务接着算。
+        pipFrameMissSince = nil
+        pipFrameSourceLogged = false
         if let handle {
             mpv_terminate_destroy(handle)
         }
@@ -1117,6 +1167,7 @@ final class MPVEngine {
     }
 
     private func setOption(_ name: String, _ value: String) {
+        guard let handle else { return }
         let status = mpv_set_option_string(handle, name, value)
         if status < 0 {
             log("设选项 \(name) 失败：\(String(cString: mpv_error_string(status)))")
@@ -1124,6 +1175,7 @@ final class MPVEngine {
     }
 
     private func setFlag(_ name: String, _ flag: Bool) {
+        guard let handle else { return }
         var value: Int32 = flag ? 1 : 0
         mpv_set_property(handle, name, MPV_FORMAT_FLAG, &value)
     }
