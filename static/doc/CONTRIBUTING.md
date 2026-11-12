@@ -6,7 +6,7 @@
 
 ## 这个仓库是什么
 
-Kazumi 的 iOS 原生客户端, Swift 与 SwiftUI 写的, 不做 Android / Windows / macOS, 也不是 Flutter 工程。番剧内容由「规则」决定: 每个站点一条规则, 规则可导入、分享或从规则仓库安装, 所以站点改版通常不用改代码。
+Kazumi 的原生客户端, Swift 与 SwiftUI 写的, 不做 Android / Windows, 也不是 Flutter 工程; macOS 26 及以上通过 Mac Catalyst 支持(仅 Apple Silicon), 与 iOS 共用同一个 `ios/Runner.xcodeproj`。番剧内容由「规则」决定: 每个站点一条规则, 规则可导入、分享或从规则仓库安装, 所以站点改版通常不用改代码。
 
 ## 开发环境设置
 
@@ -19,7 +19,7 @@ Kazumi 的 iOS 原生客户端, Swift 与 SwiftUI 写的, 不做 Android / Windo
 brew install xcodegen xcbeautify
 ```
 
-- 最低支持 iOS 26.0, 语言版本 Swift 6。
+- 最低支持 iOS / iPadOS 26.0、macOS 26.0(Catalyst, 仅 arm64), 语言版本 Swift 6。
 - 真机调试需要自备 Apple ID 签名, 但编译本身不需要签名。
 
 ### 基本配置
@@ -36,13 +36,19 @@ xcodegen generate --spec ios/project.yml --project ios
 open ios/Runner.xcodeproj
 ```
 
-**工程文件是生成物**: `ios/Runner.xcodeproj` 由 `ios/project.yml` 生成, 不要直接改 xcodeproj, 下次 generate 会把您的改动覆盖掉。要加文件、加编译参数、加链接库, 改 `project.yml` 再重新生成。
+**工程文件是生成物**: `ios/Runner.xcodeproj` 由 `ios/project.yml` 生成, 不要直接改 xcodeproj, 下次 generate 会把您的改动覆盖掉。要加文件、加编译参数、加链接库, 改 `project.yml` 再重新生成。Mac Catalyst 用的是同一个 target(`SUPPORTS_MACCATALYST`), 没有单独的 macOS 工程。
 
 命令行构建（与 CI 相同的做法, 不签名）:
 
 ```bash
+# iOS
 xcodebuild build -project ios/Runner.xcodeproj -scheme Runner \
   -configuration Release -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO
+
+# macOS（Mac Catalyst）
+xcodebuild build -project ios/Runner.xcodeproj -scheme Runner \
+  -configuration Release -destination 'platform=macOS,variant=Mac Catalyst' \
   CODE_SIGNING_ALLOWED=NO
 ```
 
@@ -59,7 +65,7 @@ xcodebuild test -project ios/Runner.xcodeproj -scheme Runner \
 
 ## CI 何时跑
 
-- Pull Request 打开、更新、重新打开时会跑一次 iOS 构建检查, 编不过就是红的。
+- Pull Request 打开、更新、重新打开时会跑 **iOS** 与 **Mac Catalyst** 两个构建检查, 任一编不过就是红的。
 - **草稿 PR 不跑**, 标成 Ready for review 之后才开始。
 - **只改文档不跑**: `static/**`、`**.md`、`.gitignore` 和 issue 模板改动被排除在触发路径之外, 这类 PR 不会有构建检查, 别等着绿灯。
 - 弹幕接口那对密钥是仓库 secret, 外部 fork 拿不到, 构建参数留空也能过, 不用担心要去申请。
@@ -143,7 +149,7 @@ fix(network): fix proxy issues
 
 ### 推送 PR 之后
 
-PR 会先跑一次 iOS 构建检查。如果出现了问题, 您需要进行修复。当检查通过、没有合并冲突且审查者没有其他意见时, PR 会被合并。
+PR 会先跑 iOS 与 Mac Catalyst 两个构建检查。如果出现了问题, 您需要进行修复。当检查通过、没有合并冲突且审查者没有其他意见时, PR 会被合并。
 
 如果最终 PR 未被接受合并, 通常可能是因为该实现有以下问题之一:
 
@@ -183,7 +189,7 @@ AI 辅助模型: Kimi-K3
 
 ## 发版（维护者）
 
-版本号写在 `ios/project.yml` 的 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`, 并在 `CHANGELOG.md` 顶部加一节 `## 版本号 (日期)`。推一个与版本号同名的 tag（例如 `3.0.0`)会触发发布流程: 不签名打包、按该 tag 自动建 Release, 说明文字取 `CHANGELOG.md` 里同版本那一节。
+版本号写在 `ios/project.yml` 的 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`, 并在 `CHANGELOG.md` 顶部加一节 `## 版本号 (日期)`。推一个与版本号同名的 tag（例如 `3.0.0`)会触发发布流程: 不签名打包(未签名 ipa + Catalyst dmg)、按该 tag 自动建 Release, 说明文字取 `CHANGELOG.md` 里同版本那一节。
 
 ## 许可证
 
