@@ -3,7 +3,7 @@
 //  Kazumi
 //
 //  运行时元信息。数值全部来自 Info.plist / Build Settings，
-//  与原 pubspec.yaml 的 `version: 2.4.8+20408` 保持同步。
+//  版本号由 ios/project.yml 的 MARKETING_VERSION / CURRENT_PROJECT_VERSION 注入。
 //
 
 import Foundation

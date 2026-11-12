@@ -30,7 +30,7 @@ body:
     id: os-version
     attributes:
       label: 系统版本
-      description: '所使用的系统版本，例如 “Windows 11 25H2”, “Android 15”, “iOS 26.5”'
+      description: '所使用的系统版本，例如 “iOS 26.5”, “iPadOS 26.5”, “macOS 26.5（Mac Catalyst）”'
     validations:
       required: true
 
