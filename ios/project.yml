@@ -1,9 +1,9 @@
 # XcodeGen 工程描述（Windows 环境下唯一的工程事实标准）
 #
-# 该文件取代 Flutter 时代的 Runner.xcodeproj / Podfile：
-#   * 源码全部来自 ios/Runner/NativeApp（纯 Swift 6 + SwiftUI）
-#   * 图标与启动图沿用 ios/Runner/Assets.xcassets（AppIcon.appiconset 未被改动）
-#   * 根目录 assets/ 以 folder reference 形式原样打进 Bundle，供 Anime4K 着色器与内置规则复用
+# iOS 与 Mac Catalyst 共用的 XcodeGen 描述：
+#   * 应用源码来自 ios/Runner/NativeApp（Swift 6 + SwiftUI）
+#   * 图标与启动页资源来自 ios/Runner/Assets.xcassets
+#   * assets/shaders、assets/images、assets/statements 与 licenses 以 folder reference 打进 Bundle
 #
 # 生成工程：xcodegen generate --spec ios/project.yml --project ios
 # 产物路径：ios/Runner.xcodeproj，scheme 名称与包名保持 Runner / com.linkpass.kazumi
@@ -12,7 +12,7 @@ name: Runner
 
 options:
   bundleIdPrefix: com.linkpass
-  # 与 Flutter 原工程一致的部署版本（iOS 26 原生液态玻璃 API 需要）。
+  # iOS 26 起使用原生液态玻璃 API；Mac 版由同一 target 通过 Catalyst 构建。
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
@@ -72,7 +72,7 @@ targets:
       # 启动屏 storyboard，只引用 Assets.xcassets 中的图片。
       - path: Runner/Base.lproj
         buildPhase: resources
-      # 根目录静态资源：Anime4K .glsl 着色器、内置默认规则 .json、图片。
+      # 根目录静态资源：Anime4K .glsl 着色器、图片、使用约定与许可证。
       # 使用 folder reference 保留目录结构，运行时通过 Bundle 路径读取。
       - path: ../assets/shaders
         type: folder
@@ -197,8 +197,7 @@ targets:
         DANDAN_API_URL: "https://api.dandanplay.net"
         DANDAN_APP_ID: ""
         DANDAN_APP_SECRET: ""
-        # 版本号：3.0.0 起（Ato 7411）。仓库已无 Dart 工程，pubspec.yaml 不存在了，
-        # 版本唯一来源就是这里 + CHANGELOG.md 顶部条目。
+        # 应用版本由下面两个构建设置注入；发行版变更记录在 CHANGELOG.md。
         MARKETING_VERSION: "3.0.5"
         CURRENT_PROJECT_VERSION: "30005"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -214,6 +213,9 @@ targets:
         SUPPORTS_MACCATALYST: YES
         # 别让 Xcode 给 Catalyst 版自动加 `maccatalyst.` 前缀，bundle id 与 iOS 保持一致。
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        # 只做 Apple Silicon：Catalyst 的 ARCHS_STANDARD 默认是 arm64 + x86_64，
+        # 不收紧的话 Mac 包里会多一份 Intel 切片（体积与依赖都要为它负责）。
+        "ARCHS[sdk=macosx*]": arm64
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: YES
 
     dependencies:

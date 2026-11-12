@@ -184,6 +184,11 @@ jobs:
           # 校验主二进制的第三方依赖都在包里（@rpath / @executable_path 引用）。
           # 注意别用 `grep 'Lib.*\.framework'`：那会连 /System/Library/... 一起命中。
           BIN="$APP_PATH/Contents/MacOS/Kazumi"
+          BUILT_ARCHS="$(lipo -archs "$BIN")"
+          if [ "$BUILT_ARCHS" != "arm64" ]; then
+            echo "Catalyst 主程序出现了非 arm64 切片: $BUILT_ARCHS" >&2
+            exit 1
+          fi
           MISSING=0
           while read -r ref; do
             case "$ref" in
