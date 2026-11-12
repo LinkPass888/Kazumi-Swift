@@ -88,6 +88,8 @@ targets:
         buildPhase: resources
         optional: true
 
+    # Info.plist 由下面这段 info.properties 生成；plist 文件本身也入库便于查看，
+    # 但手改会在下次 xcodegen generate 时被整份覆盖，要加键请加在这里。
     info:
       path: Runner/Info.plist
       properties:

@@ -18,9 +18,9 @@ Kazumi/
 ├── static/                 # 文档和截图，不参与构建
 │   ├── doc/                # CONTRIBUTING.md、STRUCTURE.md
 │   └── screenshot/         # README 引用的界面截图
-├── testdata/               # kazumi-seed-rules.json：规则样例，不随 App 打包
+├── testdata/               # 规则样例 JSON，手工导入用，代码与构建都不引用
 ├── .github/                # CI 工作流、Issue / PR 模板
-├── .vscode/                # 共享编辑器设置，不配置 Flutter 调试器
+├── .vscode/                # 共享的编辑器搜索排除项
 ├── CHANGELOG.md            # 按发行版排列的更新日志
 ├── README.md
 ├── LICENSE

@@ -25,6 +25,5 @@ SourcePackages/
 
 # 本地工具产物；.vscode 中的共享设置仍入库
 /.cache/
-migrate_working_dir/
 .clinerules/
 intent-opportunities.md

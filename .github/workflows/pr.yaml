@@ -102,7 +102,7 @@ jobs:
           if-no-files-found: error
 
   # Mac Catalyst：同一个 iOS 工程、同一套 UIKit 界面，加一个 Mac destination 编出 Mac App。
-  # 与上面的真 macOS target 并行存在，等 Catalyst 包确认能用再决定删不删后者。
+  # 原生的 macos/ target 已随本方案落地删除，这里只剩 Catalyst 一条路。
   build-catalyst:
     if: ${{ github.event_name == 'workflow_dispatch' || ! github.event.pull_request.draft }}
     name: "Build for Mac Catalyst"
