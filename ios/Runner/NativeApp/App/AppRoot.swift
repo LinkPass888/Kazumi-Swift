@@ -90,29 +90,153 @@ struct AppRoot: View {
                 )
             }
         }
-        .alert(
-            String(localized: "发现新版本 \(environment.updates.appUpdate?.version ?? "")"),
-            isPresented: $isShowingAppUpdate
-        ) {
-            Button("查看更新日志") {
-                openURL(KazumiAppInfo.releasesURL)
-                environment.updates.appUpdate = nil
+        .sheet(isPresented: $isShowingAppUpdate, onDismiss: {
+            environment.updates.appUpdate = nil
+        }) {
+            if let notice = environment.updates.appUpdate {
+                AppUpdateSheet(
+                    notice: notice,
+                    onSkip: {
+                        settings.skippedAppUpdateVersion = notice.version
+                        isShowingAppUpdate = false
+                    },
+                    onDownload: {
+                        openURL(KazumiAppInfo.releasesURL)
+                        isShowingAppUpdate = false
+                    },
+                    onLater: {
+                        isShowingAppUpdate = false
+                    }
+                )
             }
-            Button("稍后", role: .cancel) {
-                environment.updates.appUpdate = nil
-            }
-        } message: {
-            Text(updateMessage)
         }
     }
+}
 
-    /// 更新日志：release body 可能很长，这里截断成几行提示。
-    private var updateMessage: String {
-        let notes = environment.updates.appUpdate?.notes ?? ""
-        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return String(localized: "当前版本 \(String(describing: KazumiAppInfo.fullVersion))，可以到项目主页下载新版本。")
+private struct AppUpdateSheet: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    // Colo 8654：符号 20pt，跟文字基线对齐；同写 22 时 SF Symbols 看着大一号。
+    @ScaledMetric(relativeTo: .title2) private var iconSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .footnote) private var captionFontSize: CGFloat = 13
+    @ScaledMetric(relativeTo: .body) private var notesFontSize: CGFloat = 15
+    @ScaledMetric(relativeTo: .body) private var buttonFontSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .body) private var downloadMinHeight: CGFloat = 56
+    // Colo 8595：下面一行两颗同规格，等分宽、中间 12、同高 44、纯文字。
+    @ScaledMetric(relativeTo: .body) private var rowButtonMinHeight: CGFloat = 44
+
+    let notice: AppUpdateService.AppUpdateNotice
+    let onSkip: () -> Void
+    let onDownload: () -> Void
+    let onLater: () -> Void
+
+    /// 底部三个操作，固定在正文下方。
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            Button(action: onDownload) {
+                Text("前往下载")
+                    .font(.system(size: buttonFontSize, weight: .semibold))
+                    .foregroundStyle(KazumiPalette.onAccent(for: colorScheme))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: downloadMinHeight)
+                    .background {
+                        RoundedRectangle(cornerRadius: KazumiPalette.cardCornerRadius, style: .continuous)
+                            .fill(KazumiPalette.accent(for: colorScheme))
+                    }
+                    .contentShape(RoundedRectangle(cornerRadius: KazumiPalette.cardCornerRadius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            // LP 8592：跳过此版本与稍后并到同一行，跳过在左、稍后在右。
+            HStack(spacing: 12) {
+                Button(action: onSkip) {
+                    Text("跳过此版本 \(notice.version)")
+                        .font(.system(size: buttonFontSize))
+                        .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: rowButtonMinHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("跳过此版本 \(notice.version) 的提醒"))
+
+                Button(action: onLater) {
+                    Text("稍后")
+                        .font(.system(size: buttonFontSize))
+                        .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: rowButtonMinHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 10)
         }
-        return String(trimmed.prefix(400))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 8)
+    }
+
+    private var trimmedNotes: String {
+        notice.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        // 正文区只占按钮以上的高度：滚动内容画不到按钮那一块，底部也不会压半行字。
+        VStack(spacing: 0) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // LP 8645：全部一行——符号、「发现新版本」、版本号、当前版本，从左边排过来，不换行。
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: iconSize))
+                        .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("发现新版本")
+                        Text(notice.version)
+                            .foregroundStyle(Color.primary)
+                    }
+                    .font(.title2)
+                    .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                    .padding(.leading, 10)
+
+                    Text("当前版本 \(KazumiAppInfo.version)")
+                        .font(.system(size: captionFontSize))
+                        .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                        .padding(.leading, 8)
+
+                    Spacer(minLength: 0)
+                }
+                // Colo 8647：默认字号一行放得下；大字号放不下就折行，不缩字号、不截断。
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text("发现新版本 \(notice.version)，当前版本 \(KazumiAppInfo.version)"))
+
+                Group {
+                    if trimmedNotes.isEmpty {
+                        Text("这个版本没有写更新日志。")
+                    } else {
+                        Text(verbatim: trimmedNotes)
+                    }
+                }
+                .font(.system(size: notesFontSize))
+                .foregroundStyle(trimmedNotes.isEmpty ? KazumiPalette.secondaryText(for: colorScheme) : Color.primary)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        bottomBar
+        }
+        .presentationDetents([.medium])
     }
 }

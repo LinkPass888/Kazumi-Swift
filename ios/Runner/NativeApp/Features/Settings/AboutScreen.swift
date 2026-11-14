@@ -12,6 +12,7 @@ struct AboutScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
     @Environment(AppRouter.self) private var router
+    @Environment(AppEnvironment.self) private var environment
 
     /// 检测更新状态（nil 表示还没点过）。
     @State private var updateState: UpdateState = .idle
@@ -68,6 +69,7 @@ struct AboutScreen: View {
                 ) {
                     Task { await checkForUpdate() }
                 }
+
 
                 // LP 2541：点这一行翻一页，直接读仓库里的 CHANGELOG.md，不再把人扔到浏览器。
                 actionRow(

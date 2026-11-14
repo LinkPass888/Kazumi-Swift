@@ -2943,6 +2943,14 @@ struct PlayerScreen: View {
                 }
             )
         }
+        // LP 8650 / Colo 8654：紧跟「弹幕设置」下面；先停播放，再开检索页手动换源。
+        items.append(
+            SystemMenuButton.Item(title: "弹幕检索", symbol: "bubble.left.and.bubble.right") {
+                closeMenu()
+                surface.pause()
+                openSheet(.danmakuSource)
+            }
+        )
         // 竖屏没有底栏，倍速和超分辨率都只剩菜单这一个入口（LP 2026-10-28）。
         if !isFullscreen {
             items.append(
@@ -5323,7 +5331,7 @@ private struct DanmakuSourceSheet: View {
                 searchContent
             }
         }
-        .navigationTitle(selectedAnime == nil ? "选择弹幕源" : "选择分集")
+        .navigationTitle(selectedAnime == nil ? "弹幕检索" : "选择分集")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

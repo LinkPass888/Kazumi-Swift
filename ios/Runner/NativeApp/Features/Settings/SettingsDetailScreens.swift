@@ -1679,7 +1679,12 @@ struct UpdateSettingsScreen: View {
         Form {
             Section {
                 Group {
-                    Toggle("应用更新", isOn: autoUpdateBinding)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Toggle("应用更新", isOn: autoUpdateBinding)
+                        if !settings.skippedAppUpdateVersion.isEmpty {
+                            restoreReminderButton
+                        }
+                    }
                     Toggle("规则更新", isOn: pluginUpdateBinding)
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
@@ -1697,6 +1702,38 @@ struct UpdateSettingsScreen: View {
             }
         }
         .kazumiSettingsDetail("更新设置")
+    }
+
+    private var restoreReminderButton: some View {
+        let skipped = Text("已跳过 \(settings.skippedAppUpdateVersion)")
+            .font(.system(size: 13))
+            .foregroundStyle(.secondary)
+        let restore = Text("恢复提醒")
+            .font(.system(size: 13))
+            .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+        return Button {
+            settings.skippedAppUpdateVersion = ""
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 4) {
+                    skipped
+                    restore
+                    Spacer(minLength: 0)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    skipped
+                    restore
+                }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            String(localized: "已跳过 \(settings.skippedAppUpdateVersion)") + "，" + String(localized: "恢复提醒")
+        )
+        .accessibilityAddTraits(.isButton)
     }
 
     private var autoUpdateBinding: Binding<Bool> {

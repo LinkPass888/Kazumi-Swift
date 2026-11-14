@@ -1,6 +1,6 @@
 {
   "sourceLanguage":"zh-Hans",
-  "strings":{
+  "strings":{"弹幕检索":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"彈幕檢索"}}}},
     "Made with AirBuild":{
       "comment":"Credit at the bottom of Settings. Keep the name AirBuild as is.",
       "localizations":{
@@ -10188,17 +10188,7 @@
         }
       }
     },
-    "选择弹幕源":{
-      "extractionState":"manual",
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"選擇彈幕來源"
-          }
-        }
-      }
-    },
+
     "键":{
       "extractionState":"manual",
       "localizations":{
