@@ -29,7 +29,6 @@ final class AppUpdateService {
     /// 待提示的规则更新条数；0 表示没有。
     var pluginUpdateCount = 0
 
-
     private var hasChecked = false
 
     /// 启动时调用一次；已经检查过就直接返回。
