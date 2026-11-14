@@ -37,7 +37,7 @@ final class AppUpdateService {
         hasChecked = true
 
         if settings.autoUpdateCheck {
-            await checkAppUpdate()
+            await checkAppUpdate(settings: settings)
         }
         if settings.checkPluginUpdateOnStartup {
             pluginUpdateCount = await plugins.checkPluginUpdatesOnStartup(enabled: true)
@@ -45,12 +45,13 @@ final class AppUpdateService {
     }
 
     /// 查询最新 release 并与本地版本比较。
-    private func checkAppUpdate() async {
+    private func checkAppUpdate(settings: SettingsStore) async {
         do {
             var request = URLRequest(url: KazumiAppInfo.latestReleaseAPIURL)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             request.timeoutInterval = 15
             let (data, response) = try await KazumiNetworkPolicy.requestSession.session.data(for: request)
+            guard settings.autoUpdateCheck else { return }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 return
             }
@@ -58,6 +59,7 @@ final class AppUpdateService {
             let tag = json["tag_name"].stringValue ?? ""
             let remote = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
             guard !remote.isEmpty else { return }
+            guard remote != settings.skippedAppUpdateVersion else { return }
             guard VersionCompare.needUpdate(local: KazumiAppInfo.version, remote: remote) else {
                 return
             }

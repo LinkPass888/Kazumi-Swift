@@ -288,6 +288,7 @@ enum SettingsKey {
     static let enableBangumiProxy = "enableBangumiProxy"
     /// 启动时检查应用更新，沿用原版 `SettingsKeys.autoUpdate` 的键名。
     static let autoUpdate = "autoUpdate"
+    static let skippedAppUpdateVersion = "skippedAppUpdateVersion"
     /// 启动时检查规则更新，沿用原版 `checkPluginUpdateOnStartup` 的键名。
     static let checkPluginUpdateOnStartup = "checkPluginUpdateOnStartup"
     /// 一起看房间配置
@@ -813,6 +814,10 @@ final class SettingsStore {
         didSet { persist(autoUpdateCheck, SettingsKey.autoUpdate) }
     }
 
+    var skippedAppUpdateVersion: String {
+        didSet { persist(skippedAppUpdateVersion, SettingsKey.skippedAppUpdateVersion) }
+    }
+
     /// 启动时检查规则更新（对应原版 `checkPluginUpdateOnStartup`，默认开启）。
     var checkPluginUpdateOnStartup: Bool {
         didSet { persist(checkPluginUpdateOnStartup, SettingsKey.checkPluginUpdateOnStartup) }
@@ -1004,6 +1009,7 @@ final class SettingsStore {
         // 已经存在机器上的设置不会被改（用户自己选过就尊重他的选择）。
         enableBangumiProxy = Self.read(defaults, SettingsKey.enableBangumiProxy, true)
         autoUpdateCheck = Self.read(defaults, SettingsKey.autoUpdate, true)
+        skippedAppUpdateVersion = Self.read(defaults, SettingsKey.skippedAppUpdateVersion, "")
         checkPluginUpdateOnStartup = Self.read(defaults, SettingsKey.checkPluginUpdateOnStartup, true)
         syncPlayEndPoint = Self.read(defaults, SettingsKey.syncPlayEndPoint, "")
         syncPlayRoom = Self.read(defaults, SettingsKey.syncPlayRoom, "")

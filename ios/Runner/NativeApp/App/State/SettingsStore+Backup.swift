@@ -74,6 +74,7 @@ extension SettingsStore {
         "onboardingCompleted",
         "onboardingAgreementVersion",
         "shortcutDialogShown",
+        SettingsKey.skippedAppUpdateVersion,
     ]
 
     /// 动态键名（按番剧 id 存的搜索历史等）同样不参与备份。

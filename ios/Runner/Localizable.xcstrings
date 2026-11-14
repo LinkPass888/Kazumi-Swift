@@ -1,6 +1,11 @@
 {
   "sourceLanguage":"zh-Hans",
-  "strings":{
+  "strings":{"弹幕检索":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"彈幕檢索"}}}},
+    "发现新版本":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"發現新版本"}}}},
+    "前往下载":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"前往下載"}}}},
+    "跳过此版本 %@":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"跳過此版本 %@"}}}},
+    "跳过此版本 %@ 的提醒":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"跳過此版本 %@ 的提醒"}}}},
+    "这个版本没有写更新日志。":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"這個版本沒有寫更新日誌。"}}}},
     "Made with AirBuild":{
       "comment":"Credit at the bottom of Settings. Keep the name AirBuild as is.",
       "localizations":{
@@ -10188,17 +10193,7 @@
         }
       }
     },
-    "选择弹幕源":{
-      "extractionState":"manual",
-      "localizations":{
-        "zh-Hant":{
-          "stringUnit":{
-            "state":"translated",
-            "value":"選擇彈幕來源"
-          }
-        }
-      }
-    },
+
     "键":{
       "extractionState":"manual",
       "localizations":{

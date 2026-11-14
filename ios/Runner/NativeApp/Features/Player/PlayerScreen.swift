@@ -392,6 +392,8 @@ struct PlayerScreen: View {
     /// 更多菜单里几个「开个页面」的入口。收到一个枚举里，
     /// 一次只可能有一张：几个布尔各自为真时后弹的那张会被系统吞掉。
     @State private var activeSheet: PlayerSheet?
+    /// 从「更多 → 弹幕检索」进来时先暂停；换完或取消，只要离开检索页就续播。
+    @State private var resumesAfterDanmakuSearch = false
     /// 「播放信息」里点了媒体地址后的「已复制」提示，1.2 秒后自动收回。
     @State private var mediaURLCopied = false
     @State private var mediaURLCopiedTask: Task<Void, Never>?
@@ -537,7 +539,11 @@ struct PlayerScreen: View {
         .tint(.primary)
         .overlay(alignment: .top) { toastView }
         .overlay { skipSecondsDialog }
-        .sheet(item: $activeSheet) { sheet in
+        .sheet(item: $activeSheet, onDismiss: {
+            guard resumesAfterDanmakuSearch else { return }
+            resumesAfterDanmakuSearch = false
+            surface.play()
+        }) { sheet in
             sheetContent(sheet)
         }
     }
@@ -2943,6 +2949,15 @@ struct PlayerScreen: View {
                 }
             )
         }
+        // LP 8650 / Colo 8654：紧跟「弹幕设置」下面；先停播放，再开检索页手动换源。
+        items.append(
+            SystemMenuButton.Item(title: "弹幕检索", symbol: "bubble.left.and.bubble.right") {
+                closeMenu()
+                resumesAfterDanmakuSearch = true
+                surface.pause()
+                openSheet(.danmakuSource)
+            }
+        )
         // 竖屏没有底栏，倍速和超分辨率都只剩菜单这一个入口（LP 2026-10-28）。
         if !isFullscreen {
             items.append(
@@ -5323,7 +5338,7 @@ private struct DanmakuSourceSheet: View {
                 searchContent
             }
         }
-        .navigationTitle(selectedAnime == nil ? "选择弹幕源" : "选择分集")
+        .navigationTitle(selectedAnime == nil ? "弹幕检索" : "选择分集")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
