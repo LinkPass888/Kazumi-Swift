@@ -97,6 +97,7 @@ extension SettingsStore {
             SettingsKey.oledEnhance,
             SettingsKey.autoPlayNext,
             SettingsKey.autoSkipOpEd,
+            SettingsKey.screenshotKeywordsEnabled,
             SettingsKey.playResume,
             SettingsKey.backgroundPlayback,
             SettingsKey.backgroundAutoPiP,
@@ -159,6 +160,7 @@ extension SettingsStore {
             (SettingsKey.oledEnhance, .bool(oledEnhance)),
             (SettingsKey.autoPlayNext, .bool(autoPlayNext)),
             (SettingsKey.autoSkipOpEd, .bool(autoSkipOpEd)),
+            (SettingsKey.screenshotKeywordsEnabled, .bool(screenshotKeywordsEnabled)),
             (SettingsKey.anime4kMode, .int(superResolutionMode.rawValue)),
             (SettingsKey.playSpeed, .double(playSpeed)),
             (SettingsKey.playResume, .bool(playResume)),
@@ -283,6 +285,10 @@ extension SettingsStore {
         }
         if let flag = value(SettingsKey.autoSkipOpEd)?.boolValue {
             autoSkipOpEd = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.screenshotKeywordsEnabled)?.boolValue {
+            screenshotKeywordsEnabled = flag
             restored += 1
         }
         if let flag = value(SettingsKey.danmakuEnabled)?.boolValue {

@@ -186,6 +186,18 @@ struct PlayerSettingsScreen: View {
                 Text("在线查询 AniSkip 社区时间轴，进入片头/片尾时提示跳过")
             }
             Section {
+                Toggle(
+                    "截图写入番剧关键词",
+                    isOn: Binding(
+                        get: { settings.screenshotKeywordsEnabled },
+                        set: { settings.screenshotKeywordsEnabled = $0 }
+                    )
+                )
+                .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
+            } footer: {
+                Text("保存截图时写入番剧名、集数和播放时刻三个图片关键词。")
+            }
+            Section {
                 Group {
                     // 不带 role: .destructive——恢复默认本来就不删用户数据，
                     // 染成红色会读成「要丢东西」（main 那颗也是普通按钮）。

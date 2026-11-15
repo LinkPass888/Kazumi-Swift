@@ -180,6 +180,8 @@ enum SettingsKey {
     static let hardwareDecodeMode = "hardwareDecodeMode"
     /// AniSkip 片头片尾时间轴，沿用原版 `SettingsKeys.aniSkipLookup` 的键名，默认开启。
     static let aniSkipLookup = "aniSkipLookup"
+    /// 播放器截图是否写入番名、集数与进度关键词，默认开启。
+    static let screenshotKeywordsEnabled = "screenshotKeywordsEnabled"
     /// 控制栏自动隐藏前的停留时长（毫秒），沿用原版
     /// `SettingsKeys.playerControllerLayerDisappearTime` 的键名，默认 4000。
     static let playerControllerLayerDisappearTime = "playerControllerLayerDisappearTime"
@@ -381,6 +383,11 @@ final class SettingsStore {
     /// 两边的设置备份因此能互认。
     var aniSkipLookup: Bool {
         didSet { persist(aniSkipLookup, SettingsKey.aniSkipLookup) }
+    }
+
+    /// 保存播放器截图时写入三条 IPTC 关键词：番名、集数、播放时刻。
+    var screenshotKeywordsEnabled: Bool {
+        didSet { persist(screenshotKeywordsEnabled, SettingsKey.screenshotKeywordsEnabled) }
     }
 
     var danmakuEnabled: Bool {
@@ -889,6 +896,7 @@ final class SettingsStore {
         timelineShowCount = Self.read(defaults, SettingsKey.timelineShowCount, false)
         tabBarShrinkOnScroll = Self.read(defaults, SettingsKey.tabBarShrinkOnScroll, true)
         aniSkipLookup = Self.read(defaults, SettingsKey.aniSkipLookup, true)
+        screenshotKeywordsEnabled = Self.read(defaults, SettingsKey.screenshotKeywordsEnabled, true)
         danmakuEnabled = Self.read(defaults, SettingsKey.danmakuEnabled, true)
         danmakuOpacity = Self.read(defaults, SettingsKey.danmakuOpacity, 1.0)
         danmakuFontSize = Self.read(defaults, SettingsKey.danmakuFontSize, 20.0)
@@ -1056,6 +1064,7 @@ final class SettingsStore {
         playerControllerLayerDisappearTime = 4000
         superResolutionMode = .off
         defaultAspectRatio = .automatic
+        screenshotKeywordsEnabled = true
     }
 
     /// 弹幕设置的「恢复默认设置」（main: resetDanmakuSettings）。
