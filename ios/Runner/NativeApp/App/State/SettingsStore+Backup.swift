@@ -110,6 +110,7 @@ extension SettingsStore {
             SettingsKey.playerAspectRatio,
             SettingsKey.hapticFeedbackEnabled,
             SettingsKey.showRating,
+            SettingsKey.searchNSFWEnabled,
             SettingsKey.tabBarShrinkOnScroll,
             SettingsKey.playerControllerLayerDisappearTime,
             SettingsKey.danmakuOpacity,
@@ -175,6 +176,7 @@ extension SettingsStore {
             (SettingsKey.playerAspectRatio, .string(defaultAspectRatio.rawValue)),
             (SettingsKey.hapticFeedbackEnabled, .bool(hapticFeedbackEnabled)),
             (SettingsKey.showRating, .bool(showRating)),
+            (SettingsKey.searchNSFWEnabled, .bool(searchNSFWEnabled)),
             (SettingsKey.tabBarShrinkOnScroll, .bool(tabBarShrinkOnScroll)),
             (SettingsKey.playerControllerLayerDisappearTime, .int(playerControllerLayerDisappearTime)),
             (SettingsKey.danmakuEnabled, .bool(danmakuEnabled)),
@@ -358,6 +360,10 @@ extension SettingsStore {
         }
         if let flag = value(SettingsKey.showRating)?.boolValue {
             showRating = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.searchNSFWEnabled)?.boolValue {
+            searchNSFWEnabled = flag
             restored += 1
         }
         if let flag = value(SettingsKey.tabBarShrinkOnScroll)?.boolValue {

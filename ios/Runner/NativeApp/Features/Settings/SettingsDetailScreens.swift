@@ -1274,6 +1274,14 @@ struct ThemeSettingsScreen: View {
                     Toggle("OLED优化", isOn: oledBinding)
                     Toggle("触感反馈", isOn: hapticBinding)
                     Toggle("上滑时缩小底部标签栏", isOn: tabBarBinding)
+                    Toggle(isOn: searchNSFWBinding) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("搜索结果显示 NSFW")
+                            Text("开启后主动搜索会使用 Bangumi Token，并显示受限条目")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     // LP 3517：这一行挪到本组最后，说明也改准——
                     // 原来写「概览和番剧列表」，可我们的列表根本不显示评分，认这个开关的是时间表。
                     // 这是整页唯一留着说明小字的一行：名字讲不出它管哪些地方。
@@ -1325,6 +1333,13 @@ struct ThemeSettingsScreen: View {
         Binding(
             get: { settings.hapticFeedbackEnabled },
             set: { settings.hapticFeedbackEnabled = $0 }
+        )
+    }
+
+    private var searchNSFWBinding: Binding<Bool> {
+        Binding(
+            get: { settings.searchNSFWEnabled },
+            set: { settings.searchNSFWEnabled = $0 }
         )
     }
 

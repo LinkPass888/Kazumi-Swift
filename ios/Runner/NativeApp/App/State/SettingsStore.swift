@@ -156,6 +156,8 @@ enum SettingsKey {
     static let hapticFeedbackEnabled = "hapticFeedbackEnabled"
     /// 时间表是否显示评分（Ato 2026-10-24：只管时间表，详情页照旧）。
     static let showRating = "showRating"
+    /// 主动搜索是否显示 NSFW 条目；默认关闭，开启时还需要有效 Bangumi Token。
+    static let searchNSFWEnabled = "searchNSFWEnabled"
     /// 时间表星期条是否显示每天番剧数量（LP 5039，默认关）。
     /// 关掉时星期条换成规则编辑页顶部那种分段 tab。
     static let timelineShowCount = "timelineShowCount"
@@ -366,6 +368,13 @@ final class SettingsStore {
     /// 概览、番剧列表与番剧详情页是否显示评分。
     var showRating: Bool {
         didSet { persist(showRating, SettingsKey.showRating) }
+    }
+
+    var searchNSFWEnabled: Bool {
+        didSet {
+            persist(searchNSFWEnabled, SettingsKey.searchNSFWEnabled)
+            BangumiAPI.searchIncludesNSFW = searchNSFWEnabled
+        }
     }
 
     /// 时间表星期条是否带每天的番剧数量（LP 5039，默认关）。
@@ -893,6 +902,7 @@ final class SettingsStore {
         ) ?? .automatic
         hapticFeedbackEnabled = Self.read(defaults, SettingsKey.hapticFeedbackEnabled, true)
         showRating = Self.read(defaults, SettingsKey.showRating, true)
+        searchNSFWEnabled = Self.read(defaults, SettingsKey.searchNSFWEnabled, false)
         timelineShowCount = Self.read(defaults, SettingsKey.timelineShowCount, false)
         tabBarShrinkOnScroll = Self.read(defaults, SettingsKey.tabBarShrinkOnScroll, true)
         aniSkipLookup = Self.read(defaults, SettingsKey.aniSkipLookup, true)
@@ -1040,6 +1050,7 @@ final class SettingsStore {
         // init 中给存储属性赋初值不会触发 didSet，这里补一次启动时的令牌注入；
         // 之后设置页改令牌、恢复备份都会走 `bangumiAccessToken.didSet`。
         BangumiAPI.accessToken = bangumiAccessToken
+        BangumiAPI.searchIncludesNSFW = searchNSFWEnabled
     }
 
     /// 把播放相关设置恢复为出厂值（LP 清单「恢复默认设置」）。

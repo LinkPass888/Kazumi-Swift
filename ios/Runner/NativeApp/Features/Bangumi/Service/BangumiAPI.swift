@@ -110,6 +110,12 @@ enum BangumiAPI {
 
     /// 主动搜索解析到的受限条目。锁里只放 ID，不把模型扩成全局 `nsfw` 字段。
     private static let nsfwSubjectIDs = OSAllocatedUnfairLock(initialState: Set<Int>())
+    private static let searchIncludesNSFWBox = OSAllocatedUnfairLock(initialState: false)
+
+    static var searchIncludesNSFW: Bool {
+        get { searchIncludesNSFWBox.withLock { $0 } }
+        set { searchIncludesNSFWBox.withLock { $0 = newValue } }
+    }
 
     private static var hasAccessToken: Bool { accessToken != nil }
 
@@ -153,7 +159,17 @@ enum BangumiAPI {
         let camel = json["nameCN"].stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !snake.isEmpty || !camel.isEmpty { return true }
         let original = json["name"].stringValue ?? ""
-        return original.unicodeScalars.contains { scalar in
+        let scalars = original.unicodeScalars
+        let hasJapaneseKana = scalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x30FF, 0x31F0...0x31FF, 0xFF66...0xFF9D:
+                return true
+            default:
+                return false
+            }
+        }
+        guard !hasJapaneseKana else { return false }
+        return scalars.contains { scalar in
             switch scalar.value {
             case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF,
                  0x20000...0x2FA1F:
@@ -388,7 +404,7 @@ enum BangumiAPI {
         scoreFilter: [String]? = nil,
         weekdays: [Int] = []
     ) async -> BangumiSearchPage? {
-        let useAuth = hasAccessToken
+        let useAuth = searchIncludesNSFW && hasAccessToken
         let params = searchParams(
             keyword: keyword,
             tags: tags,
