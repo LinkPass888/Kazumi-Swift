@@ -169,6 +169,47 @@ struct XPathRuleStrategyTests {
         #expect(request.includeCookies == false)
     }
 
+    @Test("节点内双斜线按上游语义从当前节点查找") func contextRelativeDoubleSlash() throws {
+        #expect(XPathRuleStrategy.contextRelativeSelector("//h3") == ".//h3")
+        #expect(XPathRuleStrategy.contextRelativeSelector(".//h3") == ".//h3")
+        #expect(XPathRuleStrategy.contextRelativeSelector("/self::*") == "/self::*")
+
+        var plugin = Plugin(
+            api: "9",
+            name: "节点上下文",
+            version: "1.0.0",
+            baseUrl: "https://example.com",
+            searchURL: "https://example.com/search?q=@keyword",
+            searchList: "//div[@class='item']",
+            searchName: "//h3",
+            searchResult: "//a",
+            chapterRoads: "//div[@class='road']",
+            chapterResult: "//a"
+        )
+        plugin.usePost = false
+        let relativeConfig = RuleExecutionConfig(plugin: plugin)
+        let searchHTML = """
+        <html><body>
+          <nav><h3>导航</h3><a href="/top">顶部</a></nav>
+          <div class="item"><h3>目标番剧</h3><a href="/detail">详情</a></div>
+        </body></html>
+        """
+        let search = try strategy.parseSearch(searchHTML, config: relativeConfig)
+        #expect(search.items == [SearchItem(name: "目标番剧", src: "/detail")])
+
+        let chapterHTML = """
+        <html><body>
+          <nav><a href="/home">首页</a></nav>
+          <div class="road"><a href="/play/1">1</a><a href="/play/2">2</a></div>
+        </body></html>
+        """
+        let chapters = try strategy.parseChapters(chapterHTML, config: relativeConfig)
+        #expect(chapters.roads.first?.data == [
+            "https://example.com/play/1",
+            "https://example.com/play/2",
+        ])
+    }
+
     @Test("搜索解析提取名称与 href") func parseSearch() throws {
         let html = """
         <html><body>
