@@ -8,9 +8,11 @@
 //  只有桌面面板会调用，iOS 上走不到，不照它做（Colo 3667）。
 //
 
+import ImageIO
 import Photos
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 enum PlayerScreenshot {
     /// 存进系统相册。成功返回 nil，失败返回给用户看的那句话。
@@ -20,7 +22,7 @@ enum PlayerScreenshot {
     /// `@MainActor`，闭包就被染成主线程隔离，进去就撞主线程断言、直接 trap——
     /// 真机上按一次截图就崩一次，连提示都来不及出（LP 4664 / 4688，栈就在这里）。
     /// 所以整段都写在 nonisolated 的地方，不靠「continuation 的闭包自动 nonisolated」。
-    nonisolated static func save(pngAt fileURL: URL) async -> String? {
+    nonisolated static func save(pngAt fileURL: URL, keywords: [String] = []) async -> String? {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
             return String(localized: "截图保存失败：没有相册写入权限")
@@ -29,13 +31,22 @@ enum PlayerScreenshot {
             return String(localized: "截图保存失败：截图文件不见了（\(String(describing: fileURL.lastPathComponent))）")
         }
         do {
+            let assetURL: URL
+            if keywords.isEmpty {
+                assetURL = fileURL
+            } else {
+                assetURL = try fileByWritingKeywords(keywords, toPNGAt: fileURL)
+            }
+            defer {
+                if assetURL != fileURL { try? FileManager.default.removeItem(at: assetURL) }
+            }
             // 不写 `isolation:`：这条闭包不能被绑到任何 actor 上，走的是
             // Swift 6.2 起默认的 nonisolated(nonsending) 重载。
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 PHPhotoLibrary.shared().performChanges(
                     {
                         // 从文件 URL 建，不把整张 PNG 读进内存（LP 4695 第 6 条）。
-                        PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+                        PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: assetURL)
                     },
                     completionHandler: { _, error in
                         if let error { cont.resume(throwing: error) } else { cont.resume() }
@@ -46,6 +57,32 @@ enum PlayerScreenshot {
         } catch {
             return String(localized: "截图保存失败：\(String(describing: error.localizedDescription))")
         }
+    }
+
+    /// 把标准 IPTC Keywords 写进一份临时 PNG；PhotoKit 从这份文件创建相册资源。
+    nonisolated static func fileByWritingKeywords(_ keywords: [String], toPNGAt sourceURL: URL) throws -> URL {
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let type = CGImageSourceGetType(source) ?? (UTType.png.identifier as CFString)
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kazumi-shot-\(UUID().uuidString).png")
+        guard let destination = CGImageDestinationCreateWithURL(destinationURL as CFURL, type, 1, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        var properties = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]) ?? [:]
+        let iptcKey = kCGImagePropertyIPTCDictionary as String
+        let keywordsKey = kCGImagePropertyIPTCKeywords as String
+        var iptc = properties[iptcKey] as? [String: Any] ?? [:]
+        iptc[keywordsKey] = keywords
+        properties[iptcKey] = iptc
+        CGImageDestinationAddImageFromSource(destination, source, 0, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            try? FileManager.default.removeItem(at: destinationURL)
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return destinationURL
     }
 
     /// 从内存里的 PNG 存（详情页封面那条路）。先落临时文件，再走上面那条。

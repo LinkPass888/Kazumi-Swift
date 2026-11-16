@@ -97,6 +97,7 @@ extension SettingsStore {
             SettingsKey.oledEnhance,
             SettingsKey.autoPlayNext,
             SettingsKey.autoSkipOpEd,
+            SettingsKey.screenshotKeywordsEnabled,
             SettingsKey.playResume,
             SettingsKey.backgroundPlayback,
             SettingsKey.backgroundAutoPiP,
@@ -109,6 +110,7 @@ extension SettingsStore {
             SettingsKey.playerAspectRatio,
             SettingsKey.hapticFeedbackEnabled,
             SettingsKey.showRating,
+            SettingsKey.searchNSFWEnabled,
             SettingsKey.tabBarShrinkOnScroll,
             SettingsKey.playerControllerLayerDisappearTime,
             SettingsKey.danmakuOpacity,
@@ -159,6 +161,7 @@ extension SettingsStore {
             (SettingsKey.oledEnhance, .bool(oledEnhance)),
             (SettingsKey.autoPlayNext, .bool(autoPlayNext)),
             (SettingsKey.autoSkipOpEd, .bool(autoSkipOpEd)),
+            (SettingsKey.screenshotKeywordsEnabled, .bool(screenshotKeywordsEnabled)),
             (SettingsKey.anime4kMode, .int(superResolutionMode.rawValue)),
             (SettingsKey.playSpeed, .double(playSpeed)),
             (SettingsKey.playResume, .bool(playResume)),
@@ -173,6 +176,7 @@ extension SettingsStore {
             (SettingsKey.playerAspectRatio, .string(defaultAspectRatio.rawValue)),
             (SettingsKey.hapticFeedbackEnabled, .bool(hapticFeedbackEnabled)),
             (SettingsKey.showRating, .bool(showRating)),
+            (SettingsKey.searchNSFWEnabled, .bool(searchNSFWEnabled)),
             (SettingsKey.tabBarShrinkOnScroll, .bool(tabBarShrinkOnScroll)),
             (SettingsKey.playerControllerLayerDisappearTime, .int(playerControllerLayerDisappearTime)),
             (SettingsKey.danmakuEnabled, .bool(danmakuEnabled)),
@@ -285,6 +289,10 @@ extension SettingsStore {
             autoSkipOpEd = flag
             restored += 1
         }
+        if let flag = value(SettingsKey.screenshotKeywordsEnabled)?.boolValue {
+            screenshotKeywordsEnabled = flag
+            restored += 1
+        }
         if let flag = value(SettingsKey.danmakuEnabled)?.boolValue {
             danmakuEnabled = flag
             restored += 1
@@ -352,6 +360,10 @@ extension SettingsStore {
         }
         if let flag = value(SettingsKey.showRating)?.boolValue {
             showRating = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.searchNSFWEnabled)?.boolValue {
+            searchNSFWEnabled = flag
             restored += 1
         }
         if let flag = value(SettingsKey.tabBarShrinkOnScroll)?.boolValue {

@@ -20,6 +20,12 @@ import Fuzi
 // "ambiguous for type lookup in this context"，写全名两边都对。
 
 struct XPathRuleStrategy: Sendable {
+    /// 上游 `xpath_selector` 在节点上下文里把 `//x` 解释为当前节点的后代；
+    /// Fuzi/libxml2 则会从文档根开始。规则按上游语义编写，只在节点内求值时补成 `.//x`。
+    nonisolated static func contextRelativeSelector(_ expression: String) -> String {
+        expression.hasPrefix("//") ? "." + expression : expression
+    }
+
     func prepareSearchRequest(_ config: RuleExecutionConfig, keyword: String) throws -> PreparedRuleRequest {
         let encodedKeyword = encodeQueryComponent(keyword)
         let queryURL = config.searchUrl.replacingOccurrences(of: "@keyword", with: encodedKeyword)
@@ -84,11 +90,13 @@ struct XPathRuleStrategy: Sendable {
 
         for (index, node) in nodes.enumerated() {
             do {
+                let searchName = Self.contextRelativeSelector(config.searchName)
                 let name = try runSelector(.searchName, expression: config.searchName) { () -> Fuzi.XMLElement? in
-                    node.xpath(config.searchName).first
+                    node.xpath(searchName).first
                 }?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let searchResult = Self.contextRelativeSelector(config.searchResult)
                 let source = try runSelector(.searchResult, expression: config.searchResult) { () -> Fuzi.XMLElement? in
-                    node.xpath(config.searchResult).first
+                    node.xpath(searchResult).first
                 }?.attr("href")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if name.isEmpty || source.isEmpty {
                     diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 缺少名称或来源，已跳过"))
@@ -121,8 +129,9 @@ struct XPathRuleStrategy: Sendable {
             do {
                 var urls: [String] = []
                 var names: [String] = []
+                let chapterResult = Self.contextRelativeSelector(config.chapterResult)
                 let episodeNodes = try runSelector(.chapterResult, expression: config.chapterResult) {
-                    Array(roadNode.xpath(config.chapterResult))
+                    Array(roadNode.xpath(chapterResult))
                 }
                 for (episodeIndex, episode) in episodeNodes.enumerated() {
                     let source = episode.attr("href")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

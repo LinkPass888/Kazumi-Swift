@@ -156,6 +156,8 @@ enum SettingsKey {
     static let hapticFeedbackEnabled = "hapticFeedbackEnabled"
     /// 时间表是否显示评分（Ato 2026-10-24：只管时间表，详情页照旧）。
     static let showRating = "showRating"
+    /// 主动搜索是否显示 NSFW 条目；默认关闭，开启时还需要有效 Bangumi Token。
+    static let searchNSFWEnabled = "searchNSFWEnabled"
     /// 时间表星期条是否显示每天番剧数量（LP 5039，默认关）。
     /// 关掉时星期条换成规则编辑页顶部那种分段 tab。
     static let timelineShowCount = "timelineShowCount"
@@ -180,6 +182,8 @@ enum SettingsKey {
     static let hardwareDecodeMode = "hardwareDecodeMode"
     /// AniSkip 片头片尾时间轴，沿用原版 `SettingsKeys.aniSkipLookup` 的键名，默认开启。
     static let aniSkipLookup = "aniSkipLookup"
+    /// 播放器截图是否写入番名、集数与进度关键词，默认开启。
+    static let screenshotKeywordsEnabled = "screenshotKeywordsEnabled"
     /// 控制栏自动隐藏前的停留时长（毫秒），沿用原版
     /// `SettingsKeys.playerControllerLayerDisappearTime` 的键名，默认 4000。
     static let playerControllerLayerDisappearTime = "playerControllerLayerDisappearTime"
@@ -366,6 +370,13 @@ final class SettingsStore {
         didSet { persist(showRating, SettingsKey.showRating) }
     }
 
+    var searchNSFWEnabled: Bool {
+        didSet {
+            persist(searchNSFWEnabled, SettingsKey.searchNSFWEnabled)
+            BangumiAPI.searchIncludesNSFW = searchNSFWEnabled
+        }
+    }
+
     /// 时间表星期条是否带每天的番剧数量（LP 5039，默认关）。
     var timelineShowCount: Bool {
         didSet { persist(timelineShowCount, SettingsKey.timelineShowCount) }
@@ -381,6 +392,11 @@ final class SettingsStore {
     /// 两边的设置备份因此能互认。
     var aniSkipLookup: Bool {
         didSet { persist(aniSkipLookup, SettingsKey.aniSkipLookup) }
+    }
+
+    /// 保存播放器截图时写入三条 IPTC 关键词：番名、集数、播放时刻。
+    var screenshotKeywordsEnabled: Bool {
+        didSet { persist(screenshotKeywordsEnabled, SettingsKey.screenshotKeywordsEnabled) }
     }
 
     var danmakuEnabled: Bool {
@@ -886,9 +902,11 @@ final class SettingsStore {
         ) ?? .automatic
         hapticFeedbackEnabled = Self.read(defaults, SettingsKey.hapticFeedbackEnabled, true)
         showRating = Self.read(defaults, SettingsKey.showRating, true)
+        searchNSFWEnabled = Self.read(defaults, SettingsKey.searchNSFWEnabled, false)
         timelineShowCount = Self.read(defaults, SettingsKey.timelineShowCount, false)
         tabBarShrinkOnScroll = Self.read(defaults, SettingsKey.tabBarShrinkOnScroll, true)
         aniSkipLookup = Self.read(defaults, SettingsKey.aniSkipLookup, true)
+        screenshotKeywordsEnabled = Self.read(defaults, SettingsKey.screenshotKeywordsEnabled, true)
         danmakuEnabled = Self.read(defaults, SettingsKey.danmakuEnabled, true)
         danmakuOpacity = Self.read(defaults, SettingsKey.danmakuOpacity, 1.0)
         danmakuFontSize = Self.read(defaults, SettingsKey.danmakuFontSize, 20.0)
@@ -1032,6 +1050,7 @@ final class SettingsStore {
         // init 中给存储属性赋初值不会触发 didSet，这里补一次启动时的令牌注入；
         // 之后设置页改令牌、恢复备份都会走 `bangumiAccessToken.didSet`。
         BangumiAPI.accessToken = bangumiAccessToken
+        BangumiAPI.searchIncludesNSFW = searchNSFWEnabled
     }
 
     /// 把播放相关设置恢复为出厂值（LP 清单「恢复默认设置」）。
@@ -1056,6 +1075,7 @@ final class SettingsStore {
         playerControllerLayerDisappearTime = 4000
         superResolutionMode = .off
         defaultAspectRatio = .automatic
+        screenshotKeywordsEnabled = true
     }
 
     /// 弹幕设置的「恢复默认设置」（main: resetDanmakuSettings）。

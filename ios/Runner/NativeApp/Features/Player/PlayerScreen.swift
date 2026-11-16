@@ -1825,6 +1825,14 @@ struct PlayerScreen: View {
         }
     }
 
+    /// 固定三条：番名、当前集、按下快门时的播放进度。番名本身已有季度时不重复拆季。
+    private var screenshotKeywords: [String] {
+        let rawTitle = danmakuInitialKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = rawTitle.isEmpty ? "Bangumi \(bangumiID)" : rawTitle
+        let episodeNumber = controller?.currentEpisode ?? episode
+        return [title, "第\(episodeNumber)集", timeText(surface.currentTime)]
+    }
+
     /// 截图：抓帧 → 存相册 → 闪一下取景框，存好/没存好都要说一句（LP 4709）。
     ///
     /// 抓帧走 mpv 的 `screenshot-to-file`（原始分辨率、不含字幕和 OSD，LP 4695），
@@ -1837,6 +1845,7 @@ struct PlayerScreen: View {
         noteInteraction()
         showControlsBriefly()
         flashScreenshot()
+        let keywords = settings.screenshotKeywordsEnabled ? screenshotKeywords : []
         environment.router.externalNavigationDeferralCount += 1
         Task { @MainActor in
             defer { environment.router.externalNavigationDeferralCount -= 1 }
@@ -1847,7 +1856,7 @@ struct PlayerScreen: View {
                 surface.toastMessage = captured.note.isEmpty ? "截图失败：没抓到画面" : captured.note
                 return
             }
-            let failure = await PlayerScreenshot.save(pngAt: url)
+            let failure = await PlayerScreenshot.save(pngAt: url, keywords: keywords)
             // 临时文件不再需要；存成功也是它自己那份了。
             try? FileManager.default.removeItem(at: url)
             if let failure {

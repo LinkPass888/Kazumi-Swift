@@ -18,6 +18,8 @@ struct SearchScreen: View {
     @State private var controller = SearchController()
     @State private var input = ""
     @State private var submittedQuery: String?
+    /// 点进搜索框时的原文；右上角取消只撤销这一轮编辑，不清结果、不退出页面。
+    @State private var inputBeforeEditing: String?
     @State private var isShowingFilters = false
     @State private var isShowingImageSearch = false
     /// 两颗「隐藏」开关：不在条件串里，是搜索页自己的设置（与 main 一致），落盘记住。
@@ -51,13 +53,10 @@ struct SearchScreen: View {
         return min(700, max(0, containerSize.width - 32 - 44 - 12 - 44 - 12))
     }
 
-    /// 取消：清空并退出搜索——矮档没有导航栏，这一颗就是返回。
+    /// 取消只撤销本轮输入并收起键盘；页面、已提交查询和结果都保留。
     private func cancelSearch() {
-        input = ""
-        submittedQuery = nil
-        controller.clear()
+        if let inputBeforeEditing { input = inputBeforeEditing }
         isInputFocused = false
-        dismiss()
     }
 
     var body: some View {
@@ -87,9 +86,9 @@ struct SearchScreen: View {
                         }
                         .frame(maxWidth: searchRowWidth)
 
-                        // 矮档末位 44 两态共用：入口态以图搜番，激活态（点进框、键盘起来）换成取消。
+                        // 矮档末位 44 两态共用：键盘起来时换成取消，收键盘后恢复以图搜番。
                         if isShortTier {
-                            if isInputFocused || hasSearched {
+                            if isInputFocused {
                                 Button("取消") { cancelSearch() }
                                     .frame(width: 44)
                                     .accessibilityLabel("取消搜索")
@@ -120,12 +119,19 @@ struct SearchScreen: View {
         // 顶部滚动边缘：渐进模糊（.soft）。
         .scrollEdgeEffectStyle(.soft, for: .top)
         .scrollDismissesKeyboard(.immediately)
+        .onChange(of: isInputFocused) { wasFocused, isFocused in
+            if isFocused, !wasFocused {
+                inputBeforeEditing = input
+            } else if !isFocused {
+                inputBeforeEditing = nil
+            }
+        }
         .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
-        // 宽档：取消住导航栏右端，只在激活态出现，清空并退出搜索（Colo 6801）。
+        // 宽档：取消只在编辑输入时出现；点下去撤销本轮编辑并收键盘。
         .toolbar {
-            if !isShortTier && (isInputFocused || hasSearched) {
+            if !isShortTier && isInputFocused {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("取消") { cancelSearch() }
                 }

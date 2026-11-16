@@ -22,6 +22,8 @@ enum BangumiEndpoints {
 
     /// 番剧信息（next 版本带 info 与 metaTags）。
     static let infoByIDNext = "/p1/subjects/{0}"
+    /// 番剧信息（v0 版本支持 Bearer Token 读取受限条目）。
+    static let infoByIDV0 = "/v0/subjects/{0}"
     /// 条目搜索（支持 rank 排序与过滤器）。
     static let rankSearch = "/v0/search/subjects?limit={0}&offset={1}"
     /// 每日放送。
@@ -106,6 +108,78 @@ enum BangumiAPI {
     /// 代理变了就重建，见 `ProxyAwareURLSession`。
     private static var session: URLSession { sessionProvider.session }
 
+    /// 主动搜索解析到的受限条目。锁里只放 ID，不把模型扩成全局 `nsfw` 字段。
+    private static let nsfwSubjectIDs = OSAllocatedUnfairLock(initialState: Set<Int>())
+    private static let searchIncludesNSFWBox = OSAllocatedUnfairLock(initialState: false)
+
+    static var searchIncludesNSFW: Bool {
+        get { searchIncludesNSFWBox.withLock { $0 } }
+        set { searchIncludesNSFWBox.withLock { $0 = newValue } }
+    }
+
+    private static var hasAccessToken: Bool { accessToken != nil }
+
+    private static func markNSFW(_ id: Int) {
+        guard id > 0 else { return }
+        nsfwSubjectIDs.withLock { $0.insert(id) }
+    }
+
+    private static func isNSFW(_ id: Int) -> Bool {
+        nsfwSubjectIDs.withLock { $0.contains(id) }
+    }
+
+    /// 普通条目保持匿名请求；已知受限条目，或匿名 404 时，再用 Token 重试。
+    private static func getForSubject(
+        _ url: String,
+        subjectID: Int,
+        query: [URLQueryItem] = []
+    ) async throws -> JSONValue {
+        if isNSFW(subjectID), hasAccessToken {
+            do {
+                return try await get(url, query: query, requiresAuth: true)
+            } catch let error as NetworkError {
+                guard case let .badResponse(status, _, _) = error,
+                      status == 401 || status == 403 else { throw error }
+                return try await get(url, query: query)
+            }
+        }
+        do {
+            return try await get(url, query: query)
+        } catch let error as NetworkError {
+            guard case let .badResponse(status, _, _) = error,
+                  status == 404,
+                  hasAccessToken else { throw error }
+            return try await get(url, query: query, requiresAuth: true)
+        }
+    }
+
+    /// `name_cn` 为空时，国创条目的原名本身可能就是中文；这种不能误删。
+    static func hasChineseName(_ json: JSONValue) -> Bool {
+        let snake = json["name_cn"].stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let camel = json["nameCN"].stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !snake.isEmpty || !camel.isEmpty { return true }
+        let original = json["name"].stringValue ?? ""
+        let scalars = original.unicodeScalars
+        let hasJapaneseKana = scalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x30FF, 0x31F0...0x31FF, 0xFF66...0xFF9D:
+                return true
+            default:
+                return false
+            }
+        }
+        guard !hasJapaneseKana else { return false }
+        return scalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF,
+                 0x20000...0x2FA1F:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     // MARK: - 每日放送
 
     /// 对应 getCalendar：返回 7 天的番剧，下标 0 为周一。
@@ -120,8 +194,9 @@ enum BangumiAPI {
                 // 存原始条目（含 `subject` 那一层），读回来走同一套解析。
                 rawDays.append(.array(list))
                 result.append(list.compactMap { entry in
-                    guard !entry["subject"].isNull else { return nil }
-                    return BangumiItem.fromJSON(entry["subject"])
+                    let subject = entry["subject"]
+                    guard !subject.isNull, hasChineseName(subject) else { return nil }
+                    return BangumiItem.fromJSON(subject)
                 })
             }
             // 列表里已经拿到的条目记进缓存：点进详情页时先有内容可画。
@@ -148,8 +223,9 @@ enum BangumiAPI {
         return rawDays.map { day in
             guard case let .array(list) = day else { return [] }
             return list.compactMap { entry in
-                guard !entry["subject"].isNull else { return nil }
-                return BangumiItem.fromJSON(entry["subject"])
+                let subject = entry["subject"]
+                guard !subject.isNull, hasChineseName(subject) else { return nil }
+                return BangumiItem.fromJSON(subject)
             }
         }
     }
@@ -283,15 +359,19 @@ enum BangumiAPI {
         rankFilter: [String]? = nil,
         airDateRange: [String]? = nil,
         scoreFilter: [String]? = nil,
-        weekdays: [Int] = []
+        weekdays: [Int] = [],
+        includeNSFW: Bool = false
     ) -> JSONValue {
         let rank = rankFilter ?? (sort == "rank" ? [">0", "<=99999"] : [">=0", "<=99999"])
         var filter: [String: JSONValue] = [
             "type": .array([JSONValue.int(2)]),
             "tag": .array(tags.map { JSONValue.string($0) }),
             "rank": .array(rank.map { JSONValue.string($0) }),
-            "nsfw": .bool(false),
         ]
+        // Bangumi v0：省略 nsfw 才是全年龄 + 受限条目；true 会变成只看受限条目。
+        if !includeNSFW {
+            filter["nsfw"] = .bool(false)
+        }
         if let airDateRange, airDateRange.count == 2 {
             filter["air_date"] = .array([
                 JSONValue.string(">=\(airDateRange[0])"),
@@ -324,6 +404,7 @@ enum BangumiAPI {
         scoreFilter: [String]? = nil,
         weekdays: [Int] = []
     ) async -> BangumiSearchPage? {
+        let useAuth = searchIncludesNSFW && hasAccessToken
         let params = searchParams(
             keyword: keyword,
             tags: tags,
@@ -331,22 +412,43 @@ enum BangumiAPI {
             rankFilter: rankFilter,
             airDateRange: airDateRange,
             scoreFilter: scoreFilter,
-            weekdays: weekdays
+            weekdays: weekdays,
+            includeNSFW: useAuth
         )
         do {
             let url = BangumiEndpoints.format(
                 BangumiEndpoints.apiDomain + BangumiEndpoints.rankSearch,
                 [limit, offset]
             )
-            let json = try await post(url, body: params)
+            let json: JSONValue
+            do {
+                json = try await post(url, body: params, requiresAuth: useAuth)
+            } catch let error as NetworkError {
+                guard useAuth,
+                      case let .badResponse(status, _, _) = error,
+                      status == 401 || status == 403 else { throw error }
+                // Token 过期不能把普通搜索也拖死：退回匿名参数与匿名请求。
+                let anonymousParams = searchParams(
+                    keyword: keyword,
+                    tags: tags,
+                    sort: sort,
+                    rankFilter: rankFilter,
+                    airDateRange: airDateRange,
+                    scoreFilter: scoreFilter,
+                    weekdays: weekdays
+                )
+                json = try await post(url, body: anonymousParams)
+            }
             let raw = json["data"].arrayValue ?? []
             var items: [BangumiItem] = []
             for entry in raw {
+                // 不改 BangumiItem 的模型：直接用原始 JSON 判断真实的中文名和 NSFW 标记。
+                guard hasChineseName(entry) else { continue }
                 let item = BangumiItem.fromJSON(entry)
-                // 与原实现一致：没有中文名的条目直接丢弃（通常是同人 / 非正式条目）。
-                if !item.nameCn.isEmpty {
-                    items.append(item)
+                if entry["nsfw"].boolValue == true {
+                    markNSFW(item.id)
                 }
+                items.append(item)
             }
             await BangumiSubjectCache.shared.remember(items)
             return BangumiSearchPage(items: items, rawCount: raw.count)
@@ -356,24 +458,49 @@ enum BangumiAPI {
         }
     }
 
-    /// 对应 getBangumiInfoByID：详情走 next 域，带 info 与 metaTags。
+    /// 普通条目优先走匿名 next 接口；受限条目用 Token 走 v0。
     static func info(id: Int) async -> BangumiItem? {
+        let nextURL = BangumiEndpoints.format(
+            BangumiEndpoints.apiNextDomain + BangumiEndpoints.infoByIDNext,
+            [id]
+        )
+        let v0URL = BangumiEndpoints.format(
+            BangumiEndpoints.apiDomain + BangumiEndpoints.infoByIDV0,
+            [id]
+        )
         do {
-            let url = BangumiEndpoints.format(
-                BangumiEndpoints.apiNextDomain + BangumiEndpoints.infoByIDNext,
-                [id]
-            )
-            let json = try await get(url)
+            let json: JSONValue
+            var usedV0 = false
+            if isNSFW(id), hasAccessToken {
+                do {
+                    json = try await get(v0URL, requiresAuth: true)
+                    usedV0 = true
+                } catch let error as NetworkError {
+                    guard case let .badResponse(status, _, _) = error,
+                          status == 401 || status == 403 else { throw error }
+                    json = try await get(nextURL)
+                }
+            } else {
+                do {
+                    json = try await get(nextURL)
+                } catch let error as NetworkError {
+                    guard case let .badResponse(status, _, _) = error,
+                          status == 404,
+                          hasAccessToken else { throw error }
+                    json = try await get(v0URL, requiresAuth: true)
+                    usedV0 = true
+                }
+            }
+            if json["nsfw"].boolValue == true { markNSFW(id) }
             let item = BangumiItem.fromJSON(json)
-            // 没标题的响应当失败处理，不落盘（LP 2997）：
-            // 镜像偶尔会回一个缺字段的壳，存下来之后详情页会一整天显示
-            // 「未知」加一张没封面、没简介的空页，而缓存又算「有数据」，不再去拉。
             guard !item.displayName.isEmpty else {
                 KazumiLog.network.error("Resolve bangumi item returned no title for id \(id, privacy: .public)")
                 return nil
             }
-            // 拉到的完整条目落盘：下次进详情页先拿它铺页面，不用再转圈等。
-            await BangumiSubjectCache.shared.store(info: json, for: id)
+            // v0 详情缺少 next 的 info/metaTags，不把半份数据写进完整详情缓存。
+            if !usedV0 {
+                await BangumiSubjectCache.shared.store(info: json, for: id)
+            }
             return item
         } catch {
             KazumiLog.network.error("Resolve bangumi item failed: \(error.localizedDescription, privacy: .public)")
@@ -390,7 +517,7 @@ enum BangumiAPI {
                 BangumiEndpoints.apiDomain + BangumiEndpoints.relations,
                 [subjectID]
             )
-            let json = try await get(url)
+            let json = try await getForSubject(url, subjectID: subjectID)
             return (json.arrayValue ?? []).compactMap(BangumiRelationItem.fromJSON)
         } catch {
             KazumiLog.network.error("Resolve bangumi relations failed: \(error.localizedDescription, privacy: .public)")
@@ -405,7 +532,7 @@ enum BangumiAPI {
                 BangumiEndpoints.apiDomain + BangumiEndpoints.characters,
                 [subjectID]
             )
-            let json = try await get(url)
+            let json = try await getForSubject(url, subjectID: subjectID)
             return (json.arrayValue ?? []).map(BangumiCharacterItem.fromJSON)
         } catch {
             KazumiLog.network.error("Resolve bangumi characters failed: \(error.localizedDescription, privacy: .public)")
@@ -420,7 +547,7 @@ enum BangumiAPI {
                 BangumiEndpoints.apiDomain + BangumiEndpoints.staff,
                 [subjectID]
             )
-            let json = try await get(url)
+            let json = try await getForSubject(url, subjectID: subjectID)
             return BangumiStaffItem.merge(json.arrayValue ?? [])
         } catch {
             KazumiLog.network.error("Resolve bangumi staff failed: \(error.localizedDescription, privacy: .public)")
@@ -450,11 +577,14 @@ enum BangumiAPI {
     /// 对应 `getBangumiEpisodeByID`：取某条番某话在 Bangumi 上的 episodeId。
     /// 失败时返回 nil，调用方就退回整部番的吐槽。
     static func episodeID(subjectID: Int, episode: Int) async -> Int? {
-        // /v0/episodes?subject_id=xxx&offset=n&limit=1，对应 EpisodeInfo.fromJson
         let url = BangumiEndpoints.apiDomain + BangumiEndpoints.episodes
-            + "?subject_id=\(subjectID)&offset=\(max(0, episode - 1))&limit=1"
+        let query = [
+            URLQueryItem(name: "subject_id", value: "\(subjectID)"),
+            URLQueryItem(name: "offset", value: "\(max(0, episode - 1))"),
+            URLQueryItem(name: "limit", value: "1"),
+        ]
         do {
-            let json = try await get(url)
+            let json = try await getForSubject(url, subjectID: subjectID, query: query)
             if let list = json["data"].arrayValue, let first = list.first {
                 return first["id"].intValue
             }
@@ -532,8 +662,9 @@ enum BangumiAPI {
         var total: Int?
         repeat {
             do {
-                let json = try await get(
+                let json = try await getForSubject(
                     BangumiEndpoints.apiDomain + BangumiEndpoints.episodes,
+                    subjectID: subjectID,
                     query: [
                         URLQueryItem(name: "subject_id", value: "\(subjectID)"),
                         URLQueryItem(name: "offset", value: "\(offset)"),
@@ -569,8 +700,8 @@ enum BangumiAPI {
             "type": .array([JSONValue.int(2)]),
             "tag": .array([JSONValue.string("日本")]),
             "rank": .array([JSONValue.string(">0"), JSONValue.string("<=99999")]),
-            // 原实现这里允许 NSFW，保证季度表完整。
-            "nsfw": .bool(true),
+            // 只有用户主动搜索才放开；时间表保持匿名并排除 NSFW。
+            "nsfw": .bool(false),
         ]
         if dateRange.count == 2 {
             filter["air_date"] = .array([
@@ -589,7 +720,10 @@ enum BangumiAPI {
                 [limit, offset]
             )
             let json = try await post(url, body: body)
-            items = (json["data"].arrayValue ?? []).map(BangumiItem.fromJSON)
+            items = (json["data"].arrayValue ?? []).compactMap { entry in
+                guard hasChineseName(entry) else { return nil }
+                return BangumiItem.fromJSON(entry)
+            }
         } catch {
             KazumiLog.network.error("Resolve season calendar failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -611,8 +745,9 @@ enum BangumiAPI {
             let json = try await get(BangumiEndpoints.mirrorDomain + path)
             return (1...7).map { day in
                 (json["\(day)"].arrayValue ?? []).compactMap { entry in
-                    guard !entry["subject"].isNull else { return nil }
-                    return BangumiItem.fromJSON(entry["subject"])
+                    let subject = entry["subject"]
+                    guard !subject.isNull, hasChineseName(subject) else { return nil }
+                    return BangumiItem.fromJSON(subject)
                 }
             }
         } catch {

@@ -1,6 +1,10 @@
 {
   "sourceLanguage":"zh-Hans",
   "strings":{"弹幕检索":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"彈幕檢索"}}}},
+    "搜索结果显示 NSFW":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"搜尋結果顯示 NSFW"}}}},
+    "开启后主动搜索会使用 Bangumi Token，并显示受限条目":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"開啟後主動搜尋會使用 Bangumi Token，並顯示受限條目"}}}},
+    "截图写入番剧关键词":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"截圖寫入番劇關鍵詞"}}}},
+    "保存截图时写入番剧名、集数和播放时刻三个图片关键词。":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"儲存截圖時寫入番劇名、集數和播放時刻三個圖片關鍵詞。"}}}},
     "发现新版本":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"發現新版本"}}}},
     "前往下载":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"前往下載"}}}},
     "跳过此版本 %@":{"localizations":{"zh-Hant":{"stringUnit":{"state":"translated","value":"跳過此版本 %@"}}}},
