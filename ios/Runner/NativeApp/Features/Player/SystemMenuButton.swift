@@ -34,11 +34,19 @@ struct SystemMenuButton: UIViewRepresentable {
     var accessibilityLabel: String
     var tint: Color = .white
     var showsChevron: Bool = false
+    var chevronPointSize: CGFloat = 12
     var menuTint: Color = .primary
     var symbolSize: CGFloat = 18
     var symbolWeight: Font.Weight = .medium
     /// 实心块状 / 圆形轮廓的符号在 UIKit 侧没法用 scaleEffect，按 0.9pt 轻微缩一档。
     var symbolOptical: PlayerIconOptical = .standard
+    /// 复杂多笔触符号（`wand.and.stars` / `speedometer`）启用 `.hierarchical` 防星点与刻度粘连。
+    var hierarchicalSymbol: Bool = false
+    var hitSize: CGFloat = 40
+    var minimumHeight: CGFloat = 0
+    var customFont: UIFont? = nil
+    var capsuleBackgroundColor: UIColor? = nil
+    var customContentInsets: NSDirectionalEdgeInsets? = nil
     var onOpen: () -> Void = {}
     var capsule: Bool = false
 
@@ -75,13 +83,14 @@ struct SystemMenuButton: UIViewRepresentable {
         context: Context
     ) -> CGSize? {
         let intrinsic = uiView.intrinsicContentSize
-        let minimum: CGFloat = title == nil ? 40 : 0
-        guard intrinsic.width > 0 || minimum > 0,
-              intrinsic.height > 0 || minimum > 0
+        let minimumW: CGFloat = title == nil ? hitSize : 0
+        let minimumH: CGFloat = title == nil ? hitSize : minimumHeight
+        guard intrinsic.width > 0 || minimumW > 0,
+              intrinsic.height > 0 || minimumH > 0
         else { return nil }
 
-        var width = max(minimum, intrinsic.width)
-        var height = max(minimum, intrinsic.height)
+        var width = max(minimumW, intrinsic.width)
+        var height = max(minimumH, intrinsic.height)
         if let proposed = proposal.width, proposed.isFinite, proposed > 0 {
             width = min(width, proposed)
         }
@@ -135,9 +144,14 @@ struct SystemMenuButton: UIViewRepresentable {
             String(describing: effectiveSymbolSize),
             String(describing: symbolWeight),
             String(describing: symbolOptical),
+            String(hierarchicalSymbol),
             String(showsChevron),
+            String(describing: chevronPointSize),
             String(capsule),
             String(describing: tintColor),
+            String(describing: customFont),
+            String(describing: capsuleBackgroundColor),
+            String(describing: customContentInsets),
         ].joined(separator: "|")
 
         if appearanceSignature != coordinator.appearanceSignature {
@@ -146,39 +160,52 @@ struct SystemMenuButton: UIViewRepresentable {
                 var configuration = UIButton.Configuration.plain()
                 configuration.title = title
                 configuration.baseForegroundColor = tintColor
-                configuration.contentInsets = capsule
-                    // 胶囊上下各 7：原来上下 0 只有字高那么薄（约 18，LP 7364）；
-                    // 先改 6 量出 30，比右边下载胶囊的 32 还差 2，再补到 7 对齐（LP 量高度）。
-                    ? NSDirectionalEdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
-                    : .zero
+                configuration.titleLineBreakMode = .byTruncatingTail
+                if let customContentInsets {
+                    configuration.contentInsets = customContentInsets
+                } else {
+                    configuration.contentInsets = capsule
+                        // 胶囊上下各 7：原来上下 0 只有字高那么薄（约 18，LP 7364）；
+                        // 先改 6 量出 30，比右边下载胶囊的 32 还差 2，再补到 7 对齐（LP 量高度）。
+                        ? NSDirectionalEdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
+                        : .zero
+                }
                 if showsChevron {
                     configuration.image = UIImage(
                         systemName: "chevron.down",
-                        withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+                        withConfiguration: UIImage.SymbolConfiguration(pointSize: chevronPointSize, weight: .semibold)
                     )
                     configuration.imagePlacement = .trailing
-                    configuration.imagePadding = 6
+                    configuration.imagePadding = 5
                 }
                 if capsule {
-                    configuration.background.backgroundColor = .secondarySystemBackground
+                    configuration.background.backgroundColor = capsuleBackgroundColor ?? .secondarySystemBackground
                     configuration.cornerStyle = .capsule
                 }
+                let fontOverride = customFont
                 configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
                     var outgoing = incoming
-                    outgoing.font = .preferredFont(forTextStyle: .subheadline)
+                    outgoing.font = fontOverride ?? .preferredFont(forTextStyle: .subheadline)
                     return outgoing
                 }
                 button.configuration = configuration
             } else {
                 button.configuration = nil
                 button.setTitle(nil, for: .normal)
+                var symbolConfig = UIImage.SymbolConfiguration(
+                    pointSize: effectiveSymbolSize,
+                    weight: Self.uiWeight(symbolWeight),
+                    scale: .medium
+                )
+                if hierarchicalSymbol {
+                    symbolConfig = symbolConfig.applying(
+                        UIImage.SymbolConfiguration(hierarchicalColor: tintColor)
+                    )
+                }
                 button.setImage(
                     UIImage(
                         systemName: symbol,
-                        withConfiguration: UIImage.SymbolConfiguration(
-                            pointSize: effectiveSymbolSize,
-                            weight: Self.uiWeight(symbolWeight)
-                        )
+                        withConfiguration: symbolConfig
                     ),
                     for: .normal
                 )
@@ -327,7 +354,7 @@ struct SwiftSelectionMenuButton: View {
                     .lineLimit(1)
                 if showsChevron {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                 }
             }
             .foregroundStyle(tint)

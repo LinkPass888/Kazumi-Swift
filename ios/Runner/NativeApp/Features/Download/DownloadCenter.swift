@@ -141,9 +141,11 @@ final class DownloadCenter {
                 // 暂停/取消过的集重新入队时，要把「取消之后才轮到」的标记清掉：
                 // 不清的话 pump() 出队时会把它当已取消跳过，界面永远停在排队中。
                 cancelledBeforeStart.remove("\(key)#\(item.number)")
+                if existing.status != .paused {
+                    record.episodes[index].progress = 0
+                }
                 record.episodes[index].status = .pending
                 record.episodes[index].errorMessage = nil
-                record.episodes[index].progress = 0
             } else {
                 record.episodes.append(DownloadEpisode(
                     number: item.number,
@@ -164,6 +166,106 @@ final class DownloadCenter {
         pump()
     }
 
+    /// 是否存在可开始或恢复的下载任务（已暂停、失败、丢失文件或尚未激活的排队项）。
+    var hasStartableEpisodes: Bool {
+        for record in records {
+            let active = activeNumbers[record.id] ?? []
+            let queued = queuedNumbers(recordKey: record.id)
+            for episode in record.episodes {
+                switch episode.status {
+                case .paused, .failed:
+                    return true
+                case .completed where episode.fileName == nil:
+                    return true
+                case .pending where !active.contains(episode.number) && !queued.contains(episode.number):
+                    return true
+                default:
+                    break
+                }
+            }
+        }
+        return false
+    }
+
+    /// 是否存在正在进行或排队中的下载任务（供「全部暂停」判可用状态）。
+    var hasActiveEpisodes: Bool {
+        if !queue.isEmpty { return true }
+        return records.contains { record in
+            record.episodes.contains { $0.status.isActive }
+        }
+    }
+
+    /// 全部开始：恢复并排队所有已暂停、失败或等待中的下载任务。
+    func startAll() {
+        var didChange = false
+        for record in records {
+            let active = activeNumbers[record.id] ?? []
+            let queued = queuedNumbers(recordKey: record.id)
+            var toEnqueue: [(number: Int, title: String, pageURL: String)] = []
+
+            for episode in record.episodes {
+                switch episode.status {
+                case .paused, .failed:
+                    toEnqueue.append((episode.number, episode.title, episode.pageURL))
+                case .completed where episode.fileName == nil:
+                    toEnqueue.append((episode.number, episode.title, episode.pageURL))
+                case .pending where !active.contains(episode.number) && !queued.contains(episode.number):
+                    let item = QueueItem(recordKey: record.id, episodeNumber: episode.number)
+                    cancelledBeforeStart.remove(item.id)
+                    queue.append(item)
+                    didChange = true
+                default:
+                    break
+                }
+            }
+
+            if !toEnqueue.isEmpty {
+                enqueue(
+                    bangumiID: record.bangumiID,
+                    title: record.title,
+                    coverURL: record.coverURL,
+                    pluginName: record.pluginName,
+                    road: record.road,
+                    itemSource: record.itemSource,
+                    episodes: toEnqueue
+                )
+            }
+        }
+        if didChange {
+            persist()
+        }
+        pump()
+    }
+
+    /// 全部暂停：清空等待队列并暂停所有正在解析或下载中的任务（不触发队列补位）。
+    func pauseAll() {
+        for item in queue {
+            cancelledBeforeStart.insert(item.id)
+        }
+        queue.removeAll()
+
+        for flag in cancellationFlags.values {
+            flag.cancel()
+        }
+
+        var modified = false
+        for recordIndex in records.indices {
+            var episodes = records[recordIndex].episodes
+            var recordChanged = false
+            for index in episodes.indices where episodes[index].status.isActive {
+                episodes[index].status = .paused
+                recordChanged = true
+            }
+            if recordChanged {
+                records[recordIndex].episodes = episodes
+                modified = true
+            }
+        }
+        if modified {
+            persist()
+        }
+    }
+
     /// 取消。正在下的会停掉，排队的直接拿掉；已下完的不动。
     func cancel(recordKey: String, numbers: [Int]) {
         let targets = Set(numbers)
@@ -181,7 +283,6 @@ final class DownloadCenter {
             guard let index = episodes.firstIndex(where: { $0.number == number }) else { return }
             if episodes[index].status.isActive {
                 episodes[index].status = .paused
-                episodes[index].progress = 0
             }
         }
         persist()
@@ -388,7 +489,6 @@ final class DownloadCenter {
             if wasCancelled {
                 update(item) { episode in
                     episode.status = .paused
-                    episode.progress = 0
                 }
             } else {
                 update(item) { episode in

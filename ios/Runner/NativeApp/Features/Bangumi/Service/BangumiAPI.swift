@@ -121,7 +121,7 @@ enum BangumiAPI {
 
     private static func markNSFW(_ id: Int) {
         guard id > 0 else { return }
-        nsfwSubjectIDs.withLock { $0.insert(id) }
+        _ = nsfwSubjectIDs.withLock { $0.insert(id) }
     }
 
     private static func isNSFW(_ id: Int) -> Bool {
@@ -732,7 +732,89 @@ enum BangumiAPI {
         }
     }
 
-    /// 对应 getBangumiMirrorSeasonCalendar：镜像按 start / end 返回 7 天分组。
+    /// 整季日历（官方搜索 4 页并发）：按页序合并为 7 天桶并写入 `TimelineCache.storeSeason`。
+    static func seasonCalendarBySearch(start: String, end: String) async -> [[BangumiItem]] {
+        let pageCount = 4
+        let limit = 20
+        let pages = await withTaskGroup(
+            of: (page: Int, entries: [JSONValue]).self,
+            returning: [[JSONValue]].self
+        ) { group in
+            for page in 0..<pageCount {
+                group.addTask {
+                    let entries = await calendarSearchRawPage(
+                        dateRange: [start, end],
+                        limit: limit,
+                        offset: page * limit
+                    )
+                    return (page, entries)
+                }
+            }
+            var ordered = Array(repeating: [JSONValue](), count: pageCount)
+            for await (page, entries) in group where ordered.indices.contains(page) {
+                ordered[page] = entries
+            }
+            return ordered
+        }
+
+        var result: [[BangumiItem]] = Array(repeating: [], count: 7)
+        var rawBuckets: [[JSONValue]] = Array(repeating: [], count: 7)
+        for pageEntries in pages {
+            if pageEntries.isEmpty { break }
+            for entry in pageEntries where hasChineseName(entry) {
+                let item = BangumiItem.fromJSON(entry)
+                guard item.id > 0 else { continue }
+                let dayIndex = max(1, min(7, item.airWeekday)) - 1
+                result[dayIndex].append(item)
+                rawBuckets[dayIndex].append(.object(["subject": entry]))
+            }
+        }
+        if !result.allSatisfy(\.isEmpty) {
+            await BangumiSubjectCache.shared.remember(result.flatMap { $0 })
+            await TimelineCache.shared.storeSeason(
+                rawDays: rawBuckets.map { .array($0) },
+                start: start
+            )
+        }
+        return result
+    }
+
+    private static func calendarSearchRawPage(
+        dateRange: [String],
+        limit: Int,
+        offset: Int
+    ) async -> [JSONValue] {
+        var filter: [String: JSONValue] = [
+            "type": .array([JSONValue.int(2)]),
+            "tag": .array([JSONValue.string("日本")]),
+            "rank": .array([JSONValue.string(">0"), JSONValue.string("<=99999")]),
+            "nsfw": .bool(false),
+        ]
+        if dateRange.count == 2 {
+            filter["air_date"] = .array([
+                JSONValue.string(">=\(dateRange[0])"),
+                JSONValue.string("<\(dateRange[1])"),
+            ])
+        }
+        let body: JSONValue = .object([
+            "keyword": .string(""),
+            "sort": .string("rank"),
+            "filter": .object(filter),
+        ])
+        do {
+            let url = BangumiEndpoints.format(
+                BangumiEndpoints.apiDomain + BangumiEndpoints.rankSearch,
+                [limit, offset]
+            )
+            let json = try await post(url, body: body)
+            return json["data"].arrayValue ?? []
+        } catch {
+            KazumiLog.network.error("Resolve season calendar failed: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
+    /// 对应 getBangumiMirrorSeasonCalendar：镜像按 start / end 返回 7 天分组，并写入 `TimelineCache`。
     static func mirrorSeasonCalendar(start: String, end: String) async -> [[BangumiItem]] {
         do {
             var components = URLComponents()
@@ -743,13 +825,22 @@ enum BangumiAPI {
             ]
             let path = components.string ?? BangumiEndpoints.mirrorSeasonCalendar
             let json = try await get(BangumiEndpoints.mirrorDomain + path)
-            return (1...7).map { day in
-                (json["\(day)"].arrayValue ?? []).compactMap { entry in
+            var rawDays: [JSONValue] = []
+            var result: [[BangumiItem]] = []
+            for day in 1...7 {
+                let list = json["\(day)"].arrayValue ?? []
+                rawDays.append(.array(list))
+                result.append(list.compactMap { entry in
                     let subject = entry["subject"]
                     guard !subject.isNull, hasChineseName(subject) else { return nil }
                     return BangumiItem.fromJSON(subject)
-                }
+                })
             }
+            if !result.allSatisfy(\.isEmpty) {
+                await BangumiSubjectCache.shared.remember(result.flatMap { $0 })
+                await TimelineCache.shared.storeSeason(rawDays: rawDays, start: start)
+            }
+            return result
         } catch {
             KazumiLog.network.error("Resolve mirror season calendar failed: \(error.localizedDescription, privacy: .public)")
             return []

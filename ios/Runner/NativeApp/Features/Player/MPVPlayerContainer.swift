@@ -16,7 +16,7 @@ import UIKit
 // MARK: - 画面
 
 /// 画面 + 弹幕叠在一起的那块 UIView。
-final class MPVHostView: UIView {
+final class MPVHostView: UIView, UIPointerInteractionDelegate {
     let metalView = MPVMetalView()
     let overlay = DanmakuOverlayView()
     weak var engine: MPVEngine?
@@ -27,6 +27,8 @@ final class MPVHostView: UIView {
     private var lastLayoutSize: CGSize = .zero
     private var fillMode: MPVPlayerContainer.MPVFillMode = .fit
     private var danmakuTopInset: CGFloat = 0
+    private var hidesPointer = false
+    private lazy var pointerInteraction = UIPointerInteraction(delegate: self)
 
     private var overlayLeading: NSLayoutConstraint!
     private var overlayTop: NSLayoutConstraint!
@@ -36,6 +38,7 @@ final class MPVHostView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
+        addInteraction(pointerInteraction)
         metalView.translatesAutoresizingMaskIntoConstraints = false
         overlay.translatesAutoresizingMaskIntoConstraints = false
         addSubview(metalView)
@@ -90,6 +93,19 @@ final class MPVHostView: UIView {
         }
     }
 
+    func updatePointerHidden(_ hidden: Bool) {
+        guard hidden != hidesPointer else { return }
+        hidesPointer = hidden
+        pointerInteraction.invalidate()
+    }
+
+    func pointerInteraction(
+        _ interaction: UIPointerInteraction,
+        styleFor region: UIPointerRegion
+    ) -> UIPointerStyle? {
+        hidesPointer ? .hidden() : nil
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         // 尺寸一变就同步 CAMetalLayer.drawableSize（LP 2026-10-28 第 5 条）。
@@ -105,9 +121,9 @@ final class MPVHostView: UIView {
             }
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
-        // 顶部让出控制栏（横屏 44pt），底部仍留 20% 给字幕：
-        // 弹幕区 = 视频上方 80% 再往上收掉顶部留白。
-        let inset = max(0, danmakuTopInset)
+        // 顶部按宿主视图坐标系内顶栏实际侵入视频矩形的深度（`max(0, danmakuTopInset - rect.minY)`）扣减；
+        // 控制栏隐藏或顶栏落在视频上方黑边内时侵入量为 0，底部仍留 20% 给字幕。
+        let inset = max(0, danmakuTopInset - rect.minY)
         let top = rect.minY + inset
         let height = max(0, rect.height * 0.8 - inset)
         // 只在数值变了才改约束，避免 layoutSubviews 里反复触发布局。
@@ -137,13 +153,17 @@ struct MPVPlayerContainer: UIViewRepresentable {
     let danmaku: [DanmakuComment]
     let danmakuStyle: DanmakuOverlayView.Style
     let danmakuPlaybackRate: Double
-    /// 弹幕顶部留白：横屏时让开顶栏，竖屏为 0。
+    /// 弹幕顶部留白：传入当前 `MPVHostView` 坐标系下顶栏下缘位置，仅在实际侵入视频区域时扣减。
     let danmakuTopInset: CGFloat
+    /// 桌面端播放中指针静默隐藏状态。
+    var hidesPointer: Bool = false
     /// 低内存模式的档位（设置页选的那一档，LP 5547 / main 的 `LowMemoryMode`）。
     let lowMemoryMode: LowMemoryMode
     /// 硬件解码开关（LP 5549）。
     let hardwareDecodeEnabled: Bool
     let hardwareDecodeMode: HardwareDecodeMode
+    /// 后台自动画中画开关：开启时内核固定使用可复制硬解帧，关闭时允许零拷贝直通。
+    var backgroundAutoPiP: Bool = false
     let surface: PlayerSurfaceModel
 
     /// 按档位和当前网络算出这一集该给的缓存字节数。
@@ -177,6 +197,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
         engine.applyCacheSize(cacheSizeForPolicy())
         engine.hardwareDecodeEnabled = hardwareDecodeEnabled
         engine.hardwareDecodeMode = hardwareDecodeMode
+        engine.backgroundAutoPiPEnabled = backgroundAutoPiP
         // 播到一半 Wi-Fi 换成移动数据（或反过来）时，缓存档位要跟着换，不用重开这一集。
         // 「跟随网络」这一档在两种网络下取的值不一样，靠这个回调补上。
         MeteredNetworkMonitor.shared.onChange = { [engine, mode = lowMemoryMode, isLocal = url.isFileURL] in
@@ -220,6 +241,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
             fillMode: fillMode,
             danmakuTopInset: danmakuTopInset
         )
+        host.updatePointerHidden(hidesPointer)
         context.coordinator.apply(
             url: url,
             referer: referer,
@@ -245,6 +267,7 @@ struct MPVPlayerContainer: UIViewRepresentable {
             fillMode: fillMode,
             danmakuTopInset: danmakuTopInset
         )
+        uiView.updatePointerHidden(hidesPointer)
         context.coordinator.apply(
             url: url,
             referer: referer,

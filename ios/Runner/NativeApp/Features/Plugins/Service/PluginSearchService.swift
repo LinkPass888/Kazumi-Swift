@@ -77,6 +77,8 @@ final class PluginSearchService {
     /// 规则里的站点常常干脆不回（超时、被墙、挑战页不返回），只靠 URLSession
     /// 的超时不够：它管的是「没数据流动」，挑战页/慢速回传可以一直吊着。
     private static let sourceTimeout: TimeInterval = 15
+    /// 全源检索并发上限：避免安装数十条规则时瞬时发起连接风暴与主线程刷新抖动。
+    private static let maxConcurrentSearches = 6
 
     init(plugins: PluginsController, engine: RuleEngine = RuleEngine()) {
         self.plugins = plugins
@@ -118,15 +120,39 @@ final class PluginSearchService {
         responses.removeAll()
         statuses.removeAll()
         resetCancelTokenIfNeeded()
+        let token = cancelToken
         let snapshot = plugins.pluginList
         for plugin in snapshot {
             statuses[plugin.name] = .pending
         }
         await withTaskGroup(of: Void.self) { group in
-            for plugin in snapshot {
-                // 子任务只捕获 Sendable 的 Plugin，主 actor 上的状态更新留在 queryPlugin 内完成。
+            var nextIndex = 0
+            var inFlight = 0
+
+            while nextIndex < snapshot.count,
+                  inFlight < Self.maxConcurrentSearches,
+                  !token.isCancelled,
+                  generation == self.searchGeneration {
+                let plugin = snapshot[nextIndex]
+                nextIndex += 1
+                inFlight += 1
                 group.addTask {
                     await self.queryPlugin(plugin, keyword: keyword, generation: generation)
+                }
+            }
+
+            while inFlight > 0 {
+                await group.next()
+                inFlight -= 1
+                if nextIndex < snapshot.count,
+                   !token.isCancelled,
+                   generation == self.searchGeneration {
+                    let plugin = snapshot[nextIndex]
+                    nextIndex += 1
+                    inFlight += 1
+                    group.addTask {
+                        await self.queryPlugin(plugin, keyword: keyword, generation: generation)
+                    }
                 }
             }
         }

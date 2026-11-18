@@ -31,17 +31,19 @@ final class RuleHTTPClient: RuleRequestExecutor, @unchecked Sendable {
     private var session: URLSession { sessionProvider.session }
 
     init(cookies: PluginCookieStore = .shared, configuration: URLSessionConfiguration? = nil) {
-        let config = configuration ?? URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = RuleHTTPClient.receiveTimeout
-        config.timeoutIntervalForResource = RuleHTTPClient.connectTimeout + RuleHTTPClient.receiveTimeout
-        config.httpShouldSetCookies = false
-        config.httpCookieAcceptPolicy = .never
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.httpAdditionalHeaders = [
-            "user-agent": HTTPHeaders.randomUserAgent(),
-            "accept-language": HTTPHeaders.randomAcceptLanguage()
-        ]
+        let baseConfiguration = configuration
         self.sessionProvider = ProxyAwareURLSession {
+            let config = (baseConfiguration?.copy() as? URLSessionConfiguration)
+                ?? URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForRequest = RuleHTTPClient.receiveTimeout
+            config.timeoutIntervalForResource = RuleHTTPClient.connectTimeout + RuleHTTPClient.receiveTimeout
+            config.httpShouldSetCookies = false
+            config.httpCookieAcceptPolicy = .never
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
+            config.httpAdditionalHeaders = [
+                "user-agent": HTTPHeaders.randomUserAgent(),
+                "accept-language": HTTPHeaders.randomAcceptLanguage()
+            ]
             KazumiNetworkPolicy.applyProxy(to: config)
             return config
         }
@@ -146,16 +148,50 @@ final class RuleHTTPClient: RuleRequestExecutor, @unchecked Sendable {
         return body
     }
 
-    /// 优先按响应声明的字符集解码（国内站点常有 GBK），失败再退回 UTF-8。
+    /// 优先按响应声明的字符集解码（国内站点常有 GBK/GB18030），其次尝试 UTF-8，
+    /// 再扫描 HTML 头部 `<meta charset>` 并回退 GB18030。
     private static func decodeText(_ data: Data, response: URLResponse) -> String {
-        if let text = String(data: data, encoding: .utf8) { return text }
-        if let name = response.textEncodingName {
-            let cfEncoding = CFStringConvertIANACharSetNameToEncoding(name as CFString)
-            if cfEncoding != kCFStringEncodingInvalidId {
-                let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
-                if let text = String(data: data, encoding: encoding) { return text }
-            }
+        if let name = response.textEncodingName,
+           let encoding = stringEncoding(ianaName: name),
+           let text = String(data: data, encoding: encoding) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        if let metaCharset = detectHTMLCharset(in: data),
+           let encoding = stringEncoding(ianaName: metaCharset),
+           let text = String(data: data, encoding: encoding) {
+            return text
+        }
+        let gb18030 = CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+        )
+        if let text = String(data: data, encoding: String.Encoding(rawValue: gb18030)) {
+            return text
         }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func stringEncoding(ianaName: String) -> String.Encoding? {
+        let trimmed = ianaName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let cfEncoding = CFStringConvertIANACharSetNameToEncoding(trimmed as CFString)
+        guard cfEncoding != kCFStringEncodingInvalidId else { return nil }
+        return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
+    }
+
+    private static func detectHTMLCharset(in data: Data) -> String? {
+        let prefix = data.prefix(2048)
+        guard let ascii = String(data: prefix, encoding: .isoLatin1),
+              let range = ascii.range(
+                  of: #"(?i)<meta[^>]+charset\s*=\s*["']?\s*([A-Za-z0-9_\-]+)"#,
+                  options: .regularExpression
+              ) else { return nil }
+        let matched = String(ascii[range])
+        guard let eqIndex = matched.lastIndex(of: "=") else { return nil }
+        let rawValue = matched[matched.index(after: eqIndex)...]
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \"'\t\r\n"))
+        return rawValue.isEmpty ? nil : rawValue
     }
 }

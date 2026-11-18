@@ -296,9 +296,9 @@ struct SkipSegmentPillView: View {
     private func countdownPill(kind: SkipKind) -> some View {
         pillCard {
             VStack(spacing: 10) {
-                HStack(spacing: 2) {
+                HStack(spacing: 4) {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 16, weight: .regular))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Self.foreground)
                     Text(String(localized: "即将跳过\(String(describing: kind.label))"))
                         .font(.footnote.weight(.bold))
@@ -316,9 +316,9 @@ struct SkipSegmentPillView: View {
     private func nextEpisodePill() -> some View {
         pillCard {
             VStack(spacing: 10) {
-                HStack(spacing: 2) {
+                HStack(spacing: 4) {
                     Image(systemName: "forward.end.fill")
-                        .font(.system(size: 16, weight: .regular))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Self.foreground)
                     Text("即将到结尾")
                         .font(.footnote.weight(.bold))
@@ -336,9 +336,9 @@ struct SkipSegmentPillView: View {
     private func undoPill(kind: SkipKind) -> some View {
         pillCard {
             VStack(spacing: 10) {
-                HStack(spacing: 2) {
+                HStack(spacing: 4) {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 16, weight: .regular))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Self.foreground)
                     Text(String(localized: "已跳过\(String(describing: kind.label))"))
                         .font(.footnote.weight(.bold))
@@ -365,11 +365,13 @@ struct SkipSegmentPillView: View {
                 .font(.footnote.weight(.bold))
                 .foregroundStyle(Self.foreground)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .frame(minHeight: 32)
                 .background(
                     Capsule(style: .continuous)
                         .fill(Self.foreground.opacity(prominent ? 0.22 : 0.12))
                 )
+                .frame(minHeight: 36)
+                .contentShape(Rectangle())
         }
         .buttonStyle(PlayerPressStyle())
     }
@@ -381,11 +383,11 @@ struct SkipSegmentPillView: View {
     private var countdownRing: some View {
         ZStack {
             Image(systemName: "goforward")
-                .font(.system(size: 20, weight: .regular))
+                .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(Self.foreground)
             if model.showsCountdownNumber {
                 Text("\(Int(model.countdownRemaining.rounded(.up)))")
-                    .font(.system(size: 12, weight: .regular).monospacedDigit())
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Self.foreground)
             }
         }

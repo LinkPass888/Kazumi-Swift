@@ -23,7 +23,8 @@ struct SkipSegmentSeekTargetTests {
         return model
     }
 
-    @Test func 自动跳的落点就是 aniskip 的 end() {
+    @Test("自动跳的落点就是 aniskip 的 end")
+    func autoSkipLandsAtExactEnd() {
         let model = makeModel()
         model.position = 8
         model.update()
@@ -34,7 +35,8 @@ struct SkipSegmentSeekTargetTests {
         #expect(model.consumeSeekTarget() == 102.75)
     }
 
-    @Test func 手动点跳过落点也是 end() {
+    @Test("手动点跳过落点也是 end")
+    func manualSkipLandsAtExactEnd() {
         let model = makeModel()
         model.position = 8
         model.update()
@@ -44,7 +46,8 @@ struct SkipSegmentSeekTargetTests {
         #expect(model.consumeSeekTarget() == 102.75)
     }
 
-    @Test func 撤销跳回 start() {
+    @Test("撤销跳回 start")
+    func undoReturnsToStart() {
         let model = makeModel()
         model.position = 8
         model.update()
@@ -56,7 +59,8 @@ struct SkipSegmentSeekTargetTests {
         #expect(model.consumeSeekTarget() == 12.5)
     }
 
-    @Test func 没到提前量之前不跳也不弹() {
+    @Test("没到提前量之前不跳也不弹")
+    func hidesBeforeLeadTime() {
         let model = makeModel()
         model.position = 5
         model.update()

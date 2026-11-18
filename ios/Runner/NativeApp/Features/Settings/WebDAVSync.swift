@@ -175,7 +175,7 @@ enum WebDAVSync {
                     legacyCollectMergedAt = boxModified
                 }
             }
-            entries = mergeEntries(local: library.entries, remote: entries + legacyEntries)
+            entries = mergeEntries(local: library.entries, remote: entries, legacy: legacyEntries)
 
             // 取消收藏：本机记的、云盘备份里记的、旧版变更队列里记的三处并起来，按时间判先后。
             var removals: [Int: Date] = [:]
@@ -316,13 +316,14 @@ enum WebDAVSync {
             history = mergeHistory(local: library.history, remote: history)
         }
 
-        // 落到本机：开着的那几类用合并结果，没开的原样不动。
+        // 落到本机：开着的那几类用合并结果，没开的原样不动，一次原子写盘避免连续写两次 library.json。
         let localEntries = contents.contains(.collect) ? entries : library.entries
         let localHistory = contents.contains(.history) ? history : library.history
-        library.replace(entries: localEntries, history: localHistory)
-        if contents.contains(.collect) {
-            library.replaceRemovals(mergedRemovals)
-        }
+        library.replace(
+            entries: localEntries,
+            history: localHistory,
+            removals: contents.contains(.collect) ? mergedRemovals : nil
+        )
         if contents.contains(.shield) {
             settings.danmakuFilterRulesText = rules
         }
@@ -437,19 +438,44 @@ enum WebDAVSync {
         return result
     }
 
-    /// 收藏：本机的顺序留着（用户摆过的分类顺序），云盘上多出来的接在后面。
-    /// 收藏：按番剧 ID 合起来，**本机为准**（LP 2026-10-28）。
-    ///
-    /// 原来比 `updatedAt`、谁新谁赢，会让一份老数据把本机这条顶掉。
-    /// 收藏看的是「收没收这一部」，同一部两边都有时本机那套字段（分类、时间）
-    /// 才是用户现在用的那份，所以留着本机的；云盘上多出来的补进来。
-    /// 取消走的不是这里，是 `removedEntries`（见 sync 里的那段）。
-    private static func mergeEntries(local: [LibraryEntry], remote: [LibraryEntry]) -> [LibraryEntry] {
-        var merged = local
-        var seen = Set(local.map(\.id))
-        for entry in remote where !seen.contains(entry.id) {
+    /// 收藏合并：
+    /// - 保留本机列表顺序；
+    /// - 原生备份（`remote`）带真实修改时间：若云端 `updatedAt` 比本机新，原位更新状态字段（不改变顺序，且保留非空集数元数据）；
+    /// - 旧版 Hive 箱体（`legacy`）在缺少时间戳时会兜底为当前时间，因此只用于补充本机和云端都没有的番剧，绝不覆盖已有条目。
+    private static func mergeEntries(
+        local: [LibraryEntry],
+        remote: [LibraryEntry],
+        legacy: [LibraryEntry] = []
+    ) -> [LibraryEntry] {
+        var remoteByID: [Int: LibraryEntry] = [:]
+        for entry in remote {
+            if let existing = remoteByID[entry.id], existing.updatedAt >= entry.updatedAt { continue }
+            remoteByID[entry.id] = entry
+        }
+
+        var merged: [LibraryEntry] = []
+        merged.reserveCapacity(local.count + remote.count)
+        var seen = Set<Int>()
+
+        for localEntry in local where seen.insert(localEntry.id).inserted {
+            if let remoteEntry = remoteByID[localEntry.id], remoteEntry.updatedAt > localEntry.updatedAt {
+                var updated = remoteEntry
+                if updated.totalEpisodes == 0, localEntry.totalEpisodes > 0 {
+                    updated.totalEpisodes = localEntry.totalEpisodes
+                }
+                if updated.airDate.isEmpty, !localEntry.airDate.isEmpty {
+                    updated.airDate = localEntry.airDate
+                }
+                merged.append(updated)
+            } else {
+                merged.append(localEntry)
+            }
+        }
+        for entry in remote where seen.insert(entry.id).inserted {
             merged.append(entry)
-            seen.insert(entry.id)
+        }
+        for entry in legacy where seen.insert(entry.id).inserted {
+            merged.append(entry)
         }
         return merged
     }

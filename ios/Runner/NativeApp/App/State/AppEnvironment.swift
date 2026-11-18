@@ -41,6 +41,11 @@ final class AppEnvironment {
     /// 离线缓存：解析、排队、落盘、记录一份，播放页与下载页共用。
     @MainActor let downloads: DownloadCenter
 
+    @ObservationIgnored private var notificationRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var needsAnotherNotificationRefresh = false
+    @ObservationIgnored private var watchingChangeDebounceTask: Task<Void, Never>?
+    @ObservationIgnored private var lastNotificationRefreshAt: Date?
+
     private init(settings: SettingsStore, library: LibraryStore, router: AppRouter) {
         self.settings = settings
         let downloadDirectory = DownloadDirectoryStore(defaults: .standard)
@@ -58,6 +63,9 @@ final class AppEnvironment {
         let store = downloadDirectory
         self.downloads = MainActor.assumeIsolated {
             DownloadCenter(directory: store, plugins: plugins, settings: settings)
+        }
+        library.onWatchingChanged = { [weak self] in
+            self?.scheduleWatchingNotificationRefresh()
         }
     }
 
@@ -113,27 +121,77 @@ final class AppEnvironment {
         }
     }
 
+    /// 追番列表（「在看」）变更后轻量防抖自动重排通知，刚追的番无需重启即可进入排程。
+    private func scheduleWatchingNotificationRefresh() {
+        watchingChangeDebounceTask?.cancel()
+        watchingChangeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, let self else { return }
+            await self.refreshUpdateNotifications()
+        }
+    }
+
+    /// 回到前台时按需续排（距离上次刷新超过 30 分钟才跑），避免驻留后台多日后 7 天滚动窗口耗尽。
+    func refreshUpdateNotificationsOnForegroundIfNeeded() async {
+        guard settings.updateNotificationEnabled else { return }
+        if let last = lastNotificationRefreshAt, Date().timeIntervalSince(last) < 1_800 {
+            return
+        }
+        await refreshUpdateNotifications()
+    }
+
+    /// 等待可能正在防抖或执行中的通知重排完成（打开「查看排程」前调用）。
+    func settlePendingUpdateNotifications() async {
+        if let debounce = watchingChangeDebounceTask {
+            debounce.cancel()
+            watchingChangeDebounceTask = nil
+            await refreshUpdateNotifications()
+            return
+        }
+        await notificationRefreshTask?.value
+    }
+
     /// 重排番剧更新提醒（设置页改开关、追番列表变动、启动时都走这里）。
     ///
-    /// 关掉时只清空已排定的，不再排新的；开着时先把「在看」那些番的放送
-    /// 时刻补上（季度数据没加载过就没有时刻可算），再交给排定器。
+    /// 单飞合并：重叠调用会复用同一条重排任务并在尾部补跑最新状态，防止并发重排互相撤空。
     func refreshUpdateNotifications() async {
+        watchingChangeDebounceTask?.cancel()
+        watchingChangeDebounceTask = nil
+
+        if let running = notificationRefreshTask {
+            needsAnotherNotificationRefresh = true
+            await running.value
+            return
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            repeat {
+                self.needsAnotherNotificationRefresh = false
+                await self.performUpdateNotificationRefresh()
+            } while self.needsAnotherNotificationRefresh
+        }
+        notificationRefreshTask = task
+        await task.value
+        notificationRefreshTask = nil
+    }
+
+    private func performUpdateNotificationRefresh() async {
         guard settings.updateNotificationEnabled else {
             await UpdateNotificationScheduler.shared.cancelAll()
+            lastNotificationRefreshAt = Date()
             return
         }
         let watching = library.entries.filter { $0.collectType == .watching }
         guard !watching.isEmpty else {
             await UpdateNotificationScheduler.shared.cancelAll()
+            lastNotificationRefreshAt = Date()
             return
         }
-        for entry in watching {
-            await BangumiAirTimeService.shared.ensureLoaded(
-                subjectID: entry.id,
-                airDate: entry.airDate
-            )
-        }
+        await BangumiAirTimeService.shared.ensureLoaded(entries: watching)
+        await BangumiAirTimeService.shared.ensureAniListLoaded(watching.map(\.id))
         await UpdateNotificationScheduler.shared.reschedule(watching: watching)
+        lastNotificationRefreshAt = Date()
     }
 
     /// App 的 Application Support 目录（唯一出处见 `AppStoragePaths`）。

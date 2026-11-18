@@ -13,6 +13,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct KazumiTabShell: View {
     @Environment(AppRouter.self) private var router
@@ -56,6 +57,11 @@ struct KazumiTabShell: View {
         .task {
             // 每次启动重排一遍更新提醒：上一轮排的会随系统清理，追番列表也可能变了。
             await environment.refreshUpdateNotifications()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+            Task {
+                await environment.refreshUpdateNotificationsOnForegroundIfNeeded()
+            }
         }
         // LP 清单「触感反馈」：关掉后底栏切换不再轻震（trigger 传 nil 就不触发）。
         .sensoryFeedback(.selection, trigger: hapticTrigger)

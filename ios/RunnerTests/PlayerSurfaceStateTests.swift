@@ -309,8 +309,8 @@ struct PlayerSurfaceStateTests {
         model.handle(snapshot: makeSnapshot(
             time: 20,
             isIdle: false,
-            isSeeking: true,
-            downloadSpeed: 0
+            downloadSpeed: 0,
+            isSeeking: true
         ))
         now += 1
         model.handle(snapshot: makeSnapshot(
@@ -368,8 +368,8 @@ struct PlayerSurfaceStateTests {
         model.handle(snapshot: makeSnapshot(
             time: 80,
             isIdle: false,
-            isSeeking: true,
-            downloadSpeed: 0
+            downloadSpeed: 0,
+            isSeeking: true
         ))
         now += 1
         model.handle(snapshot: makeSnapshot(

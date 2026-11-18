@@ -86,17 +86,27 @@ final class RulesRepoClient: Sendable {
     /// 由设置页写入；仅影响后续请求，与 interceptor 的即时读取行为一致。
     static let mirror = OSAllocatedUnfairLock(initialState: RulesMirror.ghProxy)
 
+    static var currentMirror: RulesMirror {
+        mirror.withLock { $0 }
+    }
+
+    private static let bangumiMalPagesBase = "https://linkpass888.github.io/bangumi-mal/"
+    private static let bangumiMalRawBases = [
+        "https://raw.githubusercontent.com/LinkPass888/bangumi-mal/main/",
+        "https://raw.githubusercontent.com/LinkPass888/bangumi-mal/gh-pages/",
+    ]
+
     private let sessionProvider: ProxyAwareURLSession
 
     /// 代理变了就重建，见 `ProxyAwareURLSession`。
     private var session: URLSession { sessionProvider.session }
 
     init() {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 12
-        config.timeoutIntervalForResource = 24
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         sessionProvider = ProxyAwareURLSession {
+            let config = URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForRequest = 12
+            config.timeoutIntervalForResource = 24
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
             KazumiNetworkPolicy.applyProxy(to: config)
             return config
         }
@@ -122,21 +132,44 @@ final class RulesRepoClient: Sendable {
         }
     }
 
-    /// 对应 _RulesMirrorInterceptor：只改写规则仓库前缀。
+    /// 对应 _RulesMirrorInterceptor：按网络设置改写 GitHub 静态资源地址（镜像走镜像，直连走直连）。
     static func mirrored(_ url: String) -> String {
-        mirrored(url, mirror: Self.mirror.withLock { $0 })
+        mirrored(url, mirror: currentMirror)
     }
 
     /// 按指定镜像改写；测速也走这里，保证测的就是实际会用的地址。
+    /// - `mirror == .direct`：严格走直连原地址；
+    /// - `mirror != .direct`：官方规则库按三路镜像改写，其余 GitHub raw / 仓库地址按所选镜像代理改写（GitCode 仅镜像规则库，其余 GitHub raw 走 gh-proxy 镜像）。
     static func mirrored(_ url: String, mirror: RulesMirror) -> String {
-        guard mirror != .direct,
-              url.hasPrefix(KazumiEndpoints.officialPluginShop) else { return url }
-        let path = url.dropFirst(KazumiEndpoints.officialPluginShop.count)
-        switch mirror {
-        case .ghProxy: return KazumiEndpoints.ghProxyMirror + url
-        case .ghfast: return KazumiEndpoints.ghfastMirror + url
-        case .gitcode: return KazumiEndpoints.gitcodeMirror + path
-        case .direct: return url
+        guard mirror != .direct else { return url }
+        if url.hasPrefix(KazumiEndpoints.officialPluginShop) {
+            let path = url.dropFirst(KazumiEndpoints.officialPluginShop.count)
+            switch mirror {
+            case .ghProxy: return KazumiEndpoints.ghProxyMirror + url
+            case .ghfast: return KazumiEndpoints.ghfastMirror + url
+            case .gitcode: return KazumiEndpoints.gitcodeMirror + path
+            case .direct: return url
+            }
+        }
+        if url.hasPrefix("https://raw.githubusercontent.com/") || url.hasPrefix("https://github.com/") {
+            switch mirror {
+            case .ghfast: return KazumiEndpoints.ghfastMirror + url
+            case .ghProxy, .gitcode: return KazumiEndpoints.ghProxyMirror + url
+            case .direct: return url
+            }
+        }
+        return url
+    }
+
+    /// `bangumi-mal` 数据文件地址解析：严格遵循网络设置——
+    /// 设为「直连」时只走直连（`linkpass888.github.io`），设为「镜像」时只走对应 GitHub 镜像。
+    static func bangumiMalURLs(relativePath: String, mirror: RulesMirror = currentMirror) -> [URL] {
+        let trimmed = relativePath.hasPrefix("/") ? String(relativePath.dropFirst()) : relativePath
+        if mirror == .direct {
+            return [URL(string: bangumiMalPagesBase + trimmed)].compactMap { $0 }
+        }
+        return bangumiMalRawBases.compactMap { base in
+            URL(string: mirrored(base + trimmed, mirror: mirror))
         }
     }
 

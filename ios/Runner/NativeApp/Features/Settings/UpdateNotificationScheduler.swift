@@ -21,7 +21,7 @@ import UserNotifications
 
 /// 一条已排定的更新提醒（设置页「通知排程」展示用）。
 struct ScheduledUpdateNotification: Identifiable, Hashable {
-    let id: Int
+    let id: String
     let bangumiID: Int
     let title: String
     let body: String
@@ -34,12 +34,17 @@ final class UpdateNotificationScheduler {
 
     /// 最多看未来这么多天（与原版 _maxLead 一致）。
     private static let maxLead: TimeInterval = 7 * 24 * 60 * 60
+    private static let defaultPeriod: TimeInterval = 7 * 24 * 60 * 60
     private static let idBase = 400_000
     private static let idRange = 100_000
     /// 一部番最多排这么多集，避免长期番把系统队列占满（系统上限 64 条）。
     private static let maxEpisodesPerBangumi = 2
+    /// 留出少量余量，避免触顶 iOS 单应用 64 条本地通知上限后新番被系统静默淘汰。
+    private static let maxPendingRequests = 60
 
     private let center = UNUserNotificationCenter.current()
+    /// 串行化排程操作，防止并发 `reschedule` / `cancelAll` 交错把刚排好的提醒撤空。
+    private var lastOperation: Task<Void, Never>?
 
     private init() {}
 
@@ -87,19 +92,64 @@ final class UpdateNotificationScheduler {
     ///
     /// 调用方负责判断开关是否打开；关掉时调 `cancelAll()`。
     func reschedule(watching entries: [LibraryEntry], now: Date = Date()) async {
-        await cancelAll()
-        guard !entries.isEmpty else { return }
+        await enqueue { [self] in
+            await self.performReschedule(watching: entries, now: now)
+        }
+    }
+
+    /// 关掉提醒时把排定的通知全撤掉。
+    func cancelAll() async {
+        await enqueue { [self] in
+            await self.removeManagedPendingRequests()
+        }
+    }
+
+    private func enqueue(_ work: @escaping @MainActor () async -> Void) async {
+        let previous = lastOperation
+        let task = Task { @MainActor in
+            await previous?.value
+            await work()
+        }
+        lastOperation = task
+        await task.value
+    }
+
+    private func performReschedule(watching entries: [LibraryEntry], now: Date) async {
+        guard !entries.isEmpty else {
+            await removeManagedPendingRequests()
+            return
+        }
         let status = await authorizationStatus()
         guard status == .authorized || status == .provisional || status == .ephemeral else {
             // 没有权限时排了也不会响，等用户在设置里打开再排。
+            await removeManagedPendingRequests()
             return
         }
 
         let calendar = Calendar.current
+        var candidates: [(fireAt: Date, request: UNNotificationRequest)] = []
+
         for entry in entries {
-            guard let schedule = BangumiAirTimeService.shared.schedule(for: entry.id) else { continue }
+            let airing = AniListClient.shared.staleCached(entry.id, now: now)
+            // 已明确完结的番不再按周期无限顺延，避免占满系统 64 条通知名额。
+            if let airing, airing.finished { continue }
+
+            let schedule = BangumiAirTimeService.shared.schedule(for: entry.id)
+            if airing == nil,
+               entry.totalEpisodes > 0,
+               let schedule,
+               schedule.period > 0,
+               now.timeIntervalSince(schedule.first) >= Double(entry.totalEpisodes) * schedule.period {
+                continue
+            }
+
+            guard let firstFireAt = firstUpcomingDate(for: entry.id, schedule: schedule, now: now) else {
+                continue
+            }
+            let period = (schedule?.period ?? 0) > 0 ? schedule!.period : Self.defaultPeriod
+
             var scheduled = 0
-            var fireAt = nextOccurrence(of: schedule, after: now)
+            var fireAt = firstFireAt
             while scheduled < Self.maxEpisodesPerBangumi,
                   fireAt.timeIntervalSince(now) > 0,
                   fireAt.timeIntervalSince(now) <= Self.maxLead {
@@ -121,44 +171,46 @@ final class UpdateNotificationScheduler {
                     content: content,
                     trigger: trigger
                 )
-                try? await center.add(request)
+                candidates.append((fireAt, request))
                 scheduled += 1
-                // 下一集：首播 + 周期 × n，比逐次加一个周期更不容易积累误差。
-                fireAt = fireAt.addingTimeInterval(schedule.period)
+                fireAt = firstFireAt.addingTimeInterval(Double(scheduled) * period)
             }
+        }
+
+        // 按触发时刻从近到远排序并截断在系统上限之内，优先保住最近即将更新的剧集。
+        candidates.sort { $0.fireAt < $1.fireAt }
+        let selected = candidates.prefix(Self.maxPendingRequests)
+
+        // 先算完新队列再一次性替换旧通知，避免耗时计算期间把排程清空。
+        await removeManagedPendingRequests()
+        for item in selected {
+            try? await center.add(item.request)
         }
     }
 
-    /// 关掉提醒时把排定的通知全撤掉。
-    func cancelAll() async {
+    private func removeManagedPendingRequests() async {
         let pending = await center.pendingNotificationRequests()
         let ids = pending
             .map(\.identifier)
-            .filter { identifier in
-                guard let prefix = identifier.split(separator: "-").first,
-                      let value = Int(prefix) else { return false }
-                return value >= Self.idBase && value < Self.idBase + Self.idRange
-            }
+            .filter(Self.isManagedIdentifier)
         guard !ids.isEmpty else { return }
         center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
     /// 已排定的提醒，按时间先后排序（设置页「通知排程」）。
     func scheduledNotifications() async -> [ScheduledUpdateNotification] {
+        // 若正有一轮排程写入在执行，等它落地后再读取，避免读到「刚撤旧、未加新」的瞬间空窗。
+        await lastOperation?.value
         let pending = await center.pendingNotificationRequests()
         var result: [ScheduledUpdateNotification] = []
         for request in pending {
-            // identifier 形如「400123-0」：前半是番的编号，后半是集序号。
-            guard let prefix = request.identifier.split(separator: "-").first,
-                  let value = Int(prefix),
-                  value >= Self.idBase,
-                  value < Self.idBase + Self.idRange else { continue }
+            guard Self.isManagedIdentifier(request.identifier) else { continue }
             let bangumiID = request.content.userInfo["bangumiID"] as? Int ?? 0
             let epoch = request.content.userInfo["fireAt"] as? TimeInterval ?? 0
             guard epoch > 0 else { continue }
             result.append(
                 ScheduledUpdateNotification(
-                    id: value,
+                    id: request.identifier,
                     bangumiID: bangumiID,
                     title: request.content.title,
                     body: request.content.body,
@@ -170,6 +222,26 @@ final class UpdateNotificationScheduler {
     }
 
     // MARK: - 推算
+
+    /// 结合 AniList 实测下一集与 bangumi-mal 季度首播周期，推算晚于 `now` 的下一次更新时间。
+    private func firstUpcomingDate(
+        for subjectID: Int,
+        schedule: BangumiAirSchedule?,
+        now: Date
+    ) -> Date? {
+        if let epochMs = BangumiAirTimeService.shared.nextUpdateEpoch(for: subjectID, now: now) {
+            let candidate = Date(timeIntervalSince1970: Double(epochMs) / 1000)
+            if candidate > now { return candidate }
+        }
+        guard let schedule else { return nil }
+        return nextOccurrence(of: schedule, after: now)
+    }
+
+    private static func isManagedIdentifier(_ identifier: String) -> Bool {
+        guard let prefix = identifier.split(separator: "-").first,
+              let value = Int(prefix) else { return false }
+        return value >= idBase && value < idBase + idRange
+    }
 
     /// 首播之后、晚于 `now` 的第一次播出时刻。
     private func nextOccurrence(of schedule: BangumiAirSchedule, after now: Date) -> Date {

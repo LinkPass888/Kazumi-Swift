@@ -104,6 +104,10 @@ final class PlayerSurfaceModel {
         guard engine !== newEngine else { return }
         activeLoadID = 0
         engine = newEngine
+        if let newEngine {
+            newEngine.setVolume(volume)
+            newEngine.setMuted(isMuted)
+        }
     }
 
     /// 弹幕画布：横屏底栏「发弹幕」往这里补一条自己发的。
@@ -114,6 +118,10 @@ final class PlayerSurfaceModel {
 
     /// 期望的播放速率。换集 / 起播后会回到 1.0，因此就绪时要按这个值再补一次。
     var desiredRate: Float = 1.0
+    /// 内核音量（0…1）与静音状态（供 Mac Catalyst / 桌面音量滑块与快捷键使用）。
+    var volume: Double = 1.0
+    var isMuted: Bool = false
+    private var volumeBeforeMute: Double = 1.0
 
     /// 进入播放器时待恢复的进度：就绪后只 seek 一次，
     /// 避免抢在加载完成前 seek，结果被内核回落到 0。
@@ -224,6 +232,40 @@ final class PlayerSurfaceModel {
         guard rate.isFinite, rate > 0 else { return }
         desiredRate = rate
         engine?.setSpeed(rate)
+    }
+
+    func setVolume(_ value: Double) {
+        guard value.isFinite else { return }
+        let clamped = min(max(value, 0), 1)
+        volume = clamped
+        if clamped > 0.001 {
+            volumeBeforeMute = clamped
+            if isMuted {
+                isMuted = false
+                engine?.setMuted(false)
+            }
+        }
+        engine?.setVolume(clamped)
+    }
+
+    func setMuted(_ muted: Bool) {
+        isMuted = muted
+        engine?.setMuted(muted)
+    }
+
+    func toggleMute() {
+        if isMuted || volume <= 0.001 {
+            isMuted = false
+            if volume <= 0.001 {
+                volume = max(0.1, volumeBeforeMute)
+                engine?.setVolume(volume)
+            }
+            engine?.setMuted(false)
+        } else {
+            volumeBeforeMute = volume
+            isMuted = true
+            engine?.setMuted(true)
+        }
     }
 
     /// 只在正在播放时补速率，避免暂停时被拉起来。

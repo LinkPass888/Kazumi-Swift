@@ -81,7 +81,7 @@ final class PlayerController {
     /// 这一集的 WebView 是不是已经放掉了（起播后）。换集会清零，下一集再放一次。
     private var didReleaseWebView = false
     /// 从历史卡片进来时带的那条规则名：重建播放源和取续播位置都按它取。
-    let resumeRule: String?
+    private(set) var resumeRule: String?
     /// 离线播放入口（Colo 5174）：按集号取本地文件。有就用本地那份，
     /// 跳过网页解析；没有就走原流程。章节列表仍然照常抓，
     /// 所以选集、连播、弹幕、观看历史都还在。
@@ -296,6 +296,82 @@ final class PlayerController {
         resetDanmaku()
         resetSkipSegments()
         await start()
+    }
+
+    /// 播放页内就地切换采集源（从选源面板点选新源），保持当前集数不断栈起播。
+    func switchSource(_ newSource: PlaybackSource, preferredRoad: Int? = nil) async {
+        parseWatchdog?.cancel()
+        parseWatchdog = nil
+        source = newSource
+        resumeRule = nil
+        resumeRoad = preferredRoad
+        resumeFromHistory = preferredRoad != nil
+        roads = []
+        selectedRoad = 0
+        episodes = []
+        isOfflineEpisodeList = false
+        phase = .idle
+        playbackURL = nil
+        resetDanmaku()
+        resetSkipSegments()
+        await start()
+    }
+
+    /// 播放页内通过规则名一键快速换源：按当前番名检索目标规则并切换起播。
+    func switchPlugin(named pluginName: String, preferredTitle: String) async {
+        guard pluginName != effectivePluginName else { return }
+        guard let plugin = plugins.plugin(named: pluginName) else {
+            phase = .failed(String(localized: "规则「\(String(describing: pluginName))」已不存在，请重新选择"))
+            return
+        }
+        let keyword = preferredTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return }
+
+        startGeneration &+= 1
+        let generation = startGeneration
+        parseWatchdog?.cancel()
+        parseWatchdog = nil
+        cancelToken.cancel()
+        cancelToken = RuleCancelToken()
+        playbackURL = nil
+        phase = .searchingSource
+        resetDanmaku()
+        resetSkipSegments()
+        appendLog(String(localized: "正在切换播放源：\(String(describing: plugin.name))"))
+
+        do {
+            let trace = try await engine.search(
+                RuleExecutionConfig(plugin: plugin),
+                keyword: keyword,
+                cancelToken: cancelToken
+            )
+            guard generation == startGeneration else { return }
+            let items = trace.response.data
+            let exactMatches = items.filter { $0.name == keyword }
+            let chosen = exactMatches.first ?? items.first
+            guard let chosen else {
+                failed(String(localized: "规则「\(String(describing: plugin.name))」未检索到该番剧，请打开选源面板手动挑选"))
+                return
+            }
+            source = PlaybackSource(
+                pluginName: plugin.name,
+                itemName: chosen.name,
+                detailURL: chosen.src,
+                directMediaURL: MediaUtility.isMediaURL(chosen.src) ? chosen.src : nil
+            )
+            resumeRule = nil
+            resumeRoad = nil
+            resumeFromHistory = false
+            roads = []
+            selectedRoad = 0
+            episodes = []
+            isOfflineEpisodeList = false
+            await start()
+        } catch {
+            guard generation == startGeneration else { return }
+            appendLog(String(localized: "切换播放源失败：\(String(describing: error.localizedDescription))"))
+            failed(String(localized: "切换规则「\(String(describing: plugin.name))」失败，请重试或换个源"))
+        }
     }
 
     func selectEpisode(_ number: Int) async {

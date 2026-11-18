@@ -134,6 +134,8 @@ final class MPVEngine {
     /// 解码开关与模式由容器传入，只在建内核时读取，重新打开播放器后生效。
     var hardwareDecodeEnabled = true
     var hardwareDecodeMode: HardwareDecodeMode = .videotoolbox
+    /// 是否启用退后台自动画中画。关闭时无需强制退化为可复制帧，保留 `videotoolbox` 零拷贝直通。
+    var backgroundAutoPiPEnabled = false
 
     /// Effective decoder selected once at kernel creation. PiP needs CPU-copyable
     /// decoded frames; never switch this value on a background transition.
@@ -288,20 +290,19 @@ final class MPVEngine {
         setOption("gpu-api", "vulkan")
         setOption("gpu-context", "moltenvk")
         setOption("fbo-format", "rgba16hf")
-        // Catalyst 与 iOS 共用同一条画中画链路，能力判断也走同一个 API。
-        let pictureInPictureEnabled = AVPictureInPictureController.isPictureInPictureSupported()
-        // 画中画要的是可复制的解码帧；vd-lavc-dr=yes 会把帧留在 GPU 侧，
-        // 硬解丢参考帧时 screenshot-raw 一帧都回不来。只在内核创建时定一次。
-        setOption("vd-lavc-dr", pictureInPictureEnabled ? "no" : "yes")
+        // 3.0.4 起仅在设备支持画中画且开启「后台自动画中画」时强制覆盖为 screenshot-raw 可复制帧；
+        // 关闭自动画中画时尊重用户选择的直通（零拷贝 vd-lavc-dr=yes）或非直通（videotoolbox-copy）模式。
+        let requiresCopyForPiP = AVPictureInPictureController.isPictureInPictureSupported()
+            && backgroundAutoPiPEnabled
         let requestedHWDec = Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode)
         effectiveHardwareDecode = Self.effectiveHWDec(
             requested: requestedHWDec,
-            pictureInPictureEnabled: pictureInPictureEnabled
+            pictureInPictureEnabled: requiresCopyForPiP
         )
+        let usesCopyHWDec = effectiveHardwareDecode == HardwareDecodeMode.videotoolboxCopy.rawValue
+        setOption("vd-lavc-dr", usesCopyHWDec ? "no" : "yes")
         setOption("hwdec", effectiveHardwareDecode)
-        log("硬解选择（内核创建时固定）：requested=\(requestedHWDec) effective=\(effectiveHardwareDecode)")
-        log("画中画: BEFORE 帧源（旧实现）：vd-lavc-dr=yes 直通硬件帧，硬解丢参考帧时 screenshot-raw 回不了帧、20 秒兜底挂住节拍")
-        log("画中画: AFTER 帧源（新实现）：vd-lavc-dr=\(pictureInPictureEnabled ? "no" : "yes") copy 解码帧可复制，单次取帧 0.25 秒超时不再饿死 33ms 节拍")
+        log("硬解选择（内核创建时固定）：requested=\(requestedHWDec) effective=\(effectiveHardwareDecode) autoPiP=\(backgroundAutoPiPEnabled)")
         setOption("hwdec-codecs", "all")
 
         if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
@@ -634,6 +635,17 @@ final class MPVEngine {
         mpv_set_property(handle, "speed", MPV_FORMAT_DOUBLE, &value)
     }
 
+    /// 桌面端（Mac Catalyst / 指针滑块）与键盘音量调节：0…1 映射到 mpv 0…100 音量。
+    func setVolume(_ normalized: Double) {
+        guard normalized.isFinite, let handle else { return }
+        var value = min(max(normalized, 0), 1) * 100.0
+        mpv_set_property(handle, "volume", MPV_FORMAT_DOUBLE, &value)
+    }
+
+    func setMuted(_ muted: Bool) {
+        setFlag("mute", muted)
+    }
+
     func seek(to time: Double) {
         guard time.isFinite, time >= 0 else { return }
         // 走异步命令表：断流时 `mpv_command` 的同步 seek 会等 demuxer 锁，
@@ -644,7 +656,7 @@ final class MPVEngine {
         // 提前到了」，而且不同片源的关键帧间隔不一样，快慢不一致。
         submitAsyncCommand(
             "seek",
-            [String(format: "%.3f", time), "absolute+exact"]
+            [String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), time), "absolute+exact"]
         ) { [weak self] status in
             guard let self else { return }
             guard status >= 0 else {
@@ -1407,8 +1419,8 @@ final class MPVEventPump: @unchecked Sendable {
     private func startOnQueue() {
         guard !running else { return }
         running = true
-        // 这些属性一变就唤醒，醒来统一读一遍值，比逐个解析事件结构省事。
-        for name in ["time-pos", "duration", "pause", "eof-reached", "core-idle", "video-params"] {
+        // 状态型属性一变就唤醒；`time-pos` 每帧都会变，不放进监听避免每秒数十次无效唤醒，由 250ms 定时器读取。
+        for name in ["duration", "pause", "eof-reached", "core-idle", "video-params"] {
             let status = mpv_observe_property(mpv, 0, name, MPV_FORMAT_NONE)
             if status < 0 {
                 log("observe \(name) 失败：\(String(cString: mpv_error_string(status)))")
@@ -1699,6 +1711,7 @@ final class MPVEventPump: @unchecked Sendable {
                 refreshPictureInPictureReferenceCodec()
             }
             if id == MPV_EVENT_FILE_LOADED {
+                if fileLoadedAt == 0 { fileLoadedAt = drainAt }
                 // 文件打开了不等于有画面：不在这儿收圈，往后推到「等首帧」
                 // （LP 4818 第 3 条）。
                 if loadPhase == .opening { loadPhase = .awaitingFirstFrame }

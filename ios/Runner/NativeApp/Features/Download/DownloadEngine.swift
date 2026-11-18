@@ -163,9 +163,10 @@ final class DownloadEngine: @unchecked Sendable {
             prefix.append(byte)
             if prefix.count >= 2048 { break }
         }
-        let finalURL = (response as? HTTPURLResponse)?.url ?? url
+        let http = response as? HTTPURLResponse
+        let finalURL = http?.url ?? url
         let text = String(data: prefix, encoding: .utf8) ?? ""
-        let contentType = ((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        let contentType = (http?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
         let looksHLS = text.hasPrefix("#EXTM3U")
             || finalURL.path.contains(".m3u8")
             || url.absoluteString.contains(".m3u8")
@@ -173,7 +174,25 @@ final class DownloadEngine: @unchecked Sendable {
         if looksHLS {
             return Probe(kind: .hls(finalURL), prefixText: text)
         }
-        return Probe(kind: .file(finalURL, (response as? HTTPURLResponse)?.expectedContentLength ?? -1), prefixText: text)
+        return Probe(kind: .file(finalURL, Self.totalContentBytes(from: http)), prefixText: text)
+    }
+
+    /// 提取完整文件长度：206 分片响应从 `Content-Range: bytes a-b/total` 取总长度，避免把探针分片大小（2048）当成完整文件。
+    fileprivate static func totalContentBytes(from response: HTTPURLResponse?) -> Int64 {
+        guard let response else { return -1 }
+        if response.statusCode == 206 {
+            guard let rangeHeader = response.value(forHTTPHeaderField: "Content-Range"),
+                  let slash = rangeHeader.lastIndex(of: "/") else {
+                return -1
+            }
+            let totalPart = rangeHeader[rangeHeader.index(after: slash)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let total = Int64(totalPart), total > 0 {
+                return total
+            }
+            return -1
+        }
+        return response.expectedContentLength > 0 ? response.expectedContentLength : -1
     }
 
     // MARK: - HLS
@@ -301,13 +320,16 @@ final class DownloadEngine: @unchecked Sendable {
     ) async throws -> URL {
         let ext = url.pathExtension.isEmpty ? "mp4" : url.pathExtension
         let target = directory.appending(path: "\(baseName).\(ext)")
+        let resumeURL = directory.appending(path: "\(baseName).\(ext).resume")
 
         // 已经有同名文件就算下完（大小对得上时）。
         if let size = try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? Int64,
            expectedBytes > 0, size == expectedBytes {
+            try? FileManager.default.removeItem(at: resumeURL)
             return target
         }
 
+        var resumeData = try? Data(contentsOf: resumeURL)
         var attempt = 0
         while true {
             do {
@@ -318,12 +340,24 @@ final class DownloadEngine: @unchecked Sendable {
                     target: target,
                     cancellation: cancellation,
                     expectedBytes: expectedBytes,
+                    resumeData: resumeData,
+                    resumeSaveURL: resumeURL,
                     onProgress: onProgress
                 )
+                try? FileManager.default.removeItem(at: resumeURL)
                 return target
             } catch let error as DownloadEngineError where error == .cancelled {
                 throw error
             } catch {
+                if let extracted = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data,
+                   !extracted.isEmpty {
+                    resumeData = extracted
+                    try? extracted.write(to: resumeURL, options: .atomic)
+                } else if resumeData != nil {
+                    // 续传数据失效（如服务端返回 403/416）时清空，下一轮回退到完整新请求。
+                    resumeData = nil
+                    try? FileManager.default.removeItem(at: resumeURL)
+                }
                 attempt += 1
                 if attempt >= maxRetries || cancellation.isCancelled {
                     throw error
@@ -334,7 +368,7 @@ final class DownloadEngine: @unchecked Sendable {
 
     // MARK: - 单个文件
 
-    /// 一个 URL 一个任务，落到 `target`。
+    /// 一个 URL 一个任务，落到 `target`（可选从 `resumeData` 断点续传，暂停时把进度存回 `resumeSaveURL`）。
     private func fetchToFile(
         _ url: URL,
         referer: String?,
@@ -342,6 +376,8 @@ final class DownloadEngine: @unchecked Sendable {
         target: URL,
         cancellation: CancellationFlag,
         expectedBytes: Int64 = -1,
+        resumeData: Data? = nil,
+        resumeSaveURL: URL? = nil,
         onProgress: (@Sendable (DownloadProgress) -> Void)? = nil
     ) async throws {
         var request = URLRequest(url: url)
@@ -350,27 +386,52 @@ final class DownloadEngine: @unchecked Sendable {
         if let userAgent, !userAgent.isEmpty { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
         applyCookie(to: &request, url: url)
 
-        let progressSink = ProgressSink(
+        let size = try await runDownloadTask(
+            request: request,
+            resumeData: resumeData,
+            resumeSaveURL: resumeSaveURL,
+            target: target,
+            expectedBytes: expectedBytes,
+            cancellation: cancellation,
+            onProgress: onProgress
+        )
+        if let onProgress {
+            onProgress(DownloadProgress(receivedBytes: size, totalBytes: size, fraction: 1))
+        }
+    }
+
+    /// 直接使用不带 completionHandler 的 `URLSessionDownloadTask` 并挂载 `task.delegate`：
+    /// Swift 标准库的 `session.download(for:delegate:)` 内部自建了完成回调包装器，只会转发 `URLSessionTaskDelegate`
+    /// 而不会转发 `URLSessionDownloadDelegate.didWriteData`，会导致直链 MP4 下载全程停在 0% 直至下完跳 100%。
+    private func runDownloadTask(
+        request: URLRequest,
+        resumeData: Data?,
+        resumeSaveURL: URL?,
+        target: URL,
+        expectedBytes: Int64,
+        cancellation: CancellationFlag,
+        onProgress: (@Sendable (DownloadProgress) -> Void)?
+    ) async throws -> Int64 {
+        let currentSession = session
+        let task: URLSessionDownloadTask
+        if let resumeData, !resumeData.isEmpty {
+            task = currentSession.downloadTask(withResumeData: resumeData)
+        } else {
+            task = currentSession.downloadTask(with: request)
+        }
+        let sink = DownloadTaskSink(
+            targetURL: target,
+            resumeSaveURL: resumeSaveURL,
             expectedBytes: expectedBytes,
             onProgress: onProgress,
             cancellation: cancellation
         )
-        let (tempURL, response) = try await session.download(for: request, delegate: progressSink)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            try? FileManager.default.removeItem(at: tempURL)
-            throw DownloadEngineError.badStatus(http.statusCode)
-        }
-        if cancellation.isCancelled {
-            try? FileManager.default.removeItem(at: tempURL)
-            throw DownloadEngineError.cancelled
-        }
-
-        let size = (try? FileManager.default.attributesOfItem(atPath: tempURL.path)[.size] as? Int64) ?? 0
-        // 小分片直接覆盖；大文件也已经下全了，一样覆盖。
-        try? FileManager.default.removeItem(at: target)
-        try FileManager.default.moveItem(at: tempURL, to: target)
-        if let onProgress {
-            onProgress(DownloadProgress(receivedBytes: size, totalBytes: size, fraction: 1))
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                sink.start(task: task, continuation: continuation)
+            }
+        } onCancel: {
+            sink.cancelTask(task)
         }
     }
 
@@ -423,7 +484,7 @@ final class DownloadEngine: @unchecked Sendable {
         _ = userAgent
     }
 
-    private lazy var sessionProvider = ProxyAwareURLSession {
+    private let sessionProvider = ProxyAwareURLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60 * 60
@@ -437,28 +498,120 @@ final class DownloadEngine: @unchecked Sendable {
     private var session: URLSession { sessionProvider.session }
 }
 
-/// 给 `URLSession.download` 报进度用。它只在 session 的 delegate 队列上被调用。
-private final class ProgressSink: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+/// 接管单个 `URLSessionDownloadTask` 的实时字节进度、临时文件搬运与完成/续传回执。
+private final class DownloadTaskSink: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let targetURL: URL
+    private let resumeSaveURL: URL?
     private let expectedBytes: Int64
     private let onProgress: (@Sendable (DownloadProgress) -> Void)?
     private let cancellation: CancellationFlag
-    private var lastReported: Int64 = 0
+
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Int64, Error>?
+    private var finishOutcome: Result<Int64, Error>?
+    private var didRequestCancel = false
+    private var lastReportedBytes: Int64 = 0
+    private var lastReportedUptime: TimeInterval = 0
 
     init(
+        targetURL: URL,
+        resumeSaveURL: URL?,
         expectedBytes: Int64,
         onProgress: (@Sendable (DownloadProgress) -> Void)?,
         cancellation: CancellationFlag
     ) {
+        self.targetURL = targetURL
+        self.resumeSaveURL = resumeSaveURL
         self.expectedBytes = expectedBytes
         self.onProgress = onProgress
         self.cancellation = cancellation
     }
 
+    func start(task: URLSessionDownloadTask, continuation: CheckedContinuation<Int64, Error>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
+        task.delegate = self
+        if cancellation.isCancelled || Task.isCancelled {
+            cancelTask(task)
+        }
+        task.resume()
+    }
+
+    func cancelTask(_ task: URLSessionDownloadTask) {
+        lock.lock()
+        let alreadyCancelling = didRequestCancel
+        didRequestCancel = true
+        lock.unlock()
+        guard !alreadyCancelling else { return }
+        if let saveURL = resumeSaveURL {
+            task.cancel { data in
+                if let data, !data.isEmpty {
+                    try? data.write(to: saveURL, options: .atomic)
+                }
+            }
+        } else {
+            task.cancel()
+        }
+    }
+
+    private func resolveTotalBytes(
+        task: URLSessionDownloadTask,
+        expectedToWrite: Int64
+    ) -> Int64 {
+        if expectedToWrite > 0 { return expectedToWrite }
+        if let http = task.response as? HTTPURLResponse {
+            let fromHeader = DownloadEngine.totalContentBytes(from: http)
+            if fromHeader > 0 { return fromHeader }
+        }
+        return expectedBytes > 0 ? expectedBytes : -1
+    }
+
+    private func emitProgress(
+        task: URLSessionDownloadTask,
+        written: Int64,
+        expectedToWrite: Int64,
+        force: Bool = false
+    ) {
+        guard let onProgress else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        let shouldReport = force
+            || lastReportedUptime == 0
+            || written - lastReportedBytes >= 256 * 1024
+            || now - lastReportedUptime >= 0.25
+        if shouldReport {
+            lastReportedBytes = written
+            lastReportedUptime = now
+        }
+        lock.unlock()
+        guard shouldReport else { return }
+
+        let total = resolveTotalBytes(task: task, expectedToWrite: expectedToWrite)
+        onProgress(DownloadProgress(
+            receivedBytes: written,
+            totalBytes: total,
+            fraction: total > 0 ? min(1, Double(written) / Double(total)) : -1
+        ))
+    }
+
     func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {}
+        didResumeAtOffset fileOffset: Int64,
+        expectedTotalBytes: Int64
+    ) {
+        if cancellation.isCancelled {
+            cancelTask(downloadTask)
+            return
+        }
+        emitProgress(
+            task: downloadTask,
+            written: fileOffset,
+            expectedToWrite: expectedTotalBytes,
+            force: true
+        )
+    }
 
     func urlSession(
         _ session: URLSession,
@@ -468,19 +621,71 @@ private final class ProgressSink: NSObject, URLSessionDownloadDelegate, @uncheck
         totalBytesExpectedToWrite: Int64
     ) {
         if cancellation.isCancelled {
-            downloadTask.cancel()
+            cancelTask(downloadTask)
             return
         }
-        guard let onProgress else { return }
-        // 半 MB 报一次就够，界面是进度条，不需要每个字节都刷新。
-        guard totalBytesWritten - lastReported >= 512 * 1024 else { return }
-        lastReported = totalBytesWritten
-        let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite
-            : (expectedBytes > 0 ? expectedBytes : -1)
-        onProgress(DownloadProgress(
-            receivedBytes: totalBytesWritten,
-            totalBytes: total,
-            fraction: total > 0 ? min(1, Double(totalBytesWritten) / Double(total)) : -1
-        ))
+        emitProgress(
+            task: downloadTask,
+            written: totalBytesWritten,
+            expectedToWrite: totalBytesExpectedToWrite
+        )
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        if let http = downloadTask.response as? HTTPURLResponse,
+           !(200..<300).contains(http.statusCode) {
+            try? FileManager.default.removeItem(at: location)
+            lock.withLock { finishOutcome = .failure(DownloadEngineError.badStatus(http.statusCode)) }
+            return
+        }
+        if cancellation.isCancelled {
+            try? FileManager.default.removeItem(at: location)
+            lock.withLock { finishOutcome = .failure(DownloadEngineError.cancelled) }
+            return
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: location.path)[.size] as? Int64) ?? 0
+        do {
+            try? FileManager.default.removeItem(at: targetURL)
+            try FileManager.default.moveItem(at: location, to: targetURL)
+            lock.withLock { finishOutcome = .success(size) }
+        } catch {
+            lock.withLock { finishOutcome = .failure(error) }
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        let pending: CheckedContinuation<Int64, Error>?
+        let outcome: Result<Int64, Error>?
+        lock.lock()
+        pending = continuation
+        continuation = nil
+        outcome = finishOutcome
+        lock.unlock()
+
+        guard let pending else { return }
+        if let error {
+            if cancellation.isCancelled || (error as? URLError)?.code == .cancelled {
+                pending.resume(throwing: DownloadEngineError.cancelled)
+            } else {
+                pending.resume(throwing: error)
+            }
+            return
+        }
+        switch outcome {
+        case .success(let size):
+            pending.resume(returning: size)
+        case .failure(let moveError):
+            pending.resume(throwing: moveError)
+        case .none:
+            pending.resume(throwing: URLError(.cannotWriteToFile))
+        }
     }
 }

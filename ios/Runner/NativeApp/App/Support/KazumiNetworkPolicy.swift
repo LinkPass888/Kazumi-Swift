@@ -121,16 +121,21 @@ final class ProxyAwareURLSession: @unchecked Sendable {
         self.configuration = configuration
     }
 
-    /// 当前代理下该用的那份 session；代理变过就重建。
+    /// 当前代理下该用的那份 session；代理变过就重建，并释放旧 session 的连接池。
     var session: URLSession {
         let generation = KazumiNetworkPolicy.proxyGeneration
-        return lock.withLock { state in
-            if let session = state.session, state.generation == generation { return session }
+        let (resolved, obsolete) = lock.withLock { state -> (URLSession, URLSession?) in
+            if let session = state.session, state.generation == generation {
+                return (session, nil)
+            }
+            let previous = state.session
             let session = URLSession(configuration: configuration())
             state.session = session
             state.generation = generation
-            return session
+            return (session, previous)
         }
+        obsolete?.finishTasksAndInvalidate()
+        return resolved
     }
 }
 

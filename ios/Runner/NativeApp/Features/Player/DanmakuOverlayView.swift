@@ -101,6 +101,8 @@ final class DanmakuOverlayView: UIView {
     private var comments: [DanmakuComment] = []
     private var signature = 0
     private var labels: [ItemLabel] = []
+    private var reusableLabels: [ItemLabel] = []
+    private static let maxReusableLabels = 64
     private var nextIndex = 0
 
     /// 一整套弹幕观感。字段与「弹幕设置」页一一对应，页面改哪一项这里就跟着变。
@@ -182,6 +184,32 @@ final class DanmakuOverlayView: UIView {
 
 
     private var displayLink: CADisplayLink?
+    private var isHighFrameRateActive = false
+
+    private static let activeFrameRateRange = CAFrameRateRange(
+        minimum: 80,
+        maximum: 120,
+        preferred: 120
+    )
+    private static let idleFrameRateRange = CAFrameRateRange(
+        minimum: 10,
+        maximum: 15,
+        preferred: 15
+    )
+
+    /// 弱引用代理：避免 `CADisplayLink` 被主 RunLoop 持有时反向强引用 `DanmakuOverlayView`。
+    @MainActor
+    private final class DisplayLinkProxy: NSObject {
+        weak var owner: DanmakuOverlayView?
+
+        init(_ owner: DanmakuOverlayView) {
+            self.owner = owner
+        }
+
+        @objc func handleStep() {
+            owner?.step()
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -195,6 +223,11 @@ final class DanmakuOverlayView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateDisplayLinkState()
+    }
+
     // MARK: - 外部更新
 
     func apply(
@@ -202,7 +235,7 @@ final class DanmakuOverlayView: UIView {
         style newStyle: Style,
         playbackRate rate: Double
     ) {
-        let newSignature = newComments.count &* 31 &+ Int((newComments.last?.time ?? 0) * 10)
+        let newSignature = Self.commentsSignature(newComments)
         let filtersChanged = lastFilterSignature != nil
             && lastFilterSignature != newStyle.filterSignature
         if newSignature != signature || filtersChanged {
@@ -224,6 +257,21 @@ final class DanmakuOverlayView: UIView {
         if !newStyle.enabled {
             clearLabels()
         }
+        updateDisplayLinkState()
+    }
+
+    private static func commentsSignature(_ list: [DanmakuComment]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(list.count)
+        if let first = list.first {
+            hasher.combine(first.id)
+            hasher.combine(Int(first.time * 100))
+        }
+        if let last = list.last {
+            hasher.combine(last.id)
+            hasher.combine(Int(last.time * 100))
+        }
+        return hasher.finalize()
     }
 
     /// 自己发的弹幕：不排队等时钟，立刻从右边飞出去。
@@ -243,15 +291,15 @@ final class DanmakuOverlayView: UIView {
             source: "self"
         )
         spawn(comment, now: now)
+        updateDisplayLinkState()
     }
 
     /// 5 秒内内容完全相同的合并成一条（main: mergeDuplicateDanmakus，窗口 5 秒）。
-    private static func merged(_ comments: [DanmakuComment]) -> [DanmakuComment] {
-        guard !comments.isEmpty else { return comments }
+    /// 调用前 `ordered` 已按 `time` 升序排列，无需重复排序。
+    private static func merged(_ ordered: [DanmakuComment]) -> [DanmakuComment] {
+        guard !ordered.isEmpty else { return ordered }
         var result: [DanmakuComment] = []
-        result.reserveCapacity(comments.count)
-        // 按时间顺序扫，记住每条文本最近一次出现的时间。
-        let ordered = comments.sorted { $0.time < $1.time }
+        result.reserveCapacity(ordered.count)
         var lastSeen: [String: Double] = [:]
         for comment in ordered {
             if let seen = lastSeen[comment.text], comment.time - seen < 5 {
@@ -327,26 +375,56 @@ final class DanmakuOverlayView: UIView {
     }
 
     private func startDisplayLink() {
-        guard displayLink == nil else { return }
-        let link = CADisplayLink(target: self, selector: #selector(step))
-        link.preferredFrameRateRange = CAFrameRateRange(
-            minimum: 80,
-            maximum: 120,
-            preferred: 120
-        )
+        guard displayLink == nil else {
+            updateDisplayLinkState()
+            return
+        }
+        let proxy = DisplayLinkProxy(self)
+        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.handleStep))
+        link.preferredFrameRateRange = Self.idleFrameRateRange
+        isHighFrameRateActive = false
         link.add(to: .main, forMode: .common)
         displayLink = link
+        updateDisplayLinkState()
     }
 
     private func stopDisplayLink() {
         displayLink?.invalidate()
         displayLink = nil
+        isHighFrameRateActive = false
+    }
+
+    /// 无弹幕、关闭弹幕或视图尺寸未就绪时彻底暂停 `CADisplayLink`（0Hz），避免锁死 ProMotion 高刷白耗电。
+    private func updateDisplayLinkState() {
+        guard let link = displayLink else { return }
+        let shouldPause = window == nil
+            || !enabled
+            || (comments.isEmpty && labels.isEmpty)
+            || bounds.width <= 1
+            || bounds.height <= 1
+        if link.isPaused != shouldPause {
+            link.isPaused = shouldPause
+        }
+        guard !shouldPause else { return }
+        let activelyAnimating = (clock?.isPlayingNow == true)
+            && (clock?.isStalledNow == false)
+            && (clock?.hasStartedPlayback == true)
+        setHighFrameRate(activelyAnimating && (!labels.isEmpty || nextIndex < comments.count))
+    }
+
+    private func setHighFrameRate(_ high: Bool) {
+        guard let link = displayLink, isHighFrameRateActive != high else { return }
+        isHighFrameRateActive = high
+        link.preferredFrameRateRange = high ? Self.activeFrameRateRange : Self.idleFrameRateRange
     }
 
     private var loggedFirstStep = false
 
-    @objc private func step() {
-        guard enabled, !comments.isEmpty, bounds.width > 1, bounds.height > 1 else { return }
+    private func step() {
+        guard enabled, (!comments.isEmpty || !labels.isEmpty), bounds.width > 1, bounds.height > 1 else {
+            updateDisplayLinkState()
+            return
+        }
         if !loggedFirstStep {
             loggedFirstStep = true
             KazumiLogBuffer.player(
@@ -354,26 +432,27 @@ final class DanmakuOverlayView: UIView {
             )
         }
         let now = clockNow()
-        if now < lastNow - 1.5 || now > lastNow + 3 {
+        let timeJump = now < lastNow - 1.5 || now > lastNow + 3
+        if timeJump {
             clearLabels()
             nextIndex = lowerBound(now)
         }
+        let timeUnchanged = abs(now - lastNow) < 0.0001
         lastNow = now
-        // 没在播就不出新弹幕：暂停停在 0 秒时，0 秒附近那些照样会被发出来，
-        // 看上去就是「还没播弹幕先飘了」（LP 3626）。已经在飞的照旧停着不动，
-        // 因为位置是按播放时间算的。
-        //
-        // 再加一道「真起播」门（LP 5033）：只判 `isPlayingNow` 不够——它只表示内核没暂停，
-        // 播放页刚打开、片源还在加载时它就是 true，而进度还是 0，于是 0 秒那批弹幕先飘出来，
-        // 看着就是「还没开始播、进度都没出来就冒 0:00 的弹幕」。
-        // 所以改用 `hasStartedPlayback`（首帧到了且进度过 0.15，见 `MPVPlayerContainer`），
-        // 换集/停止时它自己复位，这里不用再管。
-        guard let clock, clock.hasStartedPlayback else {
-            layoutLabels(at: now)
+        let activelyPlaying = (clock?.isPlayingNow == true)
+            && (clock?.isStalledNow == false)
+            && (clock?.hasStartedPlayback == true)
+        if !activelyPlaying {
+            setHighFrameRate(false)
+            // 暂停或缓冲期间时间未变，无需每帧重算所有 label transform。
+            if !timeUnchanged || timeJump {
+                layoutLabels(at: now)
+            }
             return
         }
         emit(upTo: now)
         layoutLabels(at: now)
+        setHighFrameRate(!labels.isEmpty || nextIndex < comments.count)
     }
 
     private func emit(upTo now: Double) {
@@ -397,7 +476,7 @@ final class DanmakuOverlayView: UIView {
         default: return
         }
 
-        let label = ItemLabel()
+        let label = dequeueLabel()
         let size = max(10, min(48, style.fontSize))
         let font = UIFont.systemFont(ofSize: size, weight: Self.weight(style.fontWeight))
         // 关掉「弹幕颜色」就一律白字（main 的 danmakuColor）。
@@ -438,8 +517,11 @@ final class DanmakuOverlayView: UIView {
         label.layer.rasterizationScale = currentScreenScale
         label.layer.allowsEdgeAntialiasing = true
 
-        // 轨道满了：海量弹幕叠着画，否则这条就不画了。
-        guard let lane = laneIndex(mode: mode, width: width, now: now) else { return }
+        // 轨道满了：海量弹幕叠着画，否则这条就不画了（回收刚出池的 label）。
+        guard let lane = laneIndex(mode: mode, width: width, now: now) else {
+            recycleLabel(label)
+            return
+        }
         label.lane = lane
         addSubview(label)
         labels.append(label)
@@ -474,7 +556,7 @@ final class DanmakuOverlayView: UIView {
         for label in labels {
             let elapsed = now - label.startTime
             if elapsed > label.duration + 0.6 || elapsed < -1.5 {
-                label.removeFromSuperview()
+                recycleLabel(label)
                 continue
             }
             position(label, at: now)
@@ -553,9 +635,28 @@ final class DanmakuOverlayView: UIView {
         return true
     }
 
+    private func dequeueLabel() -> ItemLabel {
+        if let reused = reusableLabels.popLast() {
+            reused.transform = .identity
+            reused.baseY = .nan
+            return reused
+        }
+        return ItemLabel()
+    }
+
+    private func recycleLabel(_ label: ItemLabel) {
+        label.removeFromSuperview()
+        label.attributedText = nil
+        label.transform = .identity
+        label.baseY = .nan
+        if reusableLabels.count < Self.maxReusableLabels {
+            reusableLabels.append(label)
+        }
+    }
+
     private func clearLabels() {
         for label in labels {
-            label.removeFromSuperview()
+            recycleLabel(label)
         }
         labels.removeAll()
         sampleFilled = false
