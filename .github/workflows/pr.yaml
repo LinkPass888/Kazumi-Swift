@@ -257,22 +257,22 @@ jobs:
         run: |
           set -euo pipefail
           SIM_UDID="$(xcrun simctl list devices available -j | python3 -c '
-          import json, sys
+          import json, re, sys
           data = json.load(sys.stdin).get("devices", {})
           candidates = []
-          for runtime in sorted(data.keys(), reverse=True):
+          for runtime, devs in data.items():
               if "SimRuntime.iOS-" not in runtime:
                   continue
-              for dev in data[runtime]:
-                  if dev.get("isAvailable") and "iPhone" in dev.get("name", ""):
-                      prio = 0 if dev.get("name") == "iPhone 18 Pro" else (1 if "Pro" in dev.get("name", "") else 2)
-                      candidates.append((prio, runtime, dev["name"], dev["udid"]))
-              if candidates:
-                  break
+              rt_prio = 0 if re.search(r"SimRuntime\.iOS-\d+-\d+$", runtime) else 1
+              for dev in devs:
+                  name = dev.get("name", "")
+                  if dev.get("isAvailable") and "iPhone" in name:
+                      dev_prio = 0 if name == "iPhone 18 Pro" else (1 if "Pro" in name else 2)
+                      candidates.append((rt_prio, dev_prio, runtime, name, dev["udid"]))
           if not candidates:
               sys.exit("未找到可用的 iPhone 模拟器")
-          candidates.sort(key=lambda item: item[0])
-          _, rt, name, udid = candidates[0]
+          candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+          _, _, rt, name, udid = candidates[0]
           print(f"{name} ({rt}) -> {udid}", file=sys.stderr)
           print(udid)
           ')"
@@ -289,6 +289,7 @@ jobs:
             -project "$PROJECT" \
             -scheme "$SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -parallel-testing-enabled NO \
             -derivedDataPath "$RUNNER_TEMP/DerivedData-test" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-test" \
             DANDAN_APP_ID="${DANDAN_APP_ID:-}" \

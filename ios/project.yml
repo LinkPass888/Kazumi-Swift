@@ -281,7 +281,7 @@ schemes:
       gatherCoverageData: false
       targets:
         - name: RunnerTests
-          parallelizable: true
+          parallelizable: false
     profile:
       config: Release
     analyze:
