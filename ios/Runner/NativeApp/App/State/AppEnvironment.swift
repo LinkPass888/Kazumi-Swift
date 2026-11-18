@@ -188,18 +188,7 @@ final class AppEnvironment {
             lastNotificationRefreshAt = Date()
             return
         }
-        await withTaskGroup(of: Void.self) { group in
-            for entry in watching {
-                let id = entry.id
-                let airDate = entry.airDate
-                group.addTask { @MainActor in
-                    await BangumiAirTimeService.shared.ensureLoaded(
-                        subjectID: id,
-                        airDate: airDate
-                    )
-                }
-            }
-        }
+        await BangumiAirTimeService.shared.ensureLoaded(entries: watching)
         await BangumiAirTimeService.shared.ensureAniListLoaded(watching.map(\.id))
         await UpdateNotificationScheduler.shared.reschedule(watching: watching)
         lastNotificationRefreshAt = Date()

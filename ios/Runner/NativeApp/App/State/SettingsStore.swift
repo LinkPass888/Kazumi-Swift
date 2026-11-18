@@ -949,7 +949,8 @@ final class SettingsStore {
         playSpeed = PlaybackSpeed.nearest(Self.read(defaults, SettingsKey.playSpeed, 1.0))
         playResume = Self.read(defaults, SettingsKey.playResume, true)
         backgroundPlayback = Self.read(defaults, SettingsKey.backgroundPlayback, false)
-        backgroundAutoPiP = Self.read(defaults, SettingsKey.backgroundAutoPiP, true)
+        let resolvedAutoPiP = Self.read(defaults, SettingsKey.backgroundAutoPiP, true)
+        backgroundAutoPiP = resolvedAutoPiP
         resumeOnForeground = Self.read(defaults, SettingsKey.resumeOnForeground, true)
         brightnessVolumeGesture = Self.read(defaults, SettingsKey.brightnessVolumeGesture, true)
         privateMode = Self.read(defaults, SettingsKey.privateMode, false)
@@ -957,7 +958,7 @@ final class SettingsStore {
         let savedHWDecMode = HardwareDecodeMode(
             rawValue: Self.read(defaults, SettingsKey.hardwareDecodeMode, HardwareDecodeMode.videotoolbox.rawValue)
         ) ?? .videotoolbox
-        hardwareDecodeMode = backgroundAutoPiP ? .videotoolboxCopy : savedHWDecMode
+        hardwareDecodeMode = resolvedAutoPiP ? .videotoolboxCopy : savedHWDecMode
         // 老版本只写过 `lowMemoryMode` 那个布尔。它不是这里的三档键，读不到就回默认档，
         // 与 main「旧值留着、新键没写过就当自动」的做法一致。
         lowMemoryMode = LowMemoryMode(

@@ -162,6 +162,27 @@ final class BangumiAirTimeService {
         }
     }
 
+    /// 批量加载一组追番条目所属季度（以及当前季度）的时刻表，按季度去重并发拉取。
+    func ensureLoaded(entries: [LibraryEntry]) async {
+        var needed = Set<String>()
+        for entry in entries where times[entry.id] == nil {
+            needed.insert(Self.currentSeason().id)
+            if let season = Self.season(of: entry.airDate) {
+                needed.insert(season.id)
+            }
+        }
+        let pendingSeasons = needed.subtracting(loadedSeasons).sorted()
+        guard !pendingSeasons.isEmpty else { return }
+        let tasks = pendingSeasons.map { season in
+            Task {
+                await self.loadSeason(id: season)
+            }
+        }
+        for task in tasks {
+            await task.value
+        }
+    }
+
     /// 加载某个日期所属季度（以及当前季度）的时刻表。
     ///
     /// 时间表页整季展示时会一次性需要几十部番的时刻，逐部调用
