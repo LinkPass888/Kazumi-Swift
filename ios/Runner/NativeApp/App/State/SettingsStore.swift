@@ -530,8 +530,14 @@ final class SettingsStore {
     }
 
     /// 切到后台时自动起画中画，让画面继续看得见（默认开启）。
+    /// 开启期间画中画需读取可复制帧，因此自动将硬件解码模式切为非直通（`videotoolbox-copy`）。
     var backgroundAutoPiP: Bool {
-        didSet { persist(backgroundAutoPiP, SettingsKey.backgroundAutoPiP) }
+        didSet {
+            persist(backgroundAutoPiP, SettingsKey.backgroundAutoPiP)
+            if backgroundAutoPiP, hardwareDecodeMode != .videotoolboxCopy {
+                hardwareDecodeMode = .videotoolboxCopy
+            }
+        }
     }
 
     /// 回到前台时，把「因为切后台才停下的」那一集自动接着播（默认开启）。
@@ -948,9 +954,10 @@ final class SettingsStore {
         brightnessVolumeGesture = Self.read(defaults, SettingsKey.brightnessVolumeGesture, true)
         privateMode = Self.read(defaults, SettingsKey.privateMode, false)
         hardwareDecodeEnabled = Self.read(defaults, SettingsKey.hardwareDecodeEnabled, true)
-        hardwareDecodeMode = HardwareDecodeMode(
+        let savedHWDecMode = HardwareDecodeMode(
             rawValue: Self.read(defaults, SettingsKey.hardwareDecodeMode, HardwareDecodeMode.videotoolbox.rawValue)
         ) ?? .videotoolbox
+        hardwareDecodeMode = backgroundAutoPiP ? .videotoolboxCopy : savedHWDecMode
         // 老版本只写过 `lowMemoryMode` 那个布尔。它不是这里的三档键，读不到就回默认档，
         // 与 main「旧值留着、新键没写过就当自动」的做法一致。
         lowMemoryMode = LowMemoryMode(
@@ -1066,7 +1073,7 @@ final class SettingsStore {
         brightnessVolumeGesture = true
         privateMode = false
         hardwareDecodeEnabled = true
-        hardwareDecodeMode = .videotoolbox
+        hardwareDecodeMode = .videotoolboxCopy
         lowMemoryMode = .auto
         playSpeed = 1.0
         buttonSkipTime = 80

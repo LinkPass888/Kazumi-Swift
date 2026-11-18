@@ -30,12 +30,13 @@ enum PlayerIconOptical: Equatable, Hashable {
     }
 }
 
-/// 所有 SwiftUI 里的 SF Symbol 都走这里：18pt Medium + imageScale(.medium) 是基准，
-/// 再用 scaleEffect 做光学补偿，而不是改 frame 或 resizable。
+/// 所有 SwiftUI 里的 SF Symbol 都走这里：按 L1 / L2 / L3 三级字号与字重基准渲染，
+/// 配合渲染模式与轻量 scaleEffect 做光学补偿，而不是改 frame 或 resizable。
 struct PlayerIconModifier: ViewModifier {
-    var pointSize: CGFloat = 18
+    var pointSize: CGFloat = 16
     var weight: Font.Weight = .medium
     var optical: PlayerIconOptical = .standard
+    var renderingMode: SymbolRenderingMode? = nil
 
     private var scale: CGFloat {
         switch optical {
@@ -46,21 +47,38 @@ struct PlayerIconModifier: ViewModifier {
         }
     }
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content
-            .font(.system(size: pointSize, weight: weight))
-            .imageScale(.medium)
-            .scaleEffect(scale)
+        if let renderingMode {
+            content
+                .font(.system(size: pointSize, weight: weight))
+                .imageScale(.medium)
+                .symbolRenderingMode(renderingMode)
+                .scaleEffect(scale)
+        } else {
+            content
+                .font(.system(size: pointSize, weight: weight))
+                .imageScale(.medium)
+                .scaleEffect(scale)
+        }
     }
 }
 
 extension View {
     func playerIcon(
-        pointSize: CGFloat = 18,
+        pointSize: CGFloat = 16,
         weight: Font.Weight = .medium,
-        optical: PlayerIconOptical = .standard
+        optical: PlayerIconOptical = .standard,
+        renderingMode: SymbolRenderingMode? = nil
     ) -> some View {
-        modifier(PlayerIconModifier(pointSize: pointSize, weight: weight, optical: optical))
+        modifier(
+            PlayerIconModifier(
+                pointSize: pointSize,
+                weight: weight,
+                optical: optical,
+                renderingMode: renderingMode
+            )
+        )
     }
 }
 
@@ -68,17 +86,27 @@ extension View {
 ///
 /// - 有 action 时生成 SwiftUI Button，沿用 PlayerPressStyle 的按压反馈；
 /// - 没有 action 时只当容器用，用来包 SystemMenuButton 这类 UIViewRepresentable；
-/// - 两种情况下外层热区都严格 40×40，内容在容器内居中。
+/// - 视觉图标与触控热区解耦：外层热区按 `hitSize × hitSize`（紧凑栏 40、宽栏/主控/返回 44），内容居中。
 struct PlayerIconButton<Content: View>: View {
+    private let hitSize: CGFloat
     private let content: Content
     private let action: (() -> Void)?
 
-    init(action: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+    init(
+        hitSize: CGFloat = 40,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.hitSize = hitSize
         self.action = action
         self.content = content()
     }
 
-    init(@ViewBuilder content: () -> Content) {
+    init(
+        hitSize: CGFloat = 40,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.hitSize = hitSize
         self.action = nil
         self.content = content()
     }
@@ -92,7 +120,7 @@ struct PlayerIconButton<Content: View>: View {
                 content
             }
         }
-        .frame(width: 40, height: 40)
+        .frame(width: hitSize, height: hitSize)
         .contentShape(Rectangle())
     }
 }

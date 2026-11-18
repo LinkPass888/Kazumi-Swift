@@ -178,8 +178,9 @@ extension JSONValue {
 
     static func serialize(_ value: JSONValue, pretty: Bool) -> String {
         let options: JSONSerialization.WritingOptions = pretty ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes] : [.withoutEscapingSlashes]
-        guard JSONSerialization.isValidJSONObject(value.foundationObject),
-              let data = try? JSONSerialization.data(withJSONObject: value.foundationObject, options: options),
+        let object = value.foundationObject
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: options),
               let text = String(data: data, encoding: .utf8) else {
             return "{}"
         }

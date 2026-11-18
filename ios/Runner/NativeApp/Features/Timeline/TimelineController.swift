@@ -181,7 +181,7 @@ final class TimelineController {
         if isCurrent {
             cached = await BangumiAPI.cachedCalendar()
         } else {
-            cached = TimelineCache.shared.seasonRawDays(start: AnimeSeason.seasonRange(for: date).start)
+            cached = await TimelineCache.shared.seasonRawDays(start: AnimeSeason.seasonRange(for: date).start)
                 .map { days in
                     days.map { day in
                         guard case let .array(list) = day else { return [] }
@@ -379,28 +379,13 @@ final class TimelineController {
         return merged
     }
 
-    /// 对应 _getSchedulesBySeason：每页 20 条、最多 4 页，按放送星期分列。
+    /// 对应 _getSchedulesBySeason：每页 20 条、最多 4 页并发拉取，按放送星期分列并落盘缓存。
     private func seasonCalendar(start: String, end: String) async -> [[BangumiItem]] {
         if BangumiAcceleration.isMirrorEnabled {
             let mirror = await BangumiAPI.mirrorSeasonCalendar(start: start, end: end)
             if !mirror.isEmpty { return mirror }
         }
-        var result: [[BangumiItem]] = Array(repeating: [], count: 7)
-        let pageCount = 4
-        let limit = 20
-        for page in 0..<pageCount {
-            let dayLists = await BangumiAPI.calendarBySearch(
-                dateRange: [start, end],
-                limit: limit,
-                offset: page * limit
-            )
-            guard dayLists.count == 7 else { break }
-            for day in 0..<7 {
-                result[day].append(contentsOf: dayLists[day])
-            }
-            if dayLists.allSatisfy(\.isEmpty) { break }
-        }
-        return result
+        return await BangumiAPI.seasonCalendarBySearch(start: start, end: end)
     }
 
     /// 对应 changeSort。

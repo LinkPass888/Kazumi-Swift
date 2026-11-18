@@ -80,9 +80,9 @@ final class AniListClient {
     private let cacheURL: URL
 
     private init() {
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 15
         sessionProvider = ProxyAwareURLSession {
+            let configuration = URLSessionConfiguration.default
+            configuration.timeoutIntervalForRequest = 15
             KazumiNetworkPolicy.applyProxy(to: configuration)
             return configuration
         }

@@ -77,6 +77,15 @@ struct DownloadScreen: View {
 
     private var list: some View {
         List {
+            if !isSelecting {
+                Section {
+                    globalControlBar
+                }
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+
             ForEach(downloads.records) { record in
                 Section {
                     header(record)
@@ -97,6 +106,56 @@ struct DownloadScreen: View {
         .scrollEdgeEffectStyle(.soft, for: .top)
         // 多选时不要再让人点到左滑删除：误触会删文件。
         .environment(\.defaultMinListRowHeight, 44)
+    }
+
+    /// 顶部全局控制栏：保持分组页实面圆角卡片风格，提供「全部开始」与「全部暂停」。
+    private var globalControlBar: some View {
+        let canStart = downloads.hasStartableEpisodes
+        let canPause = downloads.hasActiveEpisodes
+        let accent = KazumiPalette.accent(for: colorScheme)
+        let rowFill = KazumiPalette.groupedRow(for: colorScheme)
+
+        return HStack(spacing: 10) {
+            Button {
+                downloads.startAll()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.fill")
+                        .font(.caption.weight(.semibold))
+                    Text("全部开始")
+                        .font(.subheadline.weight(.medium))
+                }
+                .foregroundStyle(canStart ? accent : Color.secondary.opacity(0.45))
+                .frame(maxWidth: .infinity, minHeight: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(rowFill)
+                )
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canStart)
+
+            Button {
+                downloads.pauseAll()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "pause.fill")
+                        .font(.caption.weight(.semibold))
+                    Text("全部暂停")
+                        .font(.subheadline.weight(.medium))
+                }
+                .foregroundStyle(canPause ? Color.primary : Color.secondary.opacity(0.45))
+                .frame(maxWidth: .infinity, minHeight: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(rowFill)
+                )
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canPause)
+        }
     }
 
     private var emptyState: some View {
@@ -258,9 +317,19 @@ struct DownloadScreen: View {
                     .foregroundStyle(episode.status == .failed ? Color.red : .secondary)
                     .lineLimit(2)
                 if episode.status == .downloading || episode.status == .resolving {
-                    ProgressView(value: max(0, min(1, episode.progress)))
-                        .tint(KazumiPalette.accent(for: colorScheme))
-                        .padding(.top, 1)
+                    if episode.status == .downloading,
+                       episode.totalBytes <= 0,
+                       episode.progress <= 0,
+                       episode.downloadedBytes > 0 {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                            .tint(KazumiPalette.accent(for: colorScheme))
+                            .padding(.top, 1)
+                    } else {
+                        ProgressView(value: max(0, min(1, episode.progress)))
+                            .tint(KazumiPalette.accent(for: colorScheme))
+                            .padding(.top, 1)
+                    }
                 }
             }
 
@@ -333,10 +402,26 @@ struct DownloadScreen: View {
             return String(localized: "正在解析播放地址")
         case .downloading:
             let percent = Int((episode.progress * 100).rounded())
-            let size = ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
-            return episode.totalBytes > 0 ? String(localized: "下载中 \(String(describing: percent))% · \(String(describing: size))") : String(localized: "下载中 \(String(describing: percent))%")
+            if episode.totalBytes > 0 {
+                let totalSize = ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
+                if episode.downloadedBytes > 0 {
+                    let downloadedSize = ByteCountFormatter.string(fromByteCount: episode.downloadedBytes, countStyle: .file)
+                    return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize)) / \(String(describing: totalSize))")
+                }
+                return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: totalSize))")
+            }
+            if episode.downloadedBytes > 0 {
+                let downloadedSize = ByteCountFormatter.string(fromByteCount: episode.downloadedBytes, countStyle: .file)
+                return percent > 0
+                    ? String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize))")
+                    : String(localized: "下载中 · 已下 \(String(describing: downloadedSize))")
+            }
+            return String(localized: "下载中 \(String(describing: percent))%")
         case .paused:
-            return String(localized: "已暂停")
+            let percent = Int((episode.progress * 100).rounded())
+            return percent > 0
+                ? String(localized: "已暂停 · \(String(describing: percent))%")
+                : String(localized: "已暂停")
         case .completed:
             // 文件不在时大小是假的，写清楚能重下，别只写一个数。
             guard episode.fileName != nil else { return String(localized: "文件不在，可重新下载") }

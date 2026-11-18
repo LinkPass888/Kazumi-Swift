@@ -116,14 +116,14 @@ final class KazumiImageLoader: @unchecked Sendable {
         // 装下整屏加上前后几屏，滚动回来不必重新解码。
         memory.totalCostLimit = 128 * 1024 * 1024
 
-        let configuration = URLSessionConfiguration.default
-        // 不再要 URLSession 自己那份缓存：它存的是同一批图片字节，
-        // 磁盘上会跟下面按 URL 落盘的文件重复一遍（LP 3442 说的 200 多 M）。
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 20
-        configuration.httpMaximumConnectionsPerHost = 6
         sessionProvider = ProxyAwareURLSession {
+            let configuration = URLSessionConfiguration.default
+            // 不再要 URLSession 自己那份缓存：它存的是同一批图片字节，
+            // 磁盘上会跟下面按 URL 落盘的文件重复一遍（LP 3442 说的 200 多 M）。
+            configuration.urlCache = nil
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            configuration.timeoutIntervalForRequest = 20
+            configuration.httpMaximumConnectionsPerHost = 6
             KazumiNetworkPolicy.applyProxy(to: configuration)
             return configuration
         }
@@ -338,21 +338,34 @@ final class KazumiImageLoader: @unchecked Sendable {
 
     private func loadFromDisk(key: String, bucket: Int) async -> Bool {
         let name = Self.fileName(for: key)
-        let canonical = directory.appendingPathComponent(name)
-        for fileURL in [canonical] + legacyDirectories.map({ $0.appendingPathComponent(name) }) {
-            guard let data = try? Data(contentsOf: fileURL) else { continue }
-            if let image = await Self.decode(data, pixelSize: bucket) {
-                store(image, key: key, bucket: bucket)
-                if fileURL != canonical {
-                    try? ensureDirectory()
-                    try? FileManager.default.copyItem(at: fileURL, to: canonical)
+        let targetDirectory = directory
+        let candidates = [directory.appendingPathComponent(name)]
+            + legacyDirectories.map { $0.appendingPathComponent(name) }
+        // 读盘、迁移、坏文件清理与 ImageIO 解码一并放进后台任务，不在主线程同步 Data(contentsOf:)。
+        let decoded = await Task.detached(priority: .userInitiated) { () -> DecodeResult in
+            let canonical = candidates[0]
+            let manager = FileManager.default
+            for fileURL in candidates {
+                guard let data = try? Data(contentsOf: fileURL) else { continue }
+                if let image = Self.decodeSynchronously(data, pixelSize: bucket) {
+                    if fileURL != canonical {
+                        try? manager.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+                        try? manager.copyItem(at: fileURL, to: canonical)
+                    } else if let modified = (try? manager.attributesOfItem(atPath: canonical.path)[.modificationDate]) as? Date,
+                              Date().timeIntervalSince(modified) > 3_600 {
+                        // 命中超过 1 小时未刷新的热图时轻量刷新修改时间，配合 prune 实现近似 LRU 淘汰。
+                        try? manager.setAttributes([.modificationDate: Date()], ofItemAtPath: canonical.path)
+                    }
+                    return DecodeResult(image: image)
                 }
-                return true
+                // 文件坏了就删掉，别一直拿它解码失败。
+                try? manager.removeItem(at: fileURL)
             }
-            // 文件坏了就删掉，别一直拿它解码失败。
-            try? FileManager.default.removeItem(at: fileURL)
-        }
-        return false
+            return DecodeResult(image: nil)
+        }.value
+        guard let image = decoded.image else { return false }
+        store(image, key: key, bucket: bucket)
+        return true
     }
 
     /// 每写满一批就检查一次容量：原来只在启动时检查，用起来只涨不降。
@@ -378,23 +391,27 @@ final class KazumiImageLoader: @unchecked Sendable {
     /// 原图解码出来，正是「一屏几十张就把内存挤爆」的来源。
     private static func decode(_ data: Data, pixelSize: Int) async -> UIImage? {
         await Task.detached(priority: .userInitiated) { () -> DecodeResult in
-            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-                return DecodeResult(image: nil)
-            }
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceThumbnailMaxPixelSize: max(64, pixelSize),
-            ]
-            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
-                return DecodeResult(image: UIImage(cgImage: cgImage))
-            }
-            if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-                return DecodeResult(image: UIImage(cgImage: cgImage))
-            }
-            return DecodeResult(image: nil)
+            DecodeResult(image: decodeSynchronously(data, pixelSize: pixelSize))
         }.value.image
+    }
+
+    private static func decodeSynchronously(_ data: Data, pixelSize: Int) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(64, pixelSize),
+        ]
+        if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+            return UIImage(cgImage: cgImage)
+        }
+        if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            return UIImage(cgImage: cgImage)
+        }
+        return nil
     }
 
     /// 解码结果。UIImage 不是 Sendable，用一个带 @unchecked 的盒子从后台线程带回来。
@@ -452,20 +469,23 @@ final class KazumiImageLoader: @unchecked Sendable {
         }.value
     }
 
-    /// 只按容量淘汰，不再按天数整批过期。
+    /// 只按容量做近似 LRU 淘汰（取访问时间与最近刷新时间的较新者），不再按天数整批过期。
     private static func prune(directory: URL) {
         let manager = FileManager.default
+        let keys: [URLResourceKey] = [.contentAccessDateKey, .contentModificationDateKey, .fileSizeKey]
         guard let files = try? manager.contentsOfDirectory(
             at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
+            includingPropertiesForKeys: keys
         ) else { return }
 
         var survivors: [(url: URL, date: Date, size: Int)] = []
         var total = 0
 
         for file in files {
-            let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-            let date = values?.contentModificationDate ?? .distantPast
+            let values = try? file.resourceValues(forKeys: Set(keys))
+            let modified = values?.contentModificationDate ?? .distantPast
+            let accessed = values?.contentAccessDate ?? .distantPast
+            let date = max(modified, accessed)
             let size = values?.fileSize ?? 0
             survivors.append((file, date, size))
             total += size
@@ -539,9 +559,17 @@ final class KazumiImageLoader: @unchecked Sendable {
 
     // MARK: - 文件名
 
-    /// 用 URL 的 SHA256 做文件名：长度固定、不含路径分隔符，也避免中文/特殊字符。
+    private static let hexDigits: [UInt8] = Array("0123456789abcdef".utf8)
+
+    /// 用 URL 的 SHA256 做文件名：长度固定、不含路径分隔符，查表一次写入 64 字节避免逐字节格式化分配。
     private static func fileName(for key: String) -> String {
         let digest = SHA256.hash(data: Data(key.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(64)
+        for byte in digest {
+            bytes.append(hexDigits[Int(byte >> 4)])
+            bytes.append(hexDigits[Int(byte & 0x0F)])
+        }
+        return String(decoding: bytes, as: UTF8.self)
     }
 }

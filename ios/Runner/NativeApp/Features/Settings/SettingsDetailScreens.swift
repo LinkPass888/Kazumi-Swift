@@ -70,7 +70,7 @@ struct PlayerSettingsScreen: View {
                             Text(mode.title).tag(mode)
                         }
                     }
-                    .disabled(!settings.hardwareDecodeEnabled)
+                    .disabled(!settings.hardwareDecodeEnabled || settings.backgroundAutoPiP)
                     // 跟播放器里「更多 → 超分辨率」是同一个值，两处改哪边都算。
                     Picker("超分辨率", selection: superResolutionBinding) {
                         ForEach(SuperResolutionMode.allCases) { mode in
@@ -89,7 +89,7 @@ struct PlayerSettingsScreen: View {
             } header: {
                 Text("解码与渲染")
             } footer: {
-                Text("解码设置重新打开播放器后生效。直通为零拷贝；非直通会多一次内存拷贝。")
+                Text("解码设置重新打开播放器后生效。直通为零拷贝；非直通会多一次内存拷贝。开启「后台自动画中画」时固定使用非直通模式。")
             }
             // `Section("标题") { } footer: { }` 这个重载不存在，带页脚就得改成 header 写法。
             Section {
@@ -289,8 +289,11 @@ struct PlayerSettingsScreen: View {
 
     private var hardwareDecodeModeBinding: Binding<HardwareDecodeMode> {
         Binding(
-            get: { settings.hardwareDecodeMode },
-            set: { settings.hardwareDecodeMode = $0 }
+            get: { settings.backgroundAutoPiP ? .videotoolboxCopy : settings.hardwareDecodeMode },
+            set: { newValue in
+                guard !settings.backgroundAutoPiP else { return }
+                settings.hardwareDecodeMode = newValue
+            }
         )
     }
 
@@ -1016,9 +1019,8 @@ struct NotificationSettingsScreen: View {
     /// 系统通知权限（进页面时查一次，申请/跳设置回来再查）。
     @State private var permission: UNAuthorizationStatus = .notDetermined
     @State private var isBusy = false
-    /// 「查看排程」那一次读出来的已排定提醒。
+    /// 「查看排程」面板展示状态。
     @State private var isShowingSchedule = false
-    @State private var scheduled: [ScheduledUpdateNotification] = []
 
     var body: some View {
         Form {
@@ -1062,7 +1064,7 @@ struct NotificationSettingsScreen: View {
             Section {
                 Group {
                     Button {
-                        Task { await showSchedule() }
+                        isShowingSchedule = true
                     } label: {
                         HStack {
                             Text("查看排程")
@@ -1075,6 +1077,7 @@ struct NotificationSettingsScreen: View {
                                 .foregroundStyle(.tertiary)
                         }
                     }
+                    .disabled(isBusy)
                 }
                 .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
             } header: {
@@ -1086,7 +1089,7 @@ struct NotificationSettingsScreen: View {
         .kazumiSettingsDetail("通知设置")
         .task { await refreshPermission() }
         .sheet(isPresented: $isShowingSchedule) {
-            UpdateScheduleSheet(items: scheduled)
+            UpdateScheduleSheet()
         }
         .onChange(of: settings.updateNotificationEnabled) { _, _ in
             Task { await environment.refreshUpdateNotifications() }
@@ -1180,22 +1183,27 @@ struct NotificationSettingsScreen: View {
             }
         }
     }
-
-    private func showSchedule() async {
-        scheduled = await UpdateNotificationScheduler.shared.scheduledNotifications()
-        isShowingSchedule = true
-    }
 }
 
-/// 「通知排程」弹窗：列出已排定的提醒，按时间先后。
+/// 「通知排程」弹窗：列出已排定的提醒，按时间先后；若刚追番或排程尚未落地，先等待/补排再展示。
 private struct UpdateScheduleSheet: View {
-    let items: [ScheduledUpdateNotification]
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(SettingsStore.self) private var settings
+    @State private var items: [ScheduledUpdateNotification] = []
+    @State private var isLoading = true
 
     var body: some View {
         NavigationStack {
             List {
-                if items.isEmpty {
-                    Text(String(localized: "当前没有已排定的提醒。\n标记「在看」的番剧有更新时间数据时，会自动排定。"))
+                if isLoading && items.isEmpty {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text(String(localized: "正在同步通知排程…"))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if items.isEmpty {
+                    Text(String(localized: "当前没有已排定的提醒。\n标记「在看」的番剧在未来 7 天内有更新时间数据时，会自动排定。"))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -1211,8 +1219,33 @@ private struct UpdateScheduleSheet: View {
             }
             .navigationTitle("通知排程")
             .navigationBarTitleDisplayMode(.inline)
+            .refreshable {
+                await reload(forceRefresh: true)
+            }
         }
         .presentationDetents([.medium, .large])
+        .task {
+            await reload(forceRefresh: false)
+        }
+    }
+
+    private func reload(forceRefresh: Bool) async {
+        isLoading = true
+        defer { isLoading = false }
+        if forceRefresh {
+            await environment.refreshUpdateNotifications()
+        } else {
+            await environment.settlePendingUpdateNotifications()
+        }
+        var current = await UpdateNotificationScheduler.shared.scheduledNotifications()
+        if current.isEmpty,
+           !forceRefresh,
+           settings.updateNotificationEnabled,
+           !environment.library.watchingEntries.isEmpty {
+            await environment.refreshUpdateNotifications()
+            current = await UpdateNotificationScheduler.shared.scheduledNotifications()
+        }
+        items = current
     }
 
     private static func format(_ date: Date) -> String {

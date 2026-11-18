@@ -82,9 +82,9 @@ final class BangumiAirTimeService {
             // 建不出来就只在内存里用这一份，下次启动重新拉。
         }
 
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 15
         sessionProvider = ProxyAwareURLSession {
+            let configuration = URLSessionConfiguration.default
+            configuration.timeoutIntervalForRequest = 15
             KazumiNetworkPolicy.applyProxy(to: configuration)
             return configuration
         }
@@ -225,9 +225,9 @@ final class BangumiAirTimeService {
         return Season(year: year, month: ((month - 1) / 3) * 3 + 1)
     }
 
-    private static func remoteURL(for season: Season) -> URL? {
+    private static func remoteURLs(for season: Season) -> [URL] {
         let month = String(format: "%02d", season.month)
-        return URL(string: "https://linkpass888.github.io/bangumi-mal/data/seasons/\(season.year)/\(month).json")
+        return RulesRepoClient.bangumiMalURLs(relativePath: "data/seasons/\(season.year)/\(month).json")
     }
 
     private func cacheURL(for season: Season) -> URL {
@@ -297,19 +297,23 @@ final class BangumiAirTimeService {
             return
         }
 
-        // 2. 远端
-        if let remote = Self.remoteURL(for: season) {
+        // 2. 远端（严格按网络设置：镜像走镜像，直连走直连）
+        for remote in Self.remoteURLs(for: season) {
             do {
                 let (data, response) = try await session.data(from: remote)
-                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                    apply(data)
-                    applied = true
-                    try? data.write(to: fileURL, options: .atomic)
-                    pruneOldCaches(keeping: fileURL)
-                    return
+                if let http = response as? HTTPURLResponse {
+                    if (200...299).contains(http.statusCode) {
+                        apply(data)
+                        applied = true
+                        try? data.write(to: fileURL, options: .atomic)
+                        pruneOldCaches(keeping: fileURL)
+                        return
+                    }
+                    // 分支路径 404 时继续尝试同镜像下的备选分支名；其他状态直接结束远端尝试。
+                    if http.statusCode != 404 { break }
                 }
             } catch {
-                // 下面统一走旧缓存兜底。
+                break
             }
         }
 
@@ -322,57 +326,57 @@ final class BangumiAirTimeService {
     }
 
     private func apply(_ data: Data) {
-        for (subjectID, schedule) in Self.parse(data) {
+        let parsed = Self.parseSeasonPayload(data)
+        for (subjectID, schedule) in parsed.schedules {
             times[subjectID] = Self.timeText(schedule.first)
             schedules[subjectID] = schedule
         }
-        for (subjectID, malID) in Self.parseMalIDs(data) {
+        for (subjectID, malID) in parsed.malIDs {
             malIDs[subjectID] = malID
         }
     }
 
-    /// 季度 JSON 里的 mal_id，AniList 用它查下一集时刻。
-    private static func parseMalIDs(_ data: Data) -> [Int: Int] {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = root["items"] as? [String: Any]
-        else { return [:] }
-        var result: [Int: Int] = [:]
-        for (key, value) in items {
-            guard let subjectID = Int(key),
-                  let entry = value as? [String: Any],
-                  let malID = entry["mal_id"] as? Int
-            else { continue }
-            result[subjectID] = malID
-        }
-        return result
-    }
-
-    private static func timeText(_ date: Date) -> String {
+    private static let hhmmFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    private static func timeText(_ date: Date) -> String {
+        hhmmFormatter.string(from: date)
     }
 
-    /// 解析季度 JSON，返回「bangumi id -> 首播时刻 + 周期」。
-    private static func parse(_ data: Data) -> [Int: BangumiAirSchedule] {
+    /// 单趟解析季度 JSON，同时提取「bangumi id -> 首播时刻 + 周期」与 `mal_id`。
+    private static func parseSeasonPayload(_ data: Data) -> (
+        schedules: [Int: BangumiAirSchedule],
+        malIDs: [Int: Int]
+    ) {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = root["items"] as? [String: Any]
-        else { return [:] }
+        else { return ([:], [:]) }
 
-        var result: [Int: BangumiAirSchedule] = [:]
+        var schedules: [Int: BangumiAirSchedule] = [:]
+        var malIDs: [Int: Int] = [:]
+        schedules.reserveCapacity(items.count)
+        malIDs.reserveCapacity(items.count)
+
         for (key, value) in items {
             guard let subjectID = Int(key), let entry = value as? [String: Any] else { continue }
+            if let malID = entry["mal_id"] as? Int {
+                malIDs[subjectID] = malID
+            }
             let beginText = entry["begin"] as? String ?? ""
             let broadcast = entry["broadcast"] as? String ?? ""
             // 与原版 deriveBangumiMalEntry 一致：begin 只有日期（或年月）时
             // 拿不出可信的播出时刻，不显示。
-            guard beginText.count > 10 else { continue }
-            guard let period = parseBroadcastPeriod(broadcast) else { continue }
-            guard let begin = parseInstant(beginText) else { continue }
-            result[subjectID] = BangumiAirSchedule(first: begin, period: period)
+            guard beginText.count > 10,
+                  let period = parseBroadcastPeriod(broadcast),
+                  let begin = parseInstant(beginText)
+            else { continue }
+            schedules[subjectID] = BangumiAirSchedule(first: begin, period: period)
         }
-        return result
+        return (schedules, malIDs)
     }
 
     /// `R/<ISO>/P7D` 里的周期；解析不出来（或为 0）返回 nil。

@@ -19,7 +19,6 @@ import Foundation
 
 /// AniSkip 查询客户端。单例，跟 main 的 `AniSkipClient.instance` 对齐。
 enum AniSkipClient {
-    private static let baseURL = "https://linkpass888.github.io/bangumi-mal/data"
     private static let mapPath = "/bangumi-mal.min.json"
     private static let shardPath = "/shards"
     private static let mapMaxAge: TimeInterval = 7 * 24 * 60 * 60
@@ -238,11 +237,29 @@ enum AniSkipClient {
     // MARK: - 网络
 
     private static func get(path: String) async throws -> Data {
-        guard let url = URL(string: baseURL + path) else {
+        let candidates = RulesRepoClient.bangumiMalURLs(relativePath: "data" + path)
+        guard !candidates.isEmpty else {
             throw URLError(.badURL)
         }
-        let (data, _) = try await session.data(from: url)
-        return data
+        var lastError: Error = URLError(.badServerResponse)
+        for url in candidates {
+            do {
+                let (data, response) = try await session.data(from: url)
+                if let http = response as? HTTPURLResponse {
+                    if (200...299).contains(http.statusCode) {
+                        return data
+                    }
+                    lastError = URLError(.badServerResponse)
+                    if http.statusCode != 404 { break }
+                    continue
+                }
+                return data
+            } catch {
+                lastError = error
+                break
+            }
+        }
+        throw lastError
     }
 }
 

@@ -164,7 +164,8 @@ enum ChangelogLoader {
     )!
 
     static func fetch() async throws -> String {
-        var request = URLRequest(url: url)
+        let resolvedURL = URL(string: RulesRepoClient.mirrored(url.absoluteString)) ?? url
+        var request = URLRequest(url: resolvedURL)
         // 更新日志会变，别让中间的缓存一直给旧版本。
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 20

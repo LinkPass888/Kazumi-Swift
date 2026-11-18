@@ -288,6 +288,9 @@ final class LibraryStore {
     /// 取消过的收藏（ID + 时刻）。旧版没有这份记录，取消会被云盘「复活」，所以要自己记。
     private(set) var removedEntries: [RemovedEntry] = []
 
+    /// 「在看」列表变动时的回调，用于自动重排本地更新提醒。
+    @ObservationIgnored var onWatchingChanged: (() -> Void)?
+
     private let fileURL: URL
 
     init(fileURL: URL = LibraryStore.defaultFileURL) {
@@ -455,10 +458,41 @@ final class LibraryStore {
 
     // MARK: - 变更
 
-    func replace(entries: [LibraryEntry], history: [WatchRecord]) {
+    private struct WatchingSignatureItem: Equatable {
+        let id: Int
+        let displayName: String
+        let airDate: String
+        let totalEpisodes: Int
+    }
+
+    private var watchingSignature: [WatchingSignatureItem] {
+        entries.compactMap { entry in
+            guard entry.collectType == .watching else { return nil }
+            return WatchingSignatureItem(
+                id: entry.id,
+                displayName: entry.displayName,
+                airDate: entry.airDate,
+                totalEpisodes: entry.totalEpisodes
+            )
+        }
+    }
+
+    func replace(
+        entries: [LibraryEntry],
+        history: [WatchRecord],
+        removals: [RemovedEntry]? = nil
+    ) {
+        let previousWatching = watchingSignature
         self.entries = Self.deduplicated(entries)
         self.history = Self.deduplicated(history)
+        if let removals {
+            let collected = Set(self.entries.map(\.id))
+            self.removedEntries = removals.filter { !collected.contains($0.id) }
+        }
         save()
+        if watchingSignature != previousWatching {
+            onWatchingChanged?()
+        }
     }
 
     /// 同步把合并后的取消记录写回本机。收藏重新加回来的那些不再需要记着。
@@ -469,6 +503,7 @@ final class LibraryStore {
     }
 
     func upsert(_ entry: LibraryEntry) {
+        let previousWatching = watchingSignature
         // 重新收藏回来了：之前那条取消记录作废。
         if removedEntries.contains(where: { $0.id == entry.id }) {
             removedEntries.removeAll { $0.id == entry.id }
@@ -482,14 +517,21 @@ final class LibraryStore {
             entries.append(entry)
         }
         save()
+        if watchingSignature != previousWatching {
+            onWatchingChanged?()
+        }
     }
 
     func remove(bangumiID: Int) {
+        let previousWatching = watchingSignature
         entries.removeAll { $0.id == bangumiID }
         // 记下取消的时刻：不带这一条，下次同步就会从云盘把它加回来。
         removedEntries.removeAll { $0.id == bangumiID }
         removedEntries.append(RemovedEntry(id: bangumiID, removedAt: Date()))
         save()
+        if watchingSignature != previousWatching {
+            onWatchingChanged?()
+        }
     }
 
     /// 写一条观看记录。同一条（规则 + 番剧）已经有一份时并起来：

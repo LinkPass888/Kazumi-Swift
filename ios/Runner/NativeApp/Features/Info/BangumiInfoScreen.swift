@@ -1067,8 +1067,28 @@ extension BangumiInfoScreen {
         toastMessage = String(localized: "已添加到时间表")
     }
 
-    /// 确认「标记为在看并添加」后：先写收藏，再添加到时间表。
+    /// 确认「标记为在看并添加」后：若开启 Bangumi 自动同步，先同步追番状态再落库并添加到时间表。
     private func markWatchingAndEnableTimeline(_ item: BangumiItem) {
+        let totalEpisodes = controller?.item.id == item.id ? (controller?.episodes.count ?? item.eps) : item.eps
+        let syncEnabled = settings.bangumiSyncEnable
+        guard syncEnabled else {
+            applyWatchingAndEnableTimeline(item, totalEpisodes: max(0, totalEpisodes))
+            return
+        }
+        Task {
+            let pushed = await environment.bangumiSync.pushCollectible(
+                bangumiID: item.id,
+                type: .watching
+            )
+            guard pushed else {
+                toastMessage = String(localized: "同步到 Bangumi 失败，已取消本次状态修改")
+                return
+            }
+            applyWatchingAndEnableTimeline(item, totalEpisodes: max(0, totalEpisodes))
+        }
+    }
+
+    private func applyWatchingAndEnableTimeline(_ item: BangumiItem, totalEpisodes: Int) {
         library.upsert(
             LibraryEntry(
                 id: item.id,
@@ -1081,7 +1101,7 @@ extension BangumiInfoScreen {
                 rating: item.ratingScore,
                 rank: item.rank,
                 tags: item.tags.map(\.name),
-                totalEpisodes: 0,
+                totalEpisodes: totalEpisodes,
                 currentEpisode: 0,
                 addedAt: library.entry(for: item.id)?.addedAt ?? Date(),
                 updatedAt: Date()

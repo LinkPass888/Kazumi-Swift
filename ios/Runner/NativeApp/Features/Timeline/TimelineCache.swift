@@ -51,49 +51,59 @@ final class TimelineCache {
         return directory.appendingPathComponent(name)
     }
 
-    // MARK: - 存档（原始 JSON 文本）
+    // MARK: - 存档（内存结构化快照 + 后台落盘）
 
-    /// 内存里那份原始 JSON（当季），冷启动第一帧用。
-    private var memoryText: String?
+    /// 当季内存快照：直接存已校验的 `[JSONValue]`，避免在主线程反复对几百 KB 字符串做 JSON 反解。
+    private var memoryCurrentSeason: String?
+    private var memoryCurrentDays: [JSONValue]?
+    /// 往期季度内存缓存（`start -> rawDays`）。
+    private var memorySeasonDays: [String: [JSONValue]] = [:]
 
     /// 记一份当季日历（`calendar()` 成功时调用）。
     /// `seasonStart` 是这一季的身份（`AnimeSeason.seasonRange().start`）：
     /// 存进去以后读的时候要验，不然跨季那天会把上一季那份当成当季铺出来（LP 5055）。
     func storeCurrent(rawDays: [JSONValue], seasonStart: String) {
-        let payload = JSONValue.object([
-            "season": .string(seasonStart),
-            "days": .array(rawDays),
-        ])
-        let text = JSONValue.serialize(payload, pretty: false)
-        remember(text: text)
-        write(text, to: fileURL(currentSeason: true, seasonStart: nil))
-    }
-
-    /// 存往期季度。
-    func storeSeason(rawDays: [JSONValue], start: String) {
-        let payload = JSONValue.object([
-            "season": .string(start),
-            "days": .array(rawDays),
-        ])
-        write(JSONValue.serialize(payload, pretty: false), to: fileURL(currentSeason: false, seasonStart: start))
-    }
-
-    private func remember(text: String) {
-        guard Self.decodeDays(text, expectedSeason: nil) != nil else {
-            // 序列化失败时会退回 `{}`（`JSONValue.serialize` 的行为），这时别把烂东西
-            // 当成缓存记在内存里；写一行日志，真机上「缓存总是没命中」才查得出来。
+        guard Self.isValidNonEmptyDays(rawDays) else {
             KazumiLogBuffer.shared.append(
-                String(localized: "时间表缓存：这一份没写出可用的 JSON，跳过"),
+                String(localized: "时间表缓存：这一份为空或结构无效，跳过"),
                 category: .network
             )
             return
         }
-        memoryText = text
+        memoryCurrentSeason = seasonStart
+        memoryCurrentDays = rawDays
+        let targetURL = fileURL(currentSeason: true, seasonStart: nil)
+        Self.writeAsync(rawDays: rawDays, season: seasonStart, to: targetURL)
     }
 
-    private func write(_ text: String, to url: URL) {
-        guard Self.decodeDays(text, expectedSeason: nil) != nil else { return }
-        try? text.data(using: .utf8)?.write(to: url, options: .atomic)
+    /// 存往期季度。
+    func storeSeason(rawDays: [JSONValue], start: String) {
+        guard Self.isValidNonEmptyDays(rawDays) else { return }
+        memorySeasonDays[start] = rawDays
+        let targetURL = fileURL(currentSeason: false, seasonStart: start)
+        Self.writeAsync(rawDays: rawDays, season: start, to: targetURL)
+    }
+
+    nonisolated private static func isValidNonEmptyDays(_ days: [JSONValue]) -> Bool {
+        guard days.count == 7 else { return false }
+        var hasContent = false
+        for day in days {
+            guard case let .array(items) = day else { return false }
+            if !items.isEmpty { hasContent = true }
+        }
+        return hasContent
+    }
+
+    nonisolated private static func writeAsync(rawDays: [JSONValue], season: String, to url: URL) {
+        Task.detached(priority: .utility) {
+            let payload = JSONValue.object([
+                "season": .string(season),
+                "days": .array(rawDays),
+            ])
+            let text = JSONValue.serialize(payload, pretty: false)
+            guard text != "{}" else { return }
+            try? Data(text.utf8).write(to: url, options: .atomic)
+        }
     }
 
     // MARK: - 取
@@ -106,8 +116,7 @@ final class TimelineCache {
     /// 读盘与解析放后台线程：冷启动第一帧走的就是这条路径，几百 KB 的 JSON
     /// 在主线程上读一遍、解一遍，首屏要多等一截。
     func currentRawDays(seasonStart: String) async -> [JSONValue]? {
-        if let memoryText,
-           let days = Self.decodeDays(memoryText, expectedSeason: seasonStart) {
+        if memoryCurrentSeason == seasonStart, let days = memoryCurrentDays {
             return days
         }
         let url = fileURL(currentSeason: true, seasonStart: nil)
@@ -115,12 +124,14 @@ final class TimelineCache {
             Self.readDays(at: url, seasonStart: seasonStart)
         }.value
         switch read {
-        case let .ok(text, days):
-            memoryText = text
+        case let .ok(days):
+            memoryCurrentSeason = seasonStart
+            memoryCurrentDays = days
             return days
         case .stale:
             // 跨季了：旧那份已经没用，不要留着占内存、也不要每次启动再试一次。
-            memoryText = nil
+            memoryCurrentSeason = nil
+            memoryCurrentDays = nil
             try? FileManager.default.removeItem(at: url)
             return nil
         case .missing:
@@ -132,7 +143,7 @@ final class TimelineCache {
     private enum DiskRead: Sendable {
         case missing
         case stale
-        case ok(text: String, days: [JSONValue])
+        case ok(days: [JSONValue])
     }
 
     /// 读盘 + 解析。不碰实例状态，所以可以放后台线程。
@@ -140,7 +151,7 @@ final class TimelineCache {
         guard let data = try? Data(contentsOf: url) else { return .missing }
         let text = String(decoding: data, as: UTF8.self)
         guard let days = decodeDays(text, expectedSeason: seasonStart) else { return .stale }
-        return .ok(text: text, days: days)
+        return .ok(days: days)
     }
 
     /// 快捷指令只读磁盘快照，不刷新、不删除跨季缓存，也不把读取时刻冒充保存时刻。
@@ -157,12 +168,18 @@ final class TimelineCache {
         return (days, savedAt)
     }
 
-    /// 往期季度的原始 JSON。
-    func seasonRawDays(start: String) -> [JSONValue]? {
-        guard let data = try? Data(contentsOf: fileURL(currentSeason: false, seasonStart: start)) else {
-            return nil
+    /// 往期季度的原始 JSON：先查内存，未命中时在后台线程读盘并解码。
+    func seasonRawDays(start: String) async -> [JSONValue]? {
+        if let cached = memorySeasonDays[start] {
+            return cached
         }
-        return Self.decodeDays(String(decoding: data, as: UTF8.self), expectedSeason: start)
+        let url = fileURL(currentSeason: false, seasonStart: start)
+        let read = await Task.detached(priority: .userInitiated) {
+            Self.readDays(at: url, seasonStart: start)
+        }.value
+        guard case let .ok(days) = read else { return nil }
+        memorySeasonDays[start] = days
+        return days
     }
 
     /// 解析 `{ season, days }`。`expectedSeason` 为 nil 时只验结构，不验季。

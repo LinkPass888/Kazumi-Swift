@@ -77,7 +77,7 @@ struct PopularPoster: Identifiable, Codable, Hashable, Sendable {
             nameCn: item.nameCn,
             imageURL: item.largeImage,
             summary: item.summary,
-            airDate: item.airDate.isEmpty ? Self.yearFromInfo(info) : item.airDate,
+            airDate: item.airDate.isEmpty ? Self.airDateFromInfo(info) : item.airDate,
             rating: item.ratingScore,
             // 不再从 info 的「36话」里兜底。
             //
@@ -99,8 +99,29 @@ struct PopularPoster: Identifiable, Codable, Hashable, Sendable {
         return Int(digits) ?? 0
     }
 
-    /// 从 info 里取「2026年10月3日」中的年份。
-    private static func yearFromInfo(_ info: String) -> String {
+    /// 从 info 里提取完整放送日期（如「2026年10月3日」→「2026-10-03」，「2026年10月」→「2026-10-01」），
+    /// 只有年份时退回「2026」。保留月份才能让 `BangumiAirTimeService` 定位所属季度。
+    private static func airDateFromInfo(_ info: String) -> String {
+        if let range = info.range(of: #"\d{4}年\d{1,2}月\d{1,2}日"#, options: .regularExpression) {
+            let parts = info[range].split { !$0.isNumber }
+            if parts.count >= 3,
+               let year = Int(parts[0]),
+               let month = Int(parts[1]),
+               let day = Int(parts[2]),
+               (1...12).contains(month),
+               (1...31).contains(day) {
+                return String(format: "%04d-%02d-%02d", year, month, day)
+            }
+        }
+        if let range = info.range(of: #"\d{4}年\d{1,2}月"#, options: .regularExpression) {
+            let parts = info[range].split { !$0.isNumber }
+            if parts.count >= 2,
+               let year = Int(parts[0]),
+               let month = Int(parts[1]),
+               (1...12).contains(month) {
+                return String(format: "%04d-%02d-01", year, month)
+            }
+        }
         guard let range = info.range(of: #"(\d{4})年"#, options: .regularExpression) else { return "" }
         return String(info[range].dropLast())
     }

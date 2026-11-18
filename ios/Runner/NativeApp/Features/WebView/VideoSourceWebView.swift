@@ -57,7 +57,7 @@ final class VideoSourceWebView: NSObject {
     var onPageLoaded: (() -> Void)?
 
     private var webView: WKWebView?
-    private var hasInjectedScripts = false
+    private var injectedLegacyParserMode: Bool?
     private var retryCount = 0
     private var offset = 0
     private var isIframeLoaded = false
@@ -88,34 +88,11 @@ final class VideoSourceWebView: NSObject {
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
 
         let controller = WKUserContentController()
+        let proxy = WeakScriptMessageHandler(self)
         for name in [Self.logBridge, Self.legacyBridge, Self.modernBridge] {
-            controller.add(self, name: name)
+            controller.add(proxy, name: name)
         }
-        controller.addUserScript(WKUserScript(
-            source: VideoSourceWebView.callHandlerShim,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        ))
-        controller.addUserScript(WKUserScript(
-            source: VideoSourceWebView.removeLazyLoadingScript,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: false
-        ))
-        // 解析页只用来嗅探地址，**不许出声**（LP 2026-11-08 第 1 条）。
-        //
-        // 站点常把 `<video>` 自动播起来：`mediaTypesRequiringUserActionForPlayback = .all`
-        // 只挡得住「有声自动播」，挡不住「先静音自动播、再由脚本解除静音」这条常见写法。
-        // 于是界面还停在「正在解析播放地址」，声音已经是这一集的了——用户以为播放器卡住，
-        // 其实是这个看不见的页面在放。
-        //
-        // `WKWebView` 没有公开的静音开关（`isMuted` 是 `AVPlayer` 的，编译不过），
-        // 只能在文档最前面把 `HTMLMediaElement` 的 `muted` 写死成 true：拦 setter、
-        // 保留 getter，站点读到的仍是「我静音了」，不会因为判断被改而以为异常。
-        controller.addUserScript(WKUserScript(
-            source: VideoSourceWebView.muteMediaScript,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        ))
+        installBaseScripts(on: controller)
         configuration.userContentController = controller
 
         // 与原实现一致：图片与广告 document 直接阻断。
@@ -126,8 +103,8 @@ final class VideoSourceWebView: NSObject {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = self
         view.customUserAgent = userAgent
-        // 静音由 `muteMediaScript` 在文档最前面注入，见 `initialize()` 上面那段注释。
         webView = view
+        injectedLegacyParserMode = nil
         emit("WebView: created")
     }
 
@@ -169,9 +146,9 @@ final class VideoSourceWebView: NSObject {
         // 这段等待里旧页面迟到的回调也会被贴上这个代号（见 onLoadStarted 注释）。
         onLoadStarted?(generation)
         self.useLegacyParser = useLegacyParser
-        if !hasInjectedScripts {
+        if injectedLegacyParserMode != useLegacyParser {
             injectScripts(useLegacyParser: useLegacyParser)
-            hasInjectedScripts = true
+            injectedLegacyParserMode = useLegacyParser
         }
         retryCount = 0
         self.offset = offset
@@ -231,8 +208,11 @@ final class VideoSourceWebView: NSObject {
             webView.pauseAllMediaPlayback()
             webView.closeAllMediaPresentations(completionHandler: nil)
         }
-        Task { @MainActor in
+        let generation = loadGeneration
+        Task { @MainActor [weak self] in
+            guard let self, self.loadGeneration == generation else { return }
             await self.unloadPage()
+            guard self.loadGeneration == generation else { return }
             self.dispose()
         }
     }
@@ -248,13 +228,34 @@ final class VideoSourceWebView: NSObject {
             controller.removeAllUserScripts()
         }
         webView = nil
-        hasInjectedScripts = false
+        injectedLegacyParserMode = nil
     }
     // MARK: - 脚本
+
+    private func installBaseScripts(on controller: WKUserContentController) {
+        controller.addUserScript(WKUserScript(
+            source: VideoSourceWebView.callHandlerShim,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        controller.addUserScript(WKUserScript(
+            source: VideoSourceWebView.removeLazyLoadingScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        ))
+        // 解析页只用来嗅探地址，**不许出声**（LP 2026-11-08 第 1 条）。
+        controller.addUserScript(WKUserScript(
+            source: VideoSourceWebView.muteMediaScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+    }
 
     private func injectScripts(useLegacyParser: Bool) {
         guard let webView else { return }
         let controller = webView.configuration.userContentController
+        controller.removeAllUserScripts()
+        installBaseScripts(on: controller)
         if useLegacyParser {
             emit("Adding JSBridgeDebug UserScript")
             controller.addUserScript(WKUserScript(
@@ -315,7 +316,11 @@ final class VideoSourceWebView: NSObject {
         isLoading = false
         onVideoLoading?(false)
         emit("Loading video source \(decoded)")
-        Task { @MainActor in await self.unloadPage() }
+        let generation = loadGeneration
+        Task { @MainActor [weak self] in
+            guard let self, self.loadGeneration == generation else { return }
+            await self.unloadPage()
+        }
         onVideoURLParser?(VideoParserEvent(url: decoded, offset: offset, loadID: loadGeneration))
     }
 
@@ -535,5 +540,21 @@ extension VideoSourceWebView: WKScriptMessageHandler {
         default:
             break
         }
+    }
+}
+
+/// 弱引用转发桥：避免 `WKUserContentController.add(_:name:)` 强持有 `VideoSourceWebView` 形成泄漏环。
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+
+    init(_ target: WKScriptMessageHandler) {
+        self.target = target
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        target?.userContentController(userContentController, didReceive: message)
     }
 }
