@@ -449,11 +449,11 @@ struct PlayerScreen: View {
         !isFullscreen && containerSize.width > containerSize.height && containerSize.width > 0
     }
 
-    /// 画面与控制层的安全区忽略范围（§3）：非全屏一律逐边让安全区（返回 `[]`），
-    /// 仅全屏态忽略对应边（inline 全屏忽略四边含侧边竖栏，旋转全屏忽略上下并保留左右灵动岛安全区）。
+    /// 画面与控制层的安全区忽略范围：非全屏一律保留系统安全区（返回 `[]`），
+    /// 全屏态统一忽略四边容器安全区并交由 `controlLeadingPadding` / `fullscreenBottomPadding` 精确控制边距，
+    /// 避免自定义 `PlayerStageLayout` 在手机横屏全屏下被外层 `NavigationStack` 残留顶部安全区整体下推。
     private var videoIgnoredSafeAreaEdges: Edge.Set {
-        guard isFullscreen else { return [] }
-        return usesInlineFullscreen ? .all : [.top, .bottom]
+        isFullscreen ? .all : []
     }
 
     /// 同一棵扁平视图树承载上下单栈、宽形态左右主副工作台与全屏态切换：
@@ -517,7 +517,7 @@ struct PlayerScreen: View {
                         Spacer(minLength: 0)
                         episodesPanel(controller)
                     }
-                    .ignoresSafeArea(.container, edges: usesInlineFullscreen ? .all : [.top, .bottom])
+                    .ignoresSafeArea(.container, edges: .all)
                     .transition(.move(edge: .trailing))
                 }
             }
@@ -1240,19 +1240,17 @@ struct PlayerScreen: View {
 
     // MARK: - 播放区
 
-    /// 仅就地全屏（`isFullscreen && usesInlineFullscreen`）在外层忽略四边安全区（§3）：
+    /// 全屏态在外层统一忽略四边容器安全区（防止自定义 `Layout` 无法向上穿透安全区导致顶部被残留内缩下推）；
     /// 非全屏一律保留系统安全区（含 Duo 右侧竖栏与底部 Home 指示区）。
     private var ignoresWindowEdges: Bool {
-        isFullscreen && usesInlineFullscreen
+        isFullscreen
     }
 
     private var boxAspectRatio: CGFloat {
         if isFullscreen, containerSize.width > 0, containerSize.height > 0 {
-            if usesInlineFullscreen {
-                let window = fullscreenVideoSize
-                if window.width > 0, window.height > 0 {
-                    return window.width / window.height
-                }
+            let window = fullscreenVideoSize
+            if window.width > 0, window.height > 0 {
+                return window.width / window.height
             }
             return containerSize.width / containerSize.height
         }
@@ -1293,10 +1291,11 @@ struct PlayerScreen: View {
 
     /// 顶栏首行顶部内边距：
     /// - 非全屏：保持 `playerTopInset = 6`（安全区由外层自动避让）；
-    /// - 全屏：与底栏保持一致的垂直安全内边距（`fullscreenBottomPadding`），上下对称不冗余留白。
+    /// - 全屏：扣除顶栏 `44pt` 热区内 `18pt` 图标/标题上方的 `13pt` 透明内衬与底栏 `33pt` 弹幕框下方的 `5.5pt` 内衬差值（约 `7pt`），
+    ///   使顶栏可见元素距屏幕上缘的视觉留白与底栏可见元素距屏幕下缘严格一致。
     private var effectiveTopBarPadding: CGFloat {
         guard isFullscreen else { return Self.playerTopInset }
-        return fullscreenBottomPadding
+        return max(8, fullscreenBottomPadding - 7)
     }
 
     /// 控制层（顶栏、底栏、左右锁屏与截图键）左侧安全内边距：
@@ -1304,22 +1303,14 @@ struct PlayerScreen: View {
     private var controlLeadingPadding: CGFloat {
         guard isFullscreen else { return 16 }
         let safeLeading = max(containerInsets.leading, sameOrientationSafeSnapshot.leading)
-        let targetFromWindowEdge = max(28, safeLeading + 16)
-        if usesInlineFullscreen {
-            return targetFromWindowEdge
-        }
-        return max(16, targetFromWindowEdge - containerInsets.leading)
+        return max(28, safeLeading + 16)
     }
 
     /// 控制层右侧安全内边距：全屏下避开右侧安全区并保证距物理屏幕右缘至少 `28pt`。
     private var controlTrailingPadding: CGFloat {
         guard isFullscreen else { return 16 }
         let safeTrailing = max(containerInsets.trailing, sameOrientationSafeSnapshot.trailing)
-        let targetFromWindowEdge = max(28, safeTrailing + 16)
-        if usesInlineFullscreen {
-            return targetFromWindowEdge
-        }
-        return max(16, targetFromWindowEdge - containerInsets.trailing)
+        return max(28, safeTrailing + 16)
     }
 
     /// 全屏底栏距物理窗口下缘的安全内边距：避开底部 Home 指示条安全区且不少于 `16pt`。
@@ -1866,15 +1857,15 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 顶栏跳过片头按钮图标：外圈统一 18pt .medium 圆弧箭头，内部数字固定保持最初的 10pt .regular 字重与大小。
+    /// 顶栏跳过片头按钮图标：外圈 17pt .medium 圆弧箭头，内部数字 8pt（三位秒数 6.5pt）.regular。
     private func skipButton(seconds: Int, isForward: Bool) -> some View {
         PlayerIconButton(hitSize: toolbarHitSize) {
             ZStack {
                 Image(systemName: isForward ? "goforward" : "gobackward")
-                    .playerIcon(pointSize: 18, weight: .medium, optical: .detailed)
+                    .playerIcon(pointSize: 17, weight: .medium, optical: .detailed)
                     .foregroundStyle(.white)
                 Text("\(seconds)")
-                    .font(.system(size: seconds >= 100 ? 8.5 : 10, weight: .regular).monospacedDigit())
+                    .font(.system(size: seconds >= 100 ? 6.5 : 8, weight: .regular).monospacedDigit())
                     .foregroundStyle(.white)
                     .offset(y: 1.0)
             }
@@ -3376,7 +3367,7 @@ struct PlayerScreen: View {
             }
             .clipShape(panelShape)
             .shadow(color: .black.opacity(0.32), radius: 18, y: 6)
-            .padding(.top, isFullscreen ? effectiveTopBarPadding : 16)
+            .padding(.top, isFullscreen ? fullscreenBottomPadding : 16)
             .padding(.bottom, isFullscreen ? fullscreenBottomPadding : 16)
             .padding(.trailing, isFullscreen ? controlTrailingPadding : 16)
     }
@@ -4200,8 +4191,8 @@ struct PlayerScreen: View {
 
     // MARK: - 选集与评论
 
-    /// 宽屏非全屏（Duo 展开 / iPad / 手机横屏 / 桌面窗口）左栏视频下方的番剧信息与操作工作台：
-    /// 根据左栏底部实际可用高度动态决定是否展示可滚动简介（如手机横屏上下空间紧凑时隐藏简介、保留标签栏）。
+    /// 宽屏非全屏（Duo 展开 / iPad / 手机横屏 / 桌面窗口）左栏视频下方的番剧信息区：
+    /// 专注承载完整标题、评分、集数/开播信息、标签与可滚动简介；换源/追番/缓存操作统一置于右栏选集顶部就近操作。
     private func widePlayerInfoCard(_ controller: PlayerController) -> some View {
         let meta = nowPlayingMeta(controller)
         let episodeNumber = max(1, controller.currentEpisode)
@@ -4223,103 +4214,86 @@ struct PlayerScreen: View {
         }
         let totalEpisodes = controller.episodes.count
 
-        return GeometryReader { proxy in
-            let cardHeight = proxy.size.height
-            let showsSummary = cardHeight >= 220 && !summary.isEmpty
-            let verticalSpacing: CGFloat = showsSummary ? 10 : 8
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(meta.title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: verticalSpacing) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(meta.title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(showsSummary ? 2 : 1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if settings.showRating, rating > 0 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "star.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(String(format: "%.1f", rating))
-                                .font(.subheadline.weight(.bold).monospacedDigit())
-                        }
-                        .foregroundStyle(accent)
-                        .fixedSize()
+                if settings.showRating, rating > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(String(format: "%.1f", rating))
+                            .font(.subheadline.weight(.bold).monospacedDigit())
                     }
-                }
-
-                HStack(spacing: 6) {
-                    Text(String(localized: "正在播放 第 \(String(describing: episodeNumber)) 集"))
-                        .font(.footnote.weight(.medium).monospacedDigit())
-                        .foregroundStyle(accent)
-                    if totalEpisodes > 0 {
-                        Text("·")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Text(String(localized: "共 \(String(describing: totalEpisodes)) 集"))
-                            .font(.footnote.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    if !airDate.isEmpty {
-                        Text("·")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Text(airDate)
-                            .font(.footnote.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        episodeSourceAndRoadMenu(
-                            controller,
-                            titleFallback: meta.title,
-                            accent: accent,
-                            maxBadgeWidth: 220
-                        )
-                        wideCollectMenuButton(accent: accent)
-                        wideDownloadButton(controller, accent: accent)
-                    }
-                }
-
-                if !tags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(Array(tags.prefix(8)), id: \.self) { tag in
-                                Text(tag)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        Capsule(style: .continuous)
-                                            .fill(Color(.secondarySystemBackground))
-                                    )
-                            }
-                        }
-                    }
-                }
-
-                if showsSummary {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        Text(summary)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .lineSpacing(3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 8)
-                    }
-                } else {
-                    Spacer(minLength: 0)
+                    .foregroundStyle(accent)
+                    .fixedSize()
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, showsSummary ? 12 : 10)
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+
+            HStack(spacing: 6) {
+                Text(String(localized: "正在播放 第 \(String(describing: episodeNumber)) 集"))
+                    .font(.footnote.weight(.medium).monospacedDigit())
+                    .foregroundStyle(accent)
+                if totalEpisodes > 0 {
+                    Text("·")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text(String(localized: "共 \(String(describing: totalEpisodes)) 集"))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                if !airDate.isEmpty {
+                    Text("·")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text(airDate)
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            if !tags.isEmpty || !summary.isEmpty {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !tags.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(Array(tags.prefix(8)), id: \.self) { tag in
+                                        Text(tag)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(
+                                                Capsule(style: .continuous)
+                                                    .fill(Color(.secondarySystemBackground))
+                                            )
+                                    }
+                                }
+                            }
+                        }
+                        if !summary.isEmpty {
+                            Text(summary)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .lineSpacing(3)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
+            } else {
+                Spacer(minLength: 0)
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(.systemBackground))
     }
@@ -4403,11 +4377,14 @@ struct PlayerScreen: View {
     }
 
     /// 选集区（`episodeArea`）：
-    /// - 手机竖屏下栏顶部展示 `40pt`「状态＋换源」紧凑条；
-    /// - 宽屏非全屏（Duo 展开 / iPad / 桌面窗口）因左栏下方已有完整信息工作台，右栏直接展示「选集 / 评论」分段栏与内容。
+    /// - 手机竖屏下栏顶部展示 `40pt`「标题＋换源/追番/下载」紧凑条；
+    /// - 宽屏非全屏（Duo 展开 / iPad / 手机横屏 / 桌面窗口）顶部预留安全间距并就近放置「换源/换线、追番、缓存剧集」胶囊行，下方紧跟「选集 / 评论」分段栏与内容。
     private func episodeArea(_ controller: PlayerController) -> some View {
         VStack(spacing: 0) {
-            if !isWideSplitLayout {
+            if isWideSplitLayout {
+                wideEpisodeActionBar(controller)
+                    .padding(.top, max(10, 18 - containerInsets.top))
+            } else {
                 episodeAreaHeader(controller)
                     .padding(.top, 6)
             }
@@ -4419,7 +4396,7 @@ struct PlayerScreen: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
-            .padding(.top, isWideSplitLayout ? 10 : 6)
+            .padding(.top, 6)
             .padding(.bottom, 8)
             .onChange(of: detailTab) { _, tab in
                 if tab == .comments {
@@ -4445,6 +4422,28 @@ struct PlayerScreen: View {
                     .frame(width: 0.5)
             }
         }
+    }
+
+    /// 宽屏非全屏右栏顶部的就近操作栏：放置在「选集 / 评论」分段栏正上方，使切换线路/换源与缓存剧集紧贴选集网格且不挤占标题宽度。
+    private func wideEpisodeActionBar(_ controller: PlayerController) -> some View {
+        let meta = nowPlayingMeta(controller)
+        let accent = KazumiPalette.accent(for: colorScheme)
+
+        return HStack(spacing: 6) {
+            episodeSourceAndRoadMenu(
+                controller,
+                titleFallback: meta.title,
+                accent: accent,
+                maxBadgeWidth: 200
+            )
+            Spacer(minLength: 4)
+            wideCollectMenuButton(accent: accent)
+                .fixedSize(horizontal: true, vertical: false)
+            wideDownloadButton(controller, accent: accent)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 40)
     }
 
     /// 选集区顶部 `40pt`「状态＋换源」紧凑条（§6 F3）：
