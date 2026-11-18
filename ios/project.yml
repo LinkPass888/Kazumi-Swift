@@ -43,6 +43,9 @@ settings:
     # 抢在 MPVKit 生成 _FFmpeg.modulemap 之前扫描共享模块图目录导致编译失败。
     SWIFT_ENABLE_EXPLICIT_MODULES: NO
     CLANG_ENABLE_EXPLICIT_MODULES: NO
+    # Debug 下关闭可执行文件与 .debug.dylib 拆分：保证 Runner.app/Kazumi 本体即完整二进制，
+    # 使 RunnerTests 的 BUNDLE_LOADER 能直接从宿主解析业务符号与静态链接的 libmpv 符号。
+    ENABLE_DEBUG_DYLIB: NO
     GCC_C_LANGUAGE_STANDARD: gnu17
     ENABLE_BITCODE: NO
     # mpv / FFmpeg 库体积较大，保留完整的调试符号映射。
@@ -254,7 +257,6 @@ targets:
         buildPhase: resources
     dependencies:
       - target: Runner
-      - package: MPVKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.linkpass.kazumi.tests
@@ -266,6 +268,17 @@ targets:
         # SwiftPM 包目标并引发 _FFmpeg.modulemap 查找失败）。
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Runner.app/Kazumi
         BUNDLE_LOADER: $(TEST_HOST)
+        # 仅在 Runner 上声明 MPVKit 依赖：避免多目标同时依赖静态 XCFramework 包时 Xcode
+        # 自动合成 MPVKitdynamic-product 空壳动态库导致 Libmpv 丢失 FFmpeg/libass/Vulkan 传递链接。
+        # RunnerTests 编译期通过 PackageFrameworks 读取 Libmpv 模块头文件，链接期禁用自动链接
+        # 并统一由 BUNDLE_LOADER（Runner.app/Kazumi）提供已静态链接的 mpv_* 符号。
+        OTHER_SWIFT_FLAGS:
+          - $(inherited)
+          - -F$(BUILT_PRODUCTS_DIR)/PackageFrameworks
+          - -Xfrontend
+          - -disable-autolink-framework
+          - -Xfrontend
+          - Libmpv
         SUPPORTS_MACCATALYST: NO
 
 schemes:

@@ -290,16 +290,17 @@ final class MPVEngine {
         setOption("gpu-api", "vulkan")
         setOption("gpu-context", "moltenvk")
         setOption("fbo-format", "rgba16hf")
-        // 3.0.4 起仅在设备支持画中画且开启「后台自动画中画」时才需要 screenshot-raw 可复制帧；
-        // 关闭自动画中画时尊重用户选择的直通（零拷贝 vd-lavc-dr=yes）或非直通模式。
+        // 3.0.4 起仅在设备支持画中画且开启「后台自动画中画」时强制覆盖为 screenshot-raw 可复制帧；
+        // 关闭自动画中画时尊重用户选择的直通（零拷贝 vd-lavc-dr=yes）或非直通（videotoolbox-copy）模式。
         let requiresCopyForPiP = AVPictureInPictureController.isPictureInPictureSupported()
             && backgroundAutoPiPEnabled
-        setOption("vd-lavc-dr", requiresCopyForPiP ? "no" : "yes")
         let requestedHWDec = Self.hwdec(enabled: hardwareDecodeEnabled, mode: hardwareDecodeMode)
         effectiveHardwareDecode = Self.effectiveHWDec(
             requested: requestedHWDec,
             pictureInPictureEnabled: requiresCopyForPiP
         )
+        let usesCopyHWDec = effectiveHardwareDecode == HardwareDecodeMode.videotoolboxCopy.rawValue
+        setOption("vd-lavc-dr", usesCopyHWDec ? "no" : "yes")
         setOption("hwdec", effectiveHardwareDecode)
         log("硬解选择（内核创建时固定）：requested=\(requestedHWDec) effective=\(effectiveHardwareDecode) autoPiP=\(backgroundAutoPiPEnabled)")
         setOption("hwdec-codecs", "all")

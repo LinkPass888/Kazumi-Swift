@@ -530,15 +530,11 @@ final class SettingsStore {
     }
 
     /// 切到后台时自动起画中画，让画面继续看得见（默认关闭）。
-    /// 开启期间画中画需读取可复制帧，因此自动将硬件解码模式切为非直通（`videotoolbox-copy`）；关闭后自动回落直通。
+    /// 开启期间设置页与播放内核临时按非直通（`videotoolbox-copy`）生效，不改写用户手动选择的硬解模式档位，
+    /// 关闭自动画中画后即可原样恢复用户此前选定的「直通」或「非直通」。
     var backgroundAutoPiP: Bool {
         didSet {
             persist(backgroundAutoPiP, SettingsKey.backgroundAutoPiP)
-            if backgroundAutoPiP, hardwareDecodeMode != .videotoolboxCopy {
-                hardwareDecodeMode = .videotoolboxCopy
-            } else if !backgroundAutoPiP, oldValue, hardwareDecodeMode == .videotoolboxCopy {
-                hardwareDecodeMode = .videotoolbox
-            }
         }
     }
 
@@ -960,7 +956,7 @@ final class SettingsStore {
         let savedHWDecMode = HardwareDecodeMode(
             rawValue: Self.read(defaults, SettingsKey.hardwareDecodeMode, HardwareDecodeMode.videotoolbox.rawValue)
         ) ?? .videotoolbox
-        hardwareDecodeMode = resolvedAutoPiP ? .videotoolboxCopy : savedHWDecMode
+        hardwareDecodeMode = savedHWDecMode
         // 老版本只写过 `lowMemoryMode` 那个布尔。它不是这里的三档键，读不到就回默认档，
         // 与 main「旧值留着、新键没写过就当自动」的做法一致。
         lowMemoryMode = LowMemoryMode(

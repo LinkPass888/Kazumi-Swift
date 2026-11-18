@@ -1293,13 +1293,10 @@ struct PlayerScreen: View {
 
     /// 顶栏首行顶部内边距：
     /// - 非全屏：保持 `playerTopInset = 6`（安全区由外层自动避让）；
-    /// - 全屏：避开顶部安全区并至少留出 `16pt`，防止两侧角标按钮紧贴大圆角屏幕边缘。
+    /// - 全屏：与底栏保持一致的垂直安全内边距（`fullscreenBottomPadding`），上下对称不冗余留白。
     private var effectiveTopBarPadding: CGFloat {
         guard isFullscreen else { return Self.playerTopInset }
-        let safeTop = usesInlineFullscreen
-            ? max(containerInsets.top, sameOrientationSafeSnapshot.top)
-            : containerInsets.top
-        return max(16, safeTop)
+        return fullscreenBottomPadding
     }
 
     /// 控制层（顶栏、底栏、左右锁屏与截图键）左侧安全内边距：
@@ -2376,7 +2373,7 @@ struct PlayerScreen: View {
     }
 
     /// 顶栏的定时关闭（横竖屏都在顶栏直达，正在倒数的档位实时显示 mm:ss）。
-    /// `timer` 符号无顶部突出箭头、圆环占满字高，按 `15.4pt` 缩配使其外圆直径与 `18pt goforward` 的圆环严格一致。
+    /// `timer` 符号采用 `17.4pt`（`scale: .medium`），取此前偏大与偏小两档的视觉中间值。
     private var sleepTimerButton: some View {
         let isRunning = sleepTimerRemaining != nil
         return PlayerIconButton(hitSize: toolbarHitSize) {
@@ -2398,7 +2395,7 @@ struct PlayerScreen: View {
                 symbol: isRunning ? "moon.zzz.fill" : "timer",
                 accessibilityLabel: String(localized: "定时关闭"),
                 tint: .white,
-                symbolSize: isRunning ? l2SymbolSize : 15.4,
+                symbolSize: isRunning ? l2SymbolSize : 17.4,
                 symbolWeight: .medium,
                 symbolOptical: isRunning ? .solid : .standard,
                 hitSize: toolbarHitSize,
@@ -4203,9 +4200,8 @@ struct PlayerScreen: View {
 
     // MARK: - 选集与评论
 
-    /// 宽屏非全屏（Duo 展开 / iPad / 桌面窗口）左栏视频下方的番剧信息与操作工作台：
-    /// 消除原本左栏上下大片闲置黑边，把完整标题、换源/换线、追番、下载与番剧简介舒展铺开，
-    /// 让右侧栏专注「选集 / 评论」，彻底解决窄侧栏按钮文字拥挤截断问题。
+    /// 宽屏非全屏（Duo 展开 / iPad / 手机横屏 / 桌面窗口）左栏视频下方的番剧信息与操作工作台：
+    /// 根据左栏底部实际可用高度动态决定是否展示可滚动简介（如手机横屏上下空间紧凑时隐藏简介、保留标签栏）。
     private func widePlayerInfoCard(_ controller: PlayerController) -> some View {
         let meta = nowPlayingMeta(controller)
         let episodeNumber = max(1, controller.currentEpisode)
@@ -4227,99 +4223,103 @@ struct PlayerScreen: View {
         }
         let totalEpisodes = controller.episodes.count
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(meta.title)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        return GeometryReader { proxy in
+            let cardHeight = proxy.size.height
+            let showsSummary = cardHeight >= 220 && !summary.isEmpty
+            let verticalSpacing: CGFloat = showsSummary ? 10 : 8
 
-                if settings.showRating, rating > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(String(format: "%.1f", rating))
-                            .font(.subheadline.weight(.bold).monospacedDigit())
+            VStack(alignment: .leading, spacing: verticalSpacing) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(meta.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(showsSummary ? 2 : 1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if settings.showRating, rating > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(String(format: "%.1f", rating))
+                                .font(.subheadline.weight(.bold).monospacedDigit())
+                        }
+                        .foregroundStyle(accent)
+                        .fixedSize()
                     }
-                    .foregroundStyle(accent)
-                    .fixedSize()
                 }
-            }
 
-            HStack(spacing: 6) {
-                Text(String(localized: "正在播放 第 \(String(describing: episodeNumber)) 集"))
-                    .font(.footnote.weight(.medium).monospacedDigit())
-                    .foregroundStyle(accent)
-                if totalEpisodes > 0 {
-                    Text("·")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    Text(String(localized: "共 \(String(describing: totalEpisodes)) 集"))
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(String(localized: "正在播放 第 \(String(describing: episodeNumber)) 集"))
+                        .font(.footnote.weight(.medium).monospacedDigit())
+                        .foregroundStyle(accent)
+                    if totalEpisodes > 0 {
+                        Text("·")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Text(String(localized: "共 \(String(describing: totalEpisodes)) 集"))
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if !airDate.isEmpty {
+                        Text("·")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Text(airDate)
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
-                if !airDate.isEmpty {
-                    Text("·")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    Text(airDate)
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    episodeSourceAndRoadMenu(
-                        controller,
-                        titleFallback: meta.title,
-                        accent: accent,
-                        maxBadgeWidth: 220
-                    )
-                    wideCollectMenuButton(accent: accent)
-                    wideDownloadButton(controller, accent: accent)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        episodeSourceAndRoadMenu(
+                            controller,
+                            titleFallback: meta.title,
+                            accent: accent,
+                            maxBadgeWidth: 220
+                        )
+                        wideCollectMenuButton(accent: accent)
+                        wideDownloadButton(controller, accent: accent)
+                    }
                 }
-            }
 
-            if !tags.isEmpty || !summary.isEmpty {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if !tags.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 6) {
-                                    ForEach(Array(tags.prefix(8)), id: \.self) { tag in
-                                        Text(tag)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(
-                                                Capsule(style: .continuous)
-                                                    .fill(Color(.secondarySystemBackground))
-                                            )
-                                    }
-                                }
+                if !tags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(tags.prefix(8)), id: \.self) { tag in
+                                Text(tag)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(Color(.secondarySystemBackground))
+                                    )
                             }
                         }
-                        if !summary.isEmpty {
-                            Text(summary)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .lineSpacing(3)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
                     }
-                    .padding(.bottom, 8)
                 }
-            } else {
-                Spacer(minLength: 0)
+
+                if showsSummary {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        Text(summary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .lineSpacing(3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 8)
+                    }
+                } else {
+                    Spacer(minLength: 0)
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, showsSummary ? 12 : 10)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(.systemBackground))
     }
