@@ -167,7 +167,7 @@ enum SettingsKey {
     static let playResume = "playResume"
     /// 后台播放，沿用原版 `SettingsKeys.backgroundPlayback` 的键名，默认关闭。
     static let backgroundPlayback = "backgroundPlayback"
-    /// 切后台时自动起画中画（LP 2026-10-29），默认开启。
+    /// 切后台时自动起画中画，默认关闭（默认使用直通硬解）。
     static let backgroundAutoPiP = "backgroundAutoPiP"
     /// 回到前台自动接着播（LP 2026-10-29），默认开启。
     static let resumeOnForeground = "resumeOnForeground"
@@ -529,13 +529,15 @@ final class SettingsStore {
         didSet { persist(backgroundPlayback, SettingsKey.backgroundPlayback) }
     }
 
-    /// 切到后台时自动起画中画，让画面继续看得见（默认开启）。
-    /// 开启期间画中画需读取可复制帧，因此自动将硬件解码模式切为非直通（`videotoolbox-copy`）。
+    /// 切到后台时自动起画中画，让画面继续看得见（默认关闭）。
+    /// 开启期间画中画需读取可复制帧，因此自动将硬件解码模式切为非直通（`videotoolbox-copy`）；关闭后自动回落直通。
     var backgroundAutoPiP: Bool {
         didSet {
             persist(backgroundAutoPiP, SettingsKey.backgroundAutoPiP)
             if backgroundAutoPiP, hardwareDecodeMode != .videotoolboxCopy {
                 hardwareDecodeMode = .videotoolboxCopy
+            } else if !backgroundAutoPiP, oldValue, hardwareDecodeMode == .videotoolboxCopy {
+                hardwareDecodeMode = .videotoolbox
             }
         }
     }
@@ -949,7 +951,7 @@ final class SettingsStore {
         playSpeed = PlaybackSpeed.nearest(Self.read(defaults, SettingsKey.playSpeed, 1.0))
         playResume = Self.read(defaults, SettingsKey.playResume, true)
         backgroundPlayback = Self.read(defaults, SettingsKey.backgroundPlayback, false)
-        let resolvedAutoPiP = Self.read(defaults, SettingsKey.backgroundAutoPiP, true)
+        let resolvedAutoPiP = Self.read(defaults, SettingsKey.backgroundAutoPiP, false)
         backgroundAutoPiP = resolvedAutoPiP
         resumeOnForeground = Self.read(defaults, SettingsKey.resumeOnForeground, true)
         brightnessVolumeGesture = Self.read(defaults, SettingsKey.brightnessVolumeGesture, true)
@@ -1069,12 +1071,12 @@ final class SettingsStore {
         autoPlayNext = true
         playResume = true
         backgroundPlayback = false
-        backgroundAutoPiP = true
+        backgroundAutoPiP = false
         resumeOnForeground = true
         brightnessVolumeGesture = true
         privateMode = false
         hardwareDecodeEnabled = true
-        hardwareDecodeMode = .videotoolboxCopy
+        hardwareDecodeMode = .videotoolbox
         lowMemoryMode = .auto
         playSpeed = 1.0
         buttonSkipTime = 80

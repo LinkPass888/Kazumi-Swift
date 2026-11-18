@@ -407,8 +407,6 @@ struct PlayerScreen: View {
     @State private var sleepTimerRemaining: Int?
     @State private var sleepTimerChosenMinutes: Int?
     @State private var sleepTimerTask: Task<Void, Never>?
-    /// 打开「更多」菜单那一拍锁定的倒计时秒数：菜单开启期间固定签名，防止每秒刷新收掉二级子菜单。
-    @State private var menuSnapshotSleepRemaining: Int?
     /// 片头片尾弹窗：AniSkip 的时间轴 + 倒数 / 撤销 / 切集三态。
     @State private var skipPill = SkipSegmentPillModel()
     /// 桌面端与外接指针交互状态（§8）。
@@ -421,6 +419,8 @@ struct PlayerScreen: View {
     /// 播放页内呼出选源面板的控制器与「去规则仓库」延迟跳转标志（§6）。
     @State private var playerSourceController: InfoController?
     @State private var openRuleShopAfterSourceSheet = false
+    /// 宽屏非全屏左栏下方信息卡使用的番剧元数据缓存。
+    @State private var bangumiInfo: BangumiItem?
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(SettingsStore.self) private var settings
@@ -435,10 +435,16 @@ struct PlayerScreen: View {
     /// （Colo 7725 §4.2 A）。compact（手机、外屏）保持原来的横屏全屏。
     private var usesInlineFullscreen: Bool { horizontalSizeClass == .regular }
 
-    /// 宽形态非全屏两栏布局右侧选集栏固定宽度（§1）。
-    private static let splitEpisodeWidth: CGFloat = 300
+    /// 宽形态非全屏下右侧「选集 / 评论」面板自适应宽度（336–420pt，随总宽弹性缩放）。
+    private static func wideSidebarWidth(for totalWidth: CGFloat) -> CGFloat {
+        min(max((totalWidth * 0.39).rounded(), 336), 420)
+    }
 
-    /// 非全屏且宽形态（`width > height`）改左右两栏：左栏画面（`U - 300`），右栏选集（`300`）。
+    /// 宽形态非全屏左栏下方信息区保留的最小高度，确保标题与操作胶囊始终完整可见。
+    private static let minWideInfoHeight: CGFloat = 148
+
+    /// 非全屏且宽形态（`width > height`）改左右两栏：
+    /// 左栏为「顶部 16:9 画面 ＋ 下方番剧信息与换源/追番/下载操作区」，右栏专职「选集 / 评论」。
     private var isWideSplitLayout: Bool {
         !isFullscreen && containerSize.width > containerSize.height && containerSize.width > 0
     }
@@ -450,50 +456,23 @@ struct PlayerScreen: View {
         return usesInlineFullscreen ? .all : [.top, .bottom]
     }
 
-    /// 同一棵视图树承载上下单栈、宽形态左右两栏与全屏态切换（§1 / §8）：
-    /// `#if !targetEnvironment(macCatalyst)` 且 iOS 27.1+ 优先使用 `ArrangementView` 分栏并赋 `.splitArrangementLayoutRatio(0.35)` 给窄侧，
-    /// 其余环境统一回落 `AnyLayout`（`HStackLayout` / `VStackLayout`），折叠/展开与全屏过渡零重建。
-    @ViewBuilder
+    /// 同一棵扁平视图树承载上下单栈、宽形态左右主副工作台与全屏态切换：
+    /// `playerArea` 恒为第 0 个子视图，折叠屏开合、旋转与全屏切换全程零重建、不断流。
     private func adaptivePlayerLayout(_ controller: PlayerController) -> some View {
-        #if !targetEnvironment(macCatalyst)
-        if #available(iOS 27.1, *) {
-            ArrangementView {
-                playerArea(controller)
-                    .frame(height: fixedPictureHeight)
-                    .splitArrangementFixedLayoutSize(
-                        horizontal: false,
-                        vertical: !isWideSplitLayout && !isFullscreen
-                    )
-            } secondary: {
-                if !isFullscreen {
-                    episodeArea(controller)
-                        .frame(width: isWideSplitLayout ? Self.splitEpisodeWidth : nil)
-                        .splitArrangementLayoutRatio(isWideSplitLayout ? 0.35 : nil)
-                        .splitArrangementFixedLayoutSize(
-                            horizontal: isWideSplitLayout,
-                            vertical: false
-                        )
-                }
-            }
-            .arrangementViewStyle(.split.axes(isWideSplitLayout ? .horizontal : .vertical))
-        } else {
-            fallbackSplitOrStackLayout(controller)
-        }
-        #else
-        fallbackSplitOrStackLayout(controller)
-        #endif
-    }
-
-    private func fallbackSplitOrStackLayout(_ controller: PlayerController) -> some View {
-        let layout = isWideSplitLayout
-            ? AnyLayout(HStackLayout(spacing: 0))
-            : AnyLayout(VStackLayout(spacing: 0))
-        return layout {
+        PlayerStageLayout(
+            isFullscreen: isFullscreen,
+            isWideSplit: isWideSplitLayout,
+            videoAspectRatio: max(aspectRatioMode.frameAspectRatio, 0.1)
+        ) {
             playerArea(controller)
-                .frame(height: fixedPictureHeight)
+                .layoutValue(key: PlayerStageRoleKey.self, value: .player)
+            if !isFullscreen, isWideSplitLayout {
+                widePlayerInfoCard(controller)
+                    .layoutValue(key: PlayerStageRoleKey.self, value: .wideInfo)
+            }
             if !isFullscreen {
                 episodeArea(controller)
-                    .frame(width: isWideSplitLayout ? Self.splitEpisodeWidth : nil)
+                    .layoutValue(key: PlayerStageRoleKey.self, value: .episodes)
             }
         }
     }
@@ -882,6 +861,13 @@ struct PlayerScreen: View {
         .task {
             await bootstrapPlaybackIfNeeded()
         }
+        .task(id: bangumiID) {
+            if let cached = BangumiSubjectCache.shared.item(for: bangumiID) {
+                bangumiInfo = cached
+            } else if bangumiID > 0 {
+                bangumiInfo = await BangumiAPI.info(id: bangumiID)
+            }
+        }
         // 音量键监听跟画面有没有起播无关（LP 2026-11-08 第 3 条）：只要人还在播放页，
         // 按音量键就该出那条横条。单独一条 task 装，不挂在起播流程里——
         // 那条流程在解析阶段就返回了，晚装的监听要等下一集才有。
@@ -1252,19 +1238,6 @@ struct PlayerScreen: View {
 
     // MARK: - 播放区
 
-    /// 窄形态单栈（`width <= height && !isFullscreen`）下画面框的明确高度：
-    /// 给 `ArrangementView` / `VStack` 竖排提供精确理想高度，避免与下方选集平分高度；
-    /// 宽形态两栏与全屏态返回 `nil`，由外层分栏或窗口满高铺开。
-    private var fixedPictureHeight: CGFloat? {
-        guard !isFullscreen, !isWideSplitLayout,
-              containerSize.width > 0, containerSize.height > 0
-        else { return nil }
-        return min(
-            containerSize.width / max(aspectRatioMode.frameAspectRatio, 0.1),
-            containerSize.height * 0.65
-        )
-    }
-
     /// 仅就地全屏（`isFullscreen && usesInlineFullscreen`）在外层忽略四边安全区（§3）：
     /// 非全屏一律保留系统安全区（含 Duo 右侧竖栏与底部 Home 指示区）。
     private var ignoresWindowEdges: Bool {
@@ -1282,13 +1255,13 @@ struct PlayerScreen: View {
             return containerSize.width / containerSize.height
         }
         if isWideSplitLayout {
-            let leftWidth = surfaceSize.width > 0
-                ? surfaceSize.width
-                : max(1, containerSize.width - Self.splitEpisodeWidth)
-            let leftHeight = surfaceSize.height > 0
-                ? surfaceSize.height
-                : max(1, containerSize.height)
-            return leftWidth / leftHeight
+            let totalWidth = max(1, containerSize.width)
+            let totalHeight = max(1, containerSize.height)
+            let leftWidth = max(1, totalWidth - Self.wideSidebarWidth(for: totalWidth))
+            let idealHeight = (leftWidth / max(aspectRatioMode.frameAspectRatio, 0.1)).rounded()
+            let maxPlayerHeight = max(180, totalHeight - Self.minWideInfoHeight)
+            let playerHeight = max(1, min(idealHeight, maxPlayerHeight))
+            return leftWidth / playerHeight
         }
         return aspectRatioMode.frameAspectRatio
     }
@@ -1328,31 +1301,13 @@ struct PlayerScreen: View {
         return max(12, containerInsets.top)
     }
 
-    /// 当前控制栏可见时顶栏占用的总高度（供弹幕顶距与 `1/4` HUD 防撞计算，§7）。
+    /// 当前控制栏可见时顶栏占用的总高度（供弹幕顶距避让计算）。
     private var activeTopBarOccupiedHeight: CGFloat {
         controlsShown ? (effectiveTopBarPadding + 44) : 0
     }
 
-    /// 宽形态左栏内视频矩形的尺寸与纵向居中坐标（§1）：
-    /// 16:9（或 4:3）铺满左栏宽并在「顶栏以下、底栏以上」净空区域垂直居中，上下余量由左栏黑底吸收。
-    private func splitVideoLayout(in bounds: CGSize) -> (size: CGSize, centerY: CGFloat) {
-        guard bounds.width > 0, bounds.height > 0 else { return (.zero, 0) }
-        let ratio = max(aspectRatioMode.frameAspectRatio, 0.1)
-        let videoHeight = min(bounds.width / ratio, bounds.height)
-        let videoWidth = min(bounds.width, videoHeight * ratio)
-        let topClearance = Self.playerTopInset + 44
-        let bottomClearance = bounds.width >= 600
-            ? Self.landscapeTransportContentHeight
-            : Self.portraitTransportHeight
-        let netMidY = (topClearance + max(topClearance, bounds.height - bottomClearance)) / 2
-        let minCenterY = videoHeight / 2
-        let maxCenterY = max(minCenterY, bounds.height - videoHeight / 2)
-        let centerY = min(max(netMidY, minCenterY), maxCenterY)
-        return (CGSize(width: videoWidth, height: videoHeight), centerY)
-    }
-
     /// 画面：16:9（或 4:3）画面本身，控制层压在它上面。
-    /// 竖屏里这条就是页面最上面那一块；宽形态两栏时占满左栏全高；全屏时铺满窗口。
+    /// 竖屏里这条就是页面最上面那一块；宽形态两栏时位于左栏顶部；全屏时铺满窗口。
     @ViewBuilder
     private func playerArea(_ controller: PlayerController) -> some View {
         ZStack {
@@ -1363,8 +1318,10 @@ struct PlayerScreen: View {
                 ScreenshotFlashView(progress: screenshotFlash)
             }
 
-            // 加载符号：一颗系统圈 + 下面一行网速（LP 4810）。
+            // 加载符号：一颗系统圈 + 下面一行网速（LP 4810）；瞬态跳转/播放暂停 HUD 显示时暂隐免得在中心重叠。
             if showsLoadingHUD,
+               seekHUD == nil,
+               playPauseHUD == nil,
                surface.errorMessage == nil,
                controller.playbackURL != nil {
                 loadingAtCenterLine {
@@ -1410,14 +1367,14 @@ struct PlayerScreen: View {
             }
             .ignoresSafeArea(.container, edges: videoIgnoredSafeAreaEdges)
 
-            // HUD 一律放在画面从上往下 1/4 处（并防撞顶栏底沿，见 §7 G2）、水平居中。
+            // HUD 统一置于播放器画面正中央。
             if let gestureHUD {
-                hudAtQuarter { gestureOverlay(gestureHUD) }
+                hudAtCenter { gestureOverlay(gestureHUD) }
             } else if let seekHUD {
-                hudAtQuarter { seekOverlay(seekHUD, target: seekDragTarget) }
+                hudAtCenter { seekOverlay(seekHUD, target: seekDragTarget) }
             }
             if let superResolutionHUD {
-                hudAtQuarter {
+                hudAtCenter {
                     Text(superResolutionHUD)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.white)
@@ -1429,7 +1386,7 @@ struct PlayerScreen: View {
                 .transition(.opacity)
             }
             if let playPauseHUD, gestureHUD == nil, seekHUD == nil {
-                hudAtQuarter { playPauseBubble(playPauseHUD) }
+                hudAtCenter { playPauseBubble(playPauseHUD) }
                     .transition(.opacity)
             }
 
@@ -1443,11 +1400,11 @@ struct PlayerScreen: View {
             }
 
             if isTemporarySpeed {
-                hudAtQuarter { temporarySpeedCapsule }
+                hudAtCenter { temporarySpeedCapsule }
                     .transition(.opacity)
             }
             if let message = surface.hudToastMessage {
-                hudAtQuarter {
+                hudAtCenter {
                     hudToastBubble(message)
                         .task(id: "\(hudToastSerial)|\(message)") {
                             await hideToast(message, slot: .hud)
@@ -1460,7 +1417,7 @@ struct PlayerScreen: View {
         .dynamicTypeSize(...DynamicTypeSize.large)
         // 画面、控制栏、HUD 这一层强制深色（LP 2026-11-06）：玻璃按深色渲染，不跟系统浅色走。
         .environment(\.colorScheme, .dark)
-        .modifier(PlayerBoxModifier(fillsWindow: isFullscreen || isWideSplitLayout,
+        .modifier(PlayerBoxModifier(fillsWindow: isFullscreen,
                                     aspectRatio: boxAspectRatio))
         .ignoresSafeArea(.container, edges: videoIgnoredSafeAreaEdges)
         .background(Color.black)
@@ -1489,24 +1446,19 @@ struct PlayerScreen: View {
 
     private func interactiveSurface(_ controller: PlayerController) -> some View {
         GeometryReader { proxy in
-            let splitLayout = splitVideoLayout(in: proxy.size)
             let videoBoxSize: CGSize = if isFullscreen && !usesInlineFullscreen {
                 fullscreenVideoSize
-            } else if isWideSplitLayout {
-                splitLayout.size
             } else {
                 proxy.size
             }
-            let videoCenterY: CGFloat = isWideSplitLayout ? splitLayout.centerY : proxy.size.height / 2
-            let videoMinY = videoCenterY - videoBoxSize.height / 2
             let gestureWidth = max(1, proxy.size.width)
             let gestureHeight = max(1, proxy.size.height)
 
             ZStack {
                 Color.black
-                videoSurface(controller, videoMinYInPlayerArea: videoMinY)
+                videoSurface(controller, videoMinYInPlayerArea: 0)
                     .frame(width: videoBoxSize.width, height: videoBoxSize.height)
-                    .position(x: proxy.size.width / 2, y: videoCenterY)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .contentShape(Rectangle())
@@ -1883,6 +1835,42 @@ struct PlayerScreen: View {
             guard !Task.isCancelled else { return }
             screenshotFlash = 0
         }
+    }
+
+    /// 两侧跳转钮：快进 / 快退那颗符号，数字由系统符号自带；档外秒数（如 80）叠在圆弧正中偏下。
+    private func skipButton(seconds: Int, isForward: Bool) -> some View {
+        PlayerIconButton(hitSize: toolbarHitSize) {
+            ZStack {
+                Image(systemName: Self.skipSymbolName(seconds: seconds, isForward: isForward))
+                    .playerIcon(pointSize: l2SymbolSize, weight: .medium, optical: .detailed)
+                    .foregroundStyle(.white)
+                if !SettingsStore.skipSecondTiers.contains(seconds) {
+                    Text("\(seconds)")
+                        .font(.system(size: 10, weight: .regular).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .offset(y: 1.0)
+                }
+            }
+        }
+        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+    }
+
+    /// 顶部快进按钮：单击快进，长按修改秒数（对应原版 player_item_panel 的快进按钮）。
+    private var skipForwardButton: some View {
+        skipButton(seconds: settings.buttonSkipTime, isForward: true)
+            .gesture(
+                LongPressGesture(minimumDuration: 0.5)
+                    .onEnded { _ in presentSkipSecondsDialog() }
+                    .exclusively(
+                        before: TapGesture().onEnded {
+                            surface.skipForward(seconds: Double(settings.buttonSkipTime))
+                        }
+                    )
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("快进")
+            .accessibilityHint(String(localized: "快进\(String(describing: settings.buttonSkipTime))秒，长按修改时间"))
+            .accessibilityAddTraits(.isButton)
     }
 
     /// 快进 / 快退那颗符号的名字：系统有自带数字的那几档就用带数字的
@@ -2322,11 +2310,11 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 顶栏（§5 / §6）：
-    /// - 非全屏（手机竖屏 ＆ Duo 左栏）：仅保留「返回、弹幕开关、更多」共 3 键；
-    /// - 全屏：左侧「返回 ＋ 番剧标题 · 集数 ＋ 可选当前线路胶囊」，右侧「追番 ＋ 更多」。
+    /// 顶栏：
+    /// - 非全屏：返回、弹幕开关、片头跳过、定时关闭、更多；
+    /// - 全屏：返回 ＋ 番剧标题·集数，右侧片头跳过、追番状态、定时关闭、更多。
     private func topBar(_ controller: PlayerController) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             PlayerIconButton(hitSize: 44) {
                 logLifecycleSnapshot("returnButton.tapped")
                 dismiss()
@@ -2340,28 +2328,26 @@ struct PlayerScreen: View {
             if isFullscreen {
                 let meta = nowPlayingMeta(controller)
                 let episodeNumber = max(1, controller.currentEpisode)
-                HStack(spacing: 8) {
-                    Text("\(meta.title) · \(String(format: "%02d", episodeNumber))")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if controller.roads.count > 1 {
-                        fullscreenTopRoadBadge(controller)
-                            .fixedSize()
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text("\(meta.title) · \(String(format: "%02d", episodeNumber))")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Spacer(minLength: 0)
             }
 
-            HStack(spacing: 2) {
+            if !isFullscreen {
+                danmakuButton
+            }
+
+            HStack(spacing: 4) {
+                skipForwardButton
                 if isFullscreen {
                     collectButton
-                } else {
-                    danmakuButton
                 }
+                sleepTimerButton
                 moreMenu
             }
             .fixedSize()
@@ -2370,39 +2356,35 @@ struct PlayerScreen: View {
         .padding(.top, effectiveTopBarPadding)
     }
 
-    /// 全屏顶栏标题右侧的可选线路胶囊（L3：`12pt .semibold`，可点热区高 `≥ 36pt`）。
-    private func fullscreenTopRoadBadge(_ controller: PlayerController) -> some View {
-        let selection = SystemMenuButton.Selection(
-            options: controller.roads.enumerated().map { index, road in
-                .init(
-                    title: Self.roadItemTitle(road),
-                    isSelected: index == controller.selectedRoad
+    /// 顶栏的定时关闭（横竖屏都在顶栏直达，正在倒数的档位实时显示 mm:ss）。
+    private var sleepTimerButton: some View {
+        let isRunning = sleepTimerRemaining != nil
+        return PlayerIconButton(hitSize: toolbarHitSize) {
+            SystemMenuButton(
+                selection: .init(options: [SystemMenuButton.Selection.Option(
+                    title: String(localized: "不开启"),
+                    isSelected: sleepTimerMinutes == nil
                 ) {
-                    guard index != controller.selectedRoad else { return }
-                    persistProgress(controller)
-                    surface.prepareForNewEpisode()
-                    Task { await controller.selectRoad(index) }
-                }
-            }
-        )
-        let title = controller.roads.indices.contains(controller.selectedRoad)
-            ? Self.roadName(controller.roads[controller.selectedRoad])
-            : String(localized: "线路")
-        return SystemMenuButton(
-            selection: selection,
-            title: title,
-            symbol: "",
-            accessibilityLabel: String(localized: "选择线路"),
-            tint: .white,
-            showsChevron: true,
-            chevronPointSize: 12,
-            minimumHeight: 36,
-            customFont: .systemFont(ofSize: 12, weight: .semibold),
-            capsuleBackgroundColor: UIColor.white.withAlphaComponent(0.18),
-            customContentInsets: NSDirectionalEdgeInsets(top: 7, leading: 10, bottom: 7, trailing: 10),
-            onOpen: { pinControlsWhileMenuOpen() },
-            capsule: true
-        )
+                    cancelSleepTimer()
+                }] + [15, 30, 60, 90].map { minutes in
+                    SystemMenuButton.Selection.Option(
+                        title: sleepTimerItemTitle(minutes),
+                        isSelected: sleepTimerMinutes == minutes
+                    ) {
+                        startSleepTimer(minutes: minutes)
+                    }
+                }),
+                title: nil,
+                symbol: isRunning ? "moon.zzz.fill" : "timer",
+                accessibilityLabel: String(localized: "定时关闭"),
+                tint: .white,
+                symbolSize: l2SymbolSize,
+                symbolWeight: .medium,
+                symbolOptical: isRunning ? .solid : .round,
+                hitSize: toolbarHitSize,
+                onOpen: { pinControlsWhileMenuOpen() }
+            )
+        }
     }
 
     /// 收藏钮（L2 常驻工具栏层级）。
@@ -2553,12 +2535,10 @@ struct PlayerScreen: View {
         sleepTimerChosenMinutes
     }
 
-    /// 档位保持固定；正在倒数的那一项标题显示 mm:ss。
-    /// 「更多」菜单展开期间读取快照秒数，避免每秒变动触发 UIKit 子菜单折叠。
+    /// 档位保持固定；正在倒数的那一项标题实时显示 mm:ss。
     private func sleepTimerItemTitle(_ minutes: Int) -> String {
-        let effectiveRemaining = menuOpen ? menuSnapshotSleepRemaining : sleepTimerRemaining
         if sleepTimerChosenMinutes == minutes,
-           let remaining = effectiveRemaining {
+           let remaining = sleepTimerRemaining {
             return String(format: "%02d:%02d", remaining / 60, remaining % 60)
         }
         return String(localized: "\(String(describing: minutes)) 分钟")
@@ -2898,28 +2878,6 @@ struct PlayerScreen: View {
                 surface.pause()
                 openSheet(.danmakuSource)
             },
-            SystemMenuButton.Item(
-                title: String(localized: "片头快进"),
-                symbol: Self.skipSymbolName(seconds: settings.buttonSkipTime, isForward: true),
-                subtitle: String(localized: "\(String(describing: settings.buttonSkipTime)) 秒"),
-                submenu: [
-                    SystemMenuButton.Item(
-                        title: String(localized: "快进 \(String(describing: settings.buttonSkipTime)) 秒"),
-                        symbol: Self.skipSymbolName(seconds: settings.buttonSkipTime, isForward: true)
-                    ) {
-                        closeMenu()
-                        surface.skipForward(seconds: Double(settings.buttonSkipTime))
-                        noteInteraction()
-                    },
-                    SystemMenuButton.Item(
-                        title: String(localized: "设置快进秒数…"),
-                        symbol: "slider.horizontal.3"
-                    ) {
-                        closeMenu()
-                        presentSkipSecondsDialog()
-                    },
-                ]
-            ) {},
         ]
 
         // 紧凑底栏不单摆超分键，窄窗口桌面端底栏收起超分时同样可从「更多」直达。
@@ -2941,17 +2899,6 @@ struct PlayerScreen: View {
             )
         }
 
-        let effectiveSleepRemaining = menuOpen ? menuSnapshotSleepRemaining : sleepTimerRemaining
-        let sleepSubtitle: String? = if let minutes = sleepTimerMinutes {
-            if let remaining = effectiveSleepRemaining {
-                String(format: "%02d:%02d", remaining / 60, remaining % 60)
-            } else {
-                String(localized: "\(String(describing: minutes)) 分钟")
-            }
-        } else {
-            nil
-        }
-
         items.append(contentsOf: [
             SystemMenuButton.Item(
                 title: "视频比例",
@@ -2960,24 +2907,6 @@ struct PlayerScreen: View {
                 selection: .init(options: PlayerAspectRatioMode.allCases.map { mode in
                     .init(title: mode.label, isSelected: aspectRatioMode == mode) {
                         aspectRatioMode = mode
-                    }
-                })
-            ) {},
-            SystemMenuButton.Item(
-                title: String(localized: "定时关闭"),
-                symbol: effectiveSleepRemaining != nil ? "moon.zzz.fill" : "timer",
-                subtitle: sleepSubtitle,
-                selection: .init(options: [SystemMenuButton.Selection.Option(
-                    title: String(localized: "不开启"),
-                    isSelected: sleepTimerMinutes == nil
-                ) {
-                    cancelSleepTimer()
-                }] + [15, 30, 60, 90].map { minutes in
-                    SystemMenuButton.Selection.Option(
-                        title: sleepTimerItemTitle(minutes),
-                        isSelected: sleepTimerMinutes == minutes
-                    ) {
-                        startSleepTimer(minutes: minutes)
                     }
                 })
             ) {},
@@ -3003,7 +2932,6 @@ struct PlayerScreen: View {
 
     private func pinControlsWhileMenuOpen() {
         showControls()
-        menuSnapshotSleepRemaining = sleepTimerRemaining
         menuOpen = true
         probeSawMenu = false
         menuOpenedAt = Date()
@@ -3144,14 +3072,14 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 紧凑底栏（手机竖屏与 Duo `567` 左栏）：全屏钮左侧增补轻量倍速胶囊，非全屏底沿 `0` 额外留白（§2 / §6）。
+    /// 紧凑底栏（手机竖屏与窄宽左栏）：全屏钮左侧使用统一的倍速符号按钮，非全屏底沿 `0` 额外留白。
     private func portraitTransport(_ controller: PlayerController) -> some View {
         let activeSegments = settings.aniSkipLookup ? controller.skipSegments : .empty
         return HStack(spacing: 4) {
             playPauseButton
             scrubber(height: 40, skipSegments: activeSegments)
             timeLabel
-            compactSpeedPill
+            speedButton
             fullscreenButton
         }
         .padding(.horizontal, 16)
@@ -3218,33 +3146,6 @@ struct PlayerScreen: View {
             .foregroundStyle(.white)
             .lineLimit(1)
             .fixedSize()
-    }
-
-    /// 紧凑底栏轻量倍速胶囊（L3：`12pt monospacedDigit .semibold`，胶囊视觉高 `32pt`、可点热区高 `≥ 36pt`）。
-    private var compactSpeedPill: some View {
-        SystemMenuButton(
-            selection: .init(options: PlaybackSpeed.all.map { rate in
-                .init(
-                    title: speedText(rate),
-                    isSelected: abs(playbackRate - Float(rate)) < 0.01
-                ) {
-                    applySpeed(Float(rate))
-                    noteInteraction()
-                }
-            }),
-            title: speedText(Double(playbackRate)),
-            symbol: "",
-            accessibilityLabel: String(localized: "倍速 \(String(describing: speedText(Double(playbackRate))))"),
-            tint: .white,
-            showsChevron: false,
-            minimumHeight: 36,
-            customFont: .monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-            capsuleBackgroundColor: UIColor.white.withAlphaComponent(0.18),
-            customContentInsets: NSDirectionalEdgeInsets(top: 8, leading: 9, bottom: 8, trailing: 9),
-            onOpen: { pinControlsWhileMenuOpen() },
-            capsule: true
-        )
-        .fixedSize()
     }
 
     /// 桌面端独立静音切换与悬浮展开音量滑块（§8）。
@@ -3598,7 +3499,7 @@ struct PlayerScreen: View {
                         let markerX = width * startRatio
                         let markerWidth = max(6, min(width - markerX, width * (endRatio - startRatio)))
                         Capsule()
-                            .fill(Color(red: 1.0, green: 0.88, blue: 0.46).opacity(0.9))
+                            .fill(KazumiPalette.accent(for: .dark, theme: settings.themeColor).opacity(0.92))
                             .frame(width: markerWidth, height: 4)
                             .offset(x: markerX)
                             .allowsHitTesting(false)
@@ -3932,18 +3833,15 @@ struct PlayerScreen: View {
         .allowsHitTesting(false)
     }
 
-    /// `1/4` 高度状态胶囊（§7 G2）：中心 `y` 取 `max(videoHeight * 0.25, activeTopBarOccupiedHeight + 28)`，
-    /// 防止手机竖屏 `219pt` 小窗在控制栏显示时与顶栏按钮底沿发生碰撞（保证净距 `≥ 8pt`）。
-    private func hudAtQuarter<Content: View>(
+    /// 画面正中央 HUD 容器。
+    private func hudAtCenter<Content: View>(
         interactive: Bool = false,
         @ViewBuilder _ content: () -> Content
     ) -> some View {
         let resolved = content()
-        let minCenterY = activeTopBarOccupiedHeight + 28
         return GeometryReader { proxy in
-            let targetY = max(proxy.size.height * 0.25, minCenterY)
             resolved
-                .position(x: proxy.size.width / 2, y: min(targetY, max(minCenterY, proxy.size.height - 24)))
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
         }
         .allowsHitTesting(interactive)
     }
@@ -4005,21 +3903,18 @@ struct PlayerScreen: View {
         .transition(.opacity)
     }
 
-    /// 中央播放 / 暂停反馈浮层（§5 L1：宽栏 `28pt .semibold`、紧凑栏 `24pt .semibold`，`.monochrome` + `.symbolEffect(.replace)`）。
+    /// 中央播放 / 暂停反馈浮层：恢复原始小符号尺寸（12pt .semibold）与圆角玻璃气泡。
     private func playPauseBubble(_ symbol: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: symbol)
-                .font(.system(size: isWideToolbar ? 28 : 24, weight: .semibold))
-                .symbolRenderingMode(.monochrome)
-                .contentTransition(.symbolEffect(.replace))
+                .font(.system(size: 12, weight: .semibold))
             Text(symbol == "play.fill" ? "暂停" : "播放")
-                .font(.footnote.weight(.semibold))
+                .font(.footnote.weight(.medium))
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(.primary)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .frame(minHeight: 36)
-        .playerGlass(in: Capsule(style: .continuous))
+        .padding(.vertical, 10)
+        .playerGlass(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .allowsHitTesting(false)
         .transition(.opacity)
     }
@@ -4271,13 +4166,220 @@ struct PlayerScreen: View {
 
     // MARK: - 选集与评论
 
-    /// 选集区（`episodeArea`，§1 / §6 F3）：
-    /// 顶部插入 `40pt` 高「状态＋换源」紧凑信息条（手机竖屏下栏与 Duo 右侧 `300` 栏自动复用），
-    /// 下接「选集 / 评论」分段栏与对应内容。
+    /// 宽屏非全屏（Duo 展开 / iPad / 桌面窗口）左栏视频下方的番剧信息与操作工作台：
+    /// 消除原本左栏上下大片闲置黑边，把完整标题、换源/换线、追番、下载与番剧简介舒展铺开，
+    /// 让右侧栏专注「选集 / 评论」，彻底解决窄侧栏按钮文字拥挤截断问题。
+    private func widePlayerInfoCard(_ controller: PlayerController) -> some View {
+        let meta = nowPlayingMeta(controller)
+        let episodeNumber = max(1, controller.currentEpisode)
+        let accent = KazumiPalette.accent(for: colorScheme)
+        let entry = environment.library.entry(for: bangumiID)
+        let rating = entry?.rating ?? bangumiInfo?.ratingScore ?? 0
+        let airDate = !(entry?.airDate.isEmpty ?? true)
+            ? (entry?.airDate ?? "")
+            : (bangumiInfo?.airDate ?? "")
+        let summary = !(entry?.summary.isEmpty ?? true)
+            ? (entry?.summary ?? "")
+            : (bangumiInfo?.summary ?? "")
+        let tags: [String] = if let entry, !entry.tags.isEmpty {
+            entry.tags
+        } else if let info = bangumiInfo {
+            info.tags.map(\.name).filter { !$0.isEmpty }
+        } else {
+            []
+        }
+        let totalEpisodes = controller.episodes.count
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(meta.title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if settings.showRating, rating > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(String(format: "%.1f", rating))
+                            .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.orange.opacity(0.14))
+                    )
+                    .fixedSize()
+                }
+            }
+
+            HStack(spacing: 6) {
+                Text(String(localized: "正在播放 第 \(String(describing: episodeNumber)) 集"))
+                    .font(.footnote.weight(.medium).monospacedDigit())
+                    .foregroundStyle(accent)
+                if totalEpisodes > 0 {
+                    Text("·")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text(String(localized: "共 \(String(describing: totalEpisodes)) 集"))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                if !airDate.isEmpty {
+                    Text("·")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text(airDate)
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    episodeSourceAndRoadMenu(
+                        controller,
+                        titleFallback: meta.title,
+                        accent: accent,
+                        maxBadgeWidth: 220
+                    )
+                    wideCollectMenuButton(accent: accent)
+                    wideDownloadButton(controller, accent: accent)
+                }
+            }
+
+            if !tags.isEmpty || !summary.isEmpty {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !tags.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(Array(tags.prefix(8)), id: \.self) { tag in
+                                        Text(tag)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(
+                                                Capsule(style: .continuous)
+                                                    .fill(Color(.secondarySystemBackground))
+                                            )
+                                    }
+                                }
+                            }
+                        }
+                        if !summary.isEmpty {
+                            Text(summary)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .lineSpacing(3)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(.systemBackground))
+    }
+
+    private func wideCollectMenuButton(accent: Color) -> some View {
+        Menu {
+            ForEach(CollectType.enabledCases, id: \.rawValue) { type in
+                Button {
+                    applyCollectType(type)
+                } label: {
+                    if currentCollectType == type {
+                        Label(type.buttonTitle, systemImage: "checkmark")
+                    } else {
+                        Label(type.buttonTitle, systemImage: type.statusSymbol)
+                    }
+                }
+            }
+            if currentCollectType != .none {
+                Divider()
+                Button(role: .destructive) {
+                    applyCollectType(.none)
+                } label: {
+                    Label(String(localized: "取消追番"), systemImage: "trash")
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: collectSymbolName)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(currentCollectType == .none ? String(localized: "追番") : currentCollectType.buttonTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(accent)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+            )
+            .frame(height: 36)
+            .contentShape(Rectangle())
+        }
+        .tint(accent)
+        .accessibilityLabel(String(localized: "追番状态"))
+    }
+
+    private func wideDownloadButton(_ controller: PlayerController, accent: Color) -> some View {
+        let hasEpisodes = !controller.episodes.isEmpty
+        return Button {
+            guard hasEpisodes else { return }
+            if detailTab != .episodes {
+                detailTab = .episodes
+            }
+            withAnimation(.easeOut(duration: 0.18)) {
+                isChoosingDownloads.toggle()
+                downloadSelection.removeAll()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isChoosingDownloads ? "arrow.down.circle.fill" : "arrow.down.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(isChoosingDownloads ? String(localized: "结束多选") : String(localized: "缓存剧集"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(accent)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+            )
+            .frame(height: 36)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlayerPressStyle())
+        .disabled(!hasEpisodes)
+        .opacity(hasEpisodes ? 1 : 0.4)
+        .accessibilityLabel(String(localized: "下载剧集"))
+    }
+
+    /// 选集区（`episodeArea`）：
+    /// - 手机竖屏下栏顶部展示 `40pt`「状态＋换源」紧凑条；
+    /// - 宽屏非全屏（Duo 展开 / iPad / 桌面窗口）因左栏下方已有完整信息工作台，右栏直接展示「选集 / 评论」分段栏与内容。
     private func episodeArea(_ controller: PlayerController) -> some View {
         VStack(spacing: 0) {
-            episodeAreaHeader(controller)
-                .padding(.top, 6)
+            if !isWideSplitLayout {
+                episodeAreaHeader(controller)
+                    .padding(.top, 6)
+            }
 
             Picker("", selection: $detailTab) {
                 ForEach(PlayerDetailTab.allCases) { tab in
@@ -4286,7 +4388,7 @@ struct PlayerScreen: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
-            .padding(.top, 6)
+            .padding(.top, isWideSplitLayout ? 10 : 6)
             .padding(.bottom, 8)
             .onChange(of: detailTab) { _, tab in
                 if tab == .comments {
@@ -4305,6 +4407,13 @@ struct PlayerScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
+        .overlay(alignment: .leading) {
+            if isWideSplitLayout {
+                Rectangle()
+                    .fill(Color(.separator).opacity(0.45))
+                    .frame(width: 0.5)
+            }
+        }
     }
 
     /// 选集区顶部 `40pt`「状态＋换源」紧凑条（§6 F3）：
@@ -4337,7 +4446,8 @@ struct PlayerScreen: View {
     private func episodeSourceAndRoadMenu(
         _ controller: PlayerController,
         titleFallback: String,
-        accent: Color
+        accent: Color,
+        maxBadgeWidth: CGFloat = 112
     ) -> some View {
         let currentPlugin = controller.effectivePluginName
         let currentRoadName: String? = controller.roads.indices.contains(controller.selectedRoad)
@@ -4415,12 +4525,12 @@ struct PlayerScreen: View {
             }
             .foregroundStyle(accent)
             .padding(.horizontal, 10)
-            .frame(maxWidth: 112, minHeight: 32)
+            .frame(maxWidth: maxBadgeWidth, minHeight: 32)
             .background(
                 Capsule(style: .continuous)
                     .fill(Color(.secondarySystemBackground))
             )
-            .frame(height: 40)
+            .frame(height: 36)
             .contentShape(Rectangle())
         }
         .tint(accent)
@@ -4573,6 +4683,7 @@ struct PlayerScreen: View {
                                     title: pageTitle,
                                     accessibilityLabel: pageAccessibilityLabel
                                 )
+                                .fixedSize(horizontal: true, vertical: false)
                             }
                         }
                         .frame(height: 44)
@@ -4885,27 +4996,28 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 评论页：默认当集（无整部番），条数居中只读；左右两颗都是 44 高的按钮。
+    /// 评论页：默认当集（无整部番），选集与排序菜单锁住自然宽度不截字，条数紧凑单行显示。
     @ViewBuilder
     private var commentsPane: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                // 左：当前集（默认当集，不再提供「整部番」）。
+            HStack(spacing: 6) {
                 SwiftSelectionMenuButton(
                     selection: commentEpisodeSelection(),
                     title: commentEpisode.map { String(localized: "第 \(String(describing: $0)) 集") } ?? String(localized: "第 — 集"),
                     accessibilityLabel: commentEpisode.map { String(localized: "当前查看第 \(String(describing: $0)) 集评论") } ?? String(localized: "当前查看集数评论")
                 )
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(height: 44)
-                Spacer(minLength: 8)
-                // 中：只读条数文案
-                Text(commentTotal == 0 ? "还没有人评论" : String(localized: "共 \(String(describing: commentTotal)) 条评论"))
+
+                Text(commentTotal == 0 ? String(localized: "暂无评论") : String(localized: "\(String(describing: commentTotal)) 条"))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+                    .lineLimit(1)
                     .contentTransition(.numericText())
-                Spacer(minLength: 8)
-                // 右：排序（按钮上直接写当前排序方式） + 刷新
+
+                Spacer(minLength: 4)
+
                 SwiftSelectionMenuButton(
                     selection: .init(options: [
                         SystemMenuButton.Selection.Option(
@@ -4926,21 +5038,21 @@ struct PlayerScreen: View {
                     title: isCommentsAscending ? "最早优先" : "最新优先",
                     accessibilityLabel: String(localized: "评论排序")
                 )
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(height: 44)
+
                 Button {
                     Task { await reloadComments() }
                 } label: {
-                    // 跟下载入口那颗同一种钮：图标钮、主题色、灰胶囊（LP 5441）。
-                    // 同一行里一颗有底一颗没底，看着就是没做完。
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
-                        .frame(width: 44, height: 32)
+                        .frame(width: 40, height: 32)
                         .background(
                             Capsule(style: .continuous)
                                 .fill(Color(.secondarySystemBackground))
                         )
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 44)
                         .contentShape(Rectangle())
                 }
                 .disabled(isLoadingComments)
@@ -5476,6 +5588,128 @@ private struct SurfaceTouchGesturesModifier<Drag: Gesture>: ViewModifier {
                 } onPressingChanged: { pressing in
                     onPressingChanged(pressing)
                 }
+        }
+    }
+}
+
+private enum PlayerStageRole: Sendable {
+    case player
+    case wideInfo
+    case episodes
+}
+
+private struct PlayerStageRoleKey: LayoutValueKey {
+    static let defaultValue: PlayerStageRole = .player
+}
+
+/// 播放页单一扁平自适应舞台布局：
+/// - 全屏：播放器铺满整个区域；
+/// - 宽屏非全屏（Duo 展开 / iPad / 桌面窗口）：左栏顶部 16:9 播放器 + 左栏下方番剧信息与操作工作台，右栏（336–420pt）专职选集与评论；
+/// - 竖屏非全屏：顶部 16:9 播放器 + 下方选集与评论。
+/// `player` 始终作为第 0 个子视图保留在同一层级，转屏、折叠与全屏切换零视图重建。
+private struct PlayerStageLayout: Layout {
+    var isFullscreen: Bool
+    var isWideSplit: Bool
+    var videoAspectRatio: CGFloat
+
+    private static let minWideInfoHeight: CGFloat = 148
+
+    private static func wideSidebarWidth(for totalWidth: CGFloat) -> CGFloat {
+        min(max((totalWidth * 0.39).rounded(), 336), 420)
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        CGSize(
+            width: proposal.width ?? 393,
+            height: proposal.height ?? 852
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        if isFullscreen {
+            for subview in subviews where subview[PlayerStageRoleKey.self] == .player {
+                subview.place(
+                    at: bounds.origin,
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+                )
+            }
+            return
+        }
+
+        let ratio = max(videoAspectRatio, 0.1)
+
+        if isWideSplit {
+            let sidebarWidth = min(bounds.width * 0.5, Self.wideSidebarWidth(for: bounds.width))
+            let leftWidth = max(1, bounds.width - sidebarWidth)
+            let idealPlayerHeight = (leftWidth / ratio).rounded()
+            let maxPlayerHeight = max(180, bounds.height - Self.minWideInfoHeight)
+            let playerHeight = min(bounds.height, min(idealPlayerHeight, maxPlayerHeight))
+            let infoHeight = max(0, bounds.height - playerHeight)
+
+            for subview in subviews {
+                switch subview[PlayerStageRoleKey.self] {
+                case .player:
+                    subview.place(
+                        at: bounds.origin,
+                        anchor: .topLeading,
+                        proposal: ProposedViewSize(width: leftWidth, height: playerHeight)
+                    )
+                case .wideInfo:
+                    subview.place(
+                        at: CGPoint(x: bounds.minX, y: bounds.minY + playerHeight),
+                        anchor: .topLeading,
+                        proposal: ProposedViewSize(width: leftWidth, height: infoHeight)
+                    )
+                case .episodes:
+                    subview.place(
+                        at: CGPoint(x: bounds.minX + leftWidth, y: bounds.minY),
+                        anchor: .topLeading,
+                        proposal: ProposedViewSize(width: sidebarWidth, height: bounds.height)
+                    )
+                }
+            }
+            return
+        }
+
+        let playerHeight = min(
+            (bounds.width / ratio).rounded(),
+            (bounds.height * 0.65).rounded()
+        )
+        let episodesHeight = max(0, bounds.height - playerHeight)
+
+        for subview in subviews {
+            switch subview[PlayerStageRoleKey.self] {
+            case .player:
+                subview.place(
+                    at: bounds.origin,
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: playerHeight)
+                )
+            case .episodes:
+                subview.place(
+                    at: CGPoint(x: bounds.minX, y: bounds.minY + playerHeight),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: episodesHeight)
+                )
+            case .wideInfo:
+                subview.place(
+                    at: CGPoint(x: bounds.minX, y: bounds.maxY),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: 0, height: 0)
+                )
+            }
         }
     }
 }
