@@ -1318,9 +1318,8 @@ struct PlayerScreen: View {
                 ScreenshotFlashView(progress: screenshotFlash)
             }
 
-            // 加载符号：一颗系统圈 + 下面一行网速（LP 4810）；瞬态跳转/播放暂停 HUD 显示时暂隐免得在中心重叠。
+            // 加载符号：一颗系统圈 + 下面一行网速（LP 4810）；播放/暂停气泡居中显示时暂隐免得重叠。
             if showsLoadingHUD,
-               seekHUD == nil,
                playPauseHUD == nil,
                surface.errorMessage == nil,
                controller.playbackURL != nil {
@@ -1367,14 +1366,14 @@ struct PlayerScreen: View {
             }
             .ignoresSafeArea(.container, edges: videoIgnoredSafeAreaEdges)
 
-            // HUD 统一置于播放器画面正中央。
+            // 仅播放/暂停 HUD 置于画面正中央；其余手势/跳转/超分/倍速/状态提示保持在画面上 1/4 高度。
             if let gestureHUD {
-                hudAtCenter { gestureOverlay(gestureHUD) }
+                hudAtQuarter { gestureOverlay(gestureHUD) }
             } else if let seekHUD {
-                hudAtCenter { seekOverlay(seekHUD, target: seekDragTarget) }
+                hudAtQuarter { seekOverlay(seekHUD, target: seekDragTarget) }
             }
             if let superResolutionHUD {
-                hudAtCenter {
+                hudAtQuarter {
                     Text(superResolutionHUD)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.white)
@@ -1400,11 +1399,11 @@ struct PlayerScreen: View {
             }
 
             if isTemporarySpeed {
-                hudAtCenter { temporarySpeedCapsule }
+                hudAtQuarter { temporarySpeedCapsule }
                     .transition(.opacity)
             }
             if let message = surface.hudToastMessage {
-                hudAtCenter {
+                hudAtQuarter {
                     hudToastBubble(message)
                         .task(id: "\(hudToastSerial)|\(message)") {
                             await hideToast(message, slot: .hud)
@@ -1855,11 +1854,11 @@ struct PlayerScreen: View {
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 
-    /// 顶部快进按钮：单击快进，长按修改秒数（对应原版 player_item_panel 的快进按钮）。
+    /// 顶部快进按钮：单击快进，长按 1 秒修改秒数（对应原版 player_item_panel 的快进按钮）。
     private var skipForwardButton: some View {
         skipButton(seconds: settings.buttonSkipTime, isForward: true)
             .gesture(
-                LongPressGesture(minimumDuration: 0.5)
+                LongPressGesture(minimumDuration: 1.0)
                     .onEnded { _ in presentSkipSecondsDialog() }
                     .exclusively(
                         before: TapGesture().onEnded {
@@ -3833,7 +3832,20 @@ struct PlayerScreen: View {
         .allowsHitTesting(false)
     }
 
-    /// 画面正中央 HUD 容器。
+    /// 画面上 1/4 高度 HUD 容器（亮度/音量、快进秒数、超分、长按倍速、动作结果提示）。
+    private func hudAtQuarter<Content: View>(
+        interactive: Bool = false,
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        let resolved = content()
+        return GeometryReader { proxy in
+            resolved
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 4)
+        }
+        .allowsHitTesting(interactive)
+    }
+
+    /// 画面正中央 HUD 容器（仅用于播放 / 暂停反馈气泡）。
     private func hudAtCenter<Content: View>(
         interactive: Bool = false,
         @ViewBuilder _ content: () -> Content
