@@ -121,7 +121,7 @@ enum BangumiAPI {
 
     private static func markNSFW(_ id: Int) {
         guard id > 0 else { return }
-        nsfwSubjectIDs.withLock { $0.insert(id) }
+        _ = nsfwSubjectIDs.withLock { $0.insert(id) }
     }
 
     private static func isNSFW(_ id: Int) -> Bool {
@@ -762,7 +762,8 @@ enum BangumiAPI {
         for pageEntries in pages {
             if pageEntries.isEmpty { break }
             for entry in pageEntries where hasChineseName(entry) {
-                guard let item = BangumiItem.fromJSON(entry) else { continue }
+                let item = BangumiItem.fromJSON(entry)
+                guard item.id > 0 else { continue }
                 let dayIndex = max(1, min(7, item.airWeekday)) - 1
                 result[dayIndex].append(item)
                 rawBuckets[dayIndex].append(.object(["subject": entry]))

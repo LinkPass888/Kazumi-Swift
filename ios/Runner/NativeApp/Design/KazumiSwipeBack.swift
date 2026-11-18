@@ -169,8 +169,8 @@ final class SwipeBackCoordinator: NSObject, UIGestureRecognizerDelegate {
         }
 
         #if !targetEnvironment(macCatalyst)
-        if #available(iOS 26.0, *) {
-            let contentGesture = navigation.interactiveContentPopGestureRecognizer
+        if #available(iOS 26.0, *),
+           let contentGesture = navigation.interactiveContentPopGestureRecognizer {
             if contentGesture.delegate !== self {
                 originalContentDelegate = contentGesture.delegate
                 contentGesture.delegate = self
