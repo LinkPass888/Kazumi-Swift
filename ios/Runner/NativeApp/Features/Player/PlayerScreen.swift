@@ -266,9 +266,9 @@ struct PlayerScreen: View {
     @State private var containerSize: CGSize = .zero
     /// 播放页四周的安全区内缩（全屏时画面要绕过刘海，按它算窗口尺寸）。
     @State private var containerInsets = EdgeInsets()
-    /// 非全屏（状态栏可见）时按横竖方向分槽记录的顶部安全区快照（防跨方向串用，见 §4）。
-    @State private var portraitTopInsetSnapshot: CGFloat = 0
-    @State private var landscapeTopInsetSnapshot: CGFloat = 0
+    /// 非全屏（系统栏与安全区可见）时按横竖方向分槽记录的安全区快照，防止全屏隐藏系统栏后安全区归零或跨方向串用。
+    @State private var portraitSafeInsetsSnapshot = EdgeInsets()
+    @State private var landscapeSafeInsetsSnapshot = EdgeInsets()
     /// 整个窗口的尺寸（含安全区）。
     @State private var windowSize: CGSize = .zero
     /// 上一次转屏请求的结果，显示在「播放信息」里（Colo 2026-10-28）：
@@ -477,15 +477,15 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 非全屏（状态栏可见）时按宽高方向分槽更新顶部安全区快照，避免旋转或折叠串用（§4）。
+    /// 非全屏（状态栏与侧栏可见）时按宽高方向分槽更新安全区快照，避免旋转、折叠或全屏隐藏系统层后丢失边距。
     private func recordSafeAreaGeometry(size: CGSize, insets: EdgeInsets) {
         containerSize = size
         containerInsets = insets
         guard !isFullscreen, size.width > 0, size.height > 0 else { return }
         if size.width > size.height {
-            landscapeTopInsetSnapshot = insets.top
+            landscapeSafeInsetsSnapshot = insets
         } else {
-            portraitTopInsetSnapshot = insets.top
+            portraitSafeInsetsSnapshot = insets
         }
     }
 
@@ -584,6 +584,8 @@ struct PlayerScreen: View {
                     && !SourceSheetCoordinator.shared.isPresented,
                 excludedWindowRect: playerAreaWindowFrame
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea()
         }
         // 播放器页面范围内把 tint 压回系统黑白：AppRoot 那句全局 .tint(accentColor)
         // 会顺着 tint 环境传到菜单行上，菜单的符号就变主题色
@@ -1266,7 +1268,7 @@ struct PlayerScreen: View {
         return aspectRatioMode.frameAspectRatio
     }
 
-    /// SF Symbols 三级阶梯尺度与热区基准（§5）：宽栏（全屏或左栏 `≥ 600pt`）与紧凑栏分档。
+    /// SF Symbols 尺度与热区基准：常驻工具栏统一保持原版 18pt .medium，主播放键宽栏 20pt。
     private var isWideToolbar: Bool {
         isFullscreen || surfaceWidth >= 600
     }
@@ -1279,26 +1281,53 @@ struct PlayerScreen: View {
         isWideToolbar ? 20 : 18
     }
 
-    private var l2SymbolSize: CGFloat {
-        isWideToolbar ? 17 : 16
+    private var l2SymbolSize: CGFloat { 18 }
+
+    private var l2ComplexSymbolSize: CGFloat { 18 }
+
+    private var sameOrientationSafeSnapshot: EdgeInsets {
+        containerSize.width > containerSize.height
+            ? landscapeSafeInsetsSnapshot
+            : portraitSafeInsetsSnapshot
     }
 
-    private var l2ComplexSymbolSize: CGFloat {
-        isWideToolbar ? 16 : 15
-    }
-
-    /// 顶栏首行顶部内边距（§4）：
+    /// 顶栏首行顶部内边距：
     /// - 非全屏：保持 `playerTopInset = 6`（安全区由外层自动避让）；
-    /// - 就地全屏（`usesInlineFullscreen`）：取同向全屏前快照与实时 `containerInsets.top` 的较大值，再与视觉下限 `12` 取 `max`；
-    /// - 旋转横屏全屏（`!usesInlineFullscreen`）：不复用竖屏快照，直接取 `max(12, containerInsets.top)`。
+    /// - 全屏：避开顶部安全区并至少留出 `16pt`，防止两侧角标按钮紧贴大圆角屏幕边缘。
     private var effectiveTopBarPadding: CGFloat {
         guard isFullscreen else { return Self.playerTopInset }
+        let safeTop = usesInlineFullscreen
+            ? max(containerInsets.top, sameOrientationSafeSnapshot.top)
+            : containerInsets.top
+        return max(16, safeTop)
+    }
+
+    /// 控制层（顶栏、底栏、左右锁屏与截图键）左侧安全内边距：
+    /// 全屏下既完整避开灵动岛/侧边竖栏安全区，又保证距物理屏幕左缘至少 `28pt` 以远离屏幕大圆角。
+    private var controlLeadingPadding: CGFloat {
+        guard isFullscreen else { return 16 }
+        let safeLeading = max(containerInsets.leading, sameOrientationSafeSnapshot.leading)
+        let targetFromWindowEdge = max(28, safeLeading + 16)
         if usesInlineFullscreen {
-            let isLandscape = containerSize.width > containerSize.height
-            let sameOrientationSnapshot = isLandscape ? landscapeTopInsetSnapshot : portraitTopInsetSnapshot
-            return max(12, max(containerInsets.top, sameOrientationSnapshot))
+            return targetFromWindowEdge
         }
-        return max(12, containerInsets.top)
+        return max(16, targetFromWindowEdge - containerInsets.leading)
+    }
+
+    /// 控制层右侧安全内边距：全屏下避开右侧安全区并保证距物理屏幕右缘至少 `28pt`。
+    private var controlTrailingPadding: CGFloat {
+        guard isFullscreen else { return 16 }
+        let safeTrailing = max(containerInsets.trailing, sameOrientationSafeSnapshot.trailing)
+        let targetFromWindowEdge = max(28, safeTrailing + 16)
+        if usesInlineFullscreen {
+            return targetFromWindowEdge
+        }
+        return max(16, targetFromWindowEdge - containerInsets.trailing)
+    }
+
+    /// 全屏底栏距物理窗口下缘的安全内边距：避开底部 Home 指示条安全区且不少于 `16pt`。
+    private var fullscreenBottomPadding: CGFloat {
+        max(16, max(containerInsets.bottom, sameOrientationSafeSnapshot.bottom))
     }
 
     /// 当前控制栏可见时顶栏占用的总高度（供弹幕顶距避让计算）。
@@ -1426,12 +1455,16 @@ struct PlayerScreen: View {
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
         )
-        .onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .global)
-        } action: { frame in
-            playerAreaWindowFrame = frame
-            surfaceSize = frame.size
-            surfaceWidth = frame.size.width
+        .background {
+            KazumiWindowRectReader { rect in
+                playerAreaWindowFrame = rect
+            }
+        }
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { size in
+            surfaceSize = size
+            surfaceWidth = size.width
         }
     }
 
@@ -1612,11 +1645,11 @@ struct PlayerScreen: View {
 
             if controlsShown {
                 lockButton
-                    .padding(.leading, 16)
+                    .padding(.leading, controlLeadingPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .transition(.opacity)
                 screenshotButton
-                    .padding(.trailing, 16)
+                    .padding(.trailing, controlTrailingPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .transition(.opacity)
             }
@@ -1631,7 +1664,7 @@ struct PlayerScreen: View {
 
             if isSurfaceLocked, unlockAffordanceShown {
                 lockButton
-                    .padding(.leading, 16)
+                    .padding(.leading, controlLeadingPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .transition(.opacity)
             }
@@ -1836,19 +1869,17 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 两侧跳转钮：快进 / 快退那颗符号，数字由系统符号自带；档外秒数（如 80）叠在圆弧正中偏下。
+    /// 顶栏跳过片头按钮图标：外圈统一 18pt .medium 圆弧箭头，内部数字固定保持最初的 10pt .regular 字重与大小。
     private func skipButton(seconds: Int, isForward: Bool) -> some View {
         PlayerIconButton(hitSize: toolbarHitSize) {
             ZStack {
-                Image(systemName: Self.skipSymbolName(seconds: seconds, isForward: isForward))
-                    .playerIcon(pointSize: l2SymbolSize, weight: .medium, optical: .detailed)
+                Image(systemName: isForward ? "goforward" : "gobackward")
+                    .playerIcon(pointSize: 18, weight: .medium, optical: .detailed)
                     .foregroundStyle(.white)
-                if !SettingsStore.skipSecondTiers.contains(seconds) {
-                    Text("\(seconds)")
-                        .font(.system(size: 10, weight: .regular).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .offset(y: 1.0)
-                }
+                Text("\(seconds)")
+                    .font(.system(size: seconds >= 100 ? 8.5 : 10, weight: .regular).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .offset(y: 1.0)
             }
         }
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
@@ -1870,18 +1901,6 @@ struct PlayerScreen: View {
             .accessibilityLabel("快进")
             .accessibilityHint(String(localized: "快进\(String(describing: settings.buttonSkipTime))秒，长按修改时间"))
             .accessibilityAddTraits(.isButton)
-    }
-
-    /// 快进 / 快退那颗符号的名字：系统有自带数字的那几档就用带数字的
-    /// （`goforward.15`），否则用空箭头。
-    private static func skipSymbolName(seconds: Int, isForward: Bool) -> String {
-        let base = isForward ? "goforward" : "gobackward"
-        let tiers = SettingsStore.skipSecondTiers
-        // 只有 10…90 那几档系统才有 `goforward.10` 这样的符号。
-        if tiers.contains(seconds), seconds >= 10, seconds <= 90 {
-            return "\(base).\(seconds)"
-        }
-        return base
     }
 
     /// 画面按压：短按切控制栏 / 播放暂停，长按临时倍速（对应原版
@@ -2351,11 +2370,13 @@ struct PlayerScreen: View {
             }
             .fixedSize()
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, controlLeadingPadding)
+        .padding(.trailing, controlTrailingPadding)
         .padding(.top, effectiveTopBarPadding)
     }
 
     /// 顶栏的定时关闭（横竖屏都在顶栏直达，正在倒数的档位实时显示 mm:ss）。
+    /// `timer` 符号无顶部突出箭头、圆环占满字高，按 `15.4pt` 缩配使其外圆直径与 `18pt goforward` 的圆环严格一致。
     private var sleepTimerButton: some View {
         let isRunning = sleepTimerRemaining != nil
         return PlayerIconButton(hitSize: toolbarHitSize) {
@@ -2377,9 +2398,9 @@ struct PlayerScreen: View {
                 symbol: isRunning ? "moon.zzz.fill" : "timer",
                 accessibilityLabel: String(localized: "定时关闭"),
                 tint: .white,
-                symbolSize: l2SymbolSize,
+                symbolSize: isRunning ? l2SymbolSize : 15.4,
                 symbolWeight: .medium,
-                symbolOptical: isRunning ? .solid : .round,
+                symbolOptical: isRunning ? .solid : .standard,
                 hitSize: toolbarHitSize,
                 onOpen: { pinControlsWhileMenuOpen() }
             )
@@ -2745,15 +2766,17 @@ struct PlayerScreen: View {
     /// 片头片尾跳过胶囊的右边距与底边距（§7）：
     /// 统一横竖屏避让逻辑——控制栏显示时平滑上移至底栏上沿上方 12pt，
     /// 控制栏隐藏时沉降回右下安全区（距底安全区 16pt、距右安全区 16pt）。
-    private var skipPillTrailingInset: CGFloat { 16 }
+    private var skipPillTrailingInset: CGFloat {
+        isFullscreen ? controlTrailingPadding : 16
+    }
 
     private var skipPillBottomInset: CGFloat {
         let usesWide = surfaceWidth >= 600 || (isFullscreen && !usesInlineFullscreen)
         let activeBarHeight = usesWide ? Self.landscapeTransportContentHeight : Self.portraitTransportHeight
         if controlsShown {
-            return activeBarHeight + (isFullscreen ? 12 : 0) + 12
+            return activeBarHeight + (isFullscreen ? fullscreenBottomPadding : 0) + 12
         }
-        return (isFullscreen ? containerInsets.bottom : 0) + 16
+        return (isFullscreen ? fullscreenBottomPadding : 16)
     }
 
     /// 当前这一集的媒体地址（解析出来才有）。
@@ -3081,15 +3104,16 @@ struct PlayerScreen: View {
             speedButton
             fullscreenButton
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, controlLeadingPadding)
+        .padding(.trailing, controlTrailingPadding)
         .frame(height: Self.portraitTransportHeight)
-        .padding(.bottom, isFullscreen ? 12 : Self.portraitTransportBottomInset)
+        .padding(.bottom, isFullscreen ? fullscreenBottomPadding : Self.portraitTransportBottomInset)
     }
 
     /// 宽栏底栏（§1 / §2 / §6 / §8）：
     /// - 「时间入轨」由 3 层减为 2 层（当前时间与总时长嵌入 `scrubber` 左右两端，省去 `28pt` 垂直高度）；
     /// - 主栏收敛为 7–8 项，`episodesButton` 严格仅在 `isFullscreen == true` 时渲染；
-    /// - 非全屏底沿 `0` 额外留白，全屏距窗口底 `12pt`。
+    /// - 非全屏底沿 `0` 额外留白，全屏避开左右与底部安全区及屏幕圆角。
     private func landscapeTransport(_ controller: PlayerController) -> some View {
         let activeSegments = settings.aniSkipLookup ? controller.skipSegments : .empty
         let hasHours = surface.duration >= 3600
@@ -3111,7 +3135,8 @@ struct PlayerScreen: View {
                     .lineLimit(1)
                     .frame(minWidth: timeMinWidth, alignment: .trailing)
             }
-            .padding(.horizontal, 16)
+            .padding(.leading, controlLeadingPadding)
+            .padding(.trailing, controlTrailingPadding)
             .frame(height: 36)
 
             HStack(spacing: 4) {
@@ -3132,10 +3157,11 @@ struct PlayerScreen: View {
                 }
                 fullscreenButton
             }
-            .padding(.horizontal, 16)
+            .padding(.leading, controlLeadingPadding)
+            .padding(.trailing, controlTrailingPadding)
             .frame(height: 44)
         }
-        .padding(.bottom, isFullscreen ? 12 : 0)
+        .padding(.bottom, isFullscreen ? fullscreenBottomPadding : 0)
     }
 
     /// `当前 / 总长`，12 号白色、等宽数字（紧凑底栏在进度条右边）。
@@ -3277,7 +3303,7 @@ struct PlayerScreen: View {
         .accessibilityLabel("下一集")
     }
 
-    /// 超分辨率（L2 复杂多笔触层级：`16/15pt .medium` ＋ `.hierarchical`，§5）。
+    /// 超分辨率（纯白单色渲染，避免分层模式把星点染灰）。
     private var superResolutionButton: some View {
         PlayerIconButton(hitSize: toolbarHitSize) {
             SystemMenuButton(
@@ -3292,14 +3318,13 @@ struct PlayerScreen: View {
                 symbolSize: l2ComplexSymbolSize,
                 symbolWeight: .medium,
                 symbolOptical: .detailed,
-                hierarchicalSymbol: true,
                 hitSize: toolbarHitSize,
                 onOpen: { pinControlsWhileMenuOpen() }
             )
         }
     }
 
-    /// 倍速（L2 复杂多笔触层级：`16/15pt .medium` ＋ `.hierarchical`，§5）。
+    /// 倍速（纯白单色渲染，避免分层模式把表盘刻度染灰）。
     private var speedButton: some View {
         PlayerIconButton(hitSize: toolbarHitSize) {
             SystemMenuButton(
@@ -3318,7 +3343,6 @@ struct PlayerScreen: View {
                 symbolSize: l2ComplexSymbolSize,
                 symbolWeight: .medium,
                 symbolOptical: .standard,
-                hierarchicalSymbol: true,
                 hitSize: toolbarHitSize,
                 onOpen: { pinControlsWhileMenuOpen() }
             )
@@ -3341,7 +3365,7 @@ struct PlayerScreen: View {
     }
 
     /// 全屏右侧选集抽屉（§7 G3）：
-    /// 上下及右侧各留 `16pt` 边距，四角连续圆角 `RoundedRectangle(cornerRadius: 28, style: .continuous)` 液态玻璃悬浮面板。
+    /// 避开上下与右侧安全区，四角连续圆角 `RoundedRectangle(cornerRadius: 28, style: .continuous)` 液态玻璃悬浮面板。
     private func episodesPanel(_ controller: PlayerController) -> some View {
         let available = max(surfaceWidth, 360)
         let panelWidth = min(available * 0.9, min(max(available / 3, 320), 420))
@@ -3355,8 +3379,9 @@ struct PlayerScreen: View {
             }
             .clipShape(panelShape)
             .shadow(color: .black.opacity(0.32), radius: 18, y: 6)
-            .padding(.vertical, 16)
-            .padding(.trailing, 16)
+            .padding(.top, isFullscreen ? effectiveTopBarPadding : 16)
+            .padding(.bottom, isFullscreen ? fullscreenBottomPadding : 16)
+            .padding(.trailing, isFullscreen ? controlTrailingPadding : 16)
     }
 
     private func openEpisodesPanel() {
@@ -4212,19 +4237,13 @@ struct PlayerScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if settings.showRating, rating > 0 {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                         Text(String(format: "%.1f", rating))
-                            .font(.system(size: 13, weight: .bold).monospacedDigit())
+                            .font(.subheadline.weight(.bold).monospacedDigit())
                     }
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.orange.opacity(0.14))
-                    )
+                    .foregroundStyle(accent)
                     .fixedSize()
                 }
             }

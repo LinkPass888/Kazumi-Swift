@@ -36,7 +36,7 @@ struct SystemMenuButton: UIViewRepresentable {
     var showsChevron: Bool = false
     var chevronPointSize: CGFloat = 12
     var menuTint: Color = .primary
-    var symbolSize: CGFloat = 16
+    var symbolSize: CGFloat = 18
     var symbolWeight: Font.Weight = .medium
     /// 实心块状 / 圆形轮廓的符号在 UIKit 侧没法用 scaleEffect，按 0.9pt 轻微缩一档。
     var symbolOptical: PlayerIconOptical = .standard
@@ -194,7 +194,8 @@ struct SystemMenuButton: UIViewRepresentable {
                 button.setTitle(nil, for: .normal)
                 var symbolConfig = UIImage.SymbolConfiguration(
                     pointSize: effectiveSymbolSize,
-                    weight: Self.uiWeight(symbolWeight)
+                    weight: Self.uiWeight(symbolWeight),
+                    scale: .medium
                 )
                 if hierarchicalSymbol {
                     symbolConfig = symbolConfig.applying(

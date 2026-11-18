@@ -33,7 +33,7 @@ enum PlayerIconOptical: Equatable, Hashable {
 /// 所有 SwiftUI 里的 SF Symbol 都走这里：按 L1 / L2 / L3 三级字号与字重基准渲染，
 /// 配合渲染模式与轻量 scaleEffect 做光学补偿，而不是改 frame 或 resizable。
 struct PlayerIconModifier: ViewModifier {
-    var pointSize: CGFloat = 16
+    var pointSize: CGFloat = 18
     var weight: Font.Weight = .medium
     var optical: PlayerIconOptical = .standard
     var renderingMode: SymbolRenderingMode? = nil
@@ -66,7 +66,7 @@ struct PlayerIconModifier: ViewModifier {
 
 extension View {
     func playerIcon(
-        pointSize: CGFloat = 16,
+        pointSize: CGFloat = 18,
         weight: Font.Weight = .medium,
         optical: PlayerIconOptical = .standard,
         renderingMode: SymbolRenderingMode? = nil
