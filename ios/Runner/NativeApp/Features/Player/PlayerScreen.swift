@@ -1857,7 +1857,7 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 顶栏跳过片头按钮图标：外圈 17pt .medium 圆弧箭头，内部数字 8pt（三位秒数 6.5pt）.regular。
+    /// 顶栏跳过片头按钮图标：外圈 17pt .medium 圆弧箭头，内部整数秒数统一 8pt .regular。
     private func skipButton(seconds: Int, isForward: Bool) -> some View {
         PlayerIconButton(hitSize: toolbarHitSize) {
             ZStack {
@@ -1865,7 +1865,9 @@ struct PlayerScreen: View {
                     .playerIcon(pointSize: 17, weight: .medium, optical: .detailed)
                     .foregroundStyle(.white)
                 Text("\(seconds)")
-                    .font(.system(size: seconds >= 100 ? 6.5 : 8, weight: .regular).monospacedDigit())
+                    .font(.system(size: 8, weight: .regular).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .foregroundStyle(.white)
                     .offset(y: 1.0)
             }
@@ -4129,7 +4131,7 @@ struct PlayerScreen: View {
                         .font(.headline)
                     HStack(spacing: 8) {
                         TextField("秒", text: $skipSecondsInput)
-                            .keyboardType(.numberPad)
+                            .keyboardType(.decimalPad)
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.leading)
                         Text("秒")
@@ -4176,11 +4178,15 @@ struct PlayerScreen: View {
     }
 
     private func commitSkipSeconds() {
-        let text = skipSecondsInput.trimmingCharacters(in: .whitespaces)
-        guard let value = Int(text) else {
+        let normalized = skipSecondsInput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "。", with: ".")
+            .replacingOccurrences(of: ",", with: ".")
+        guard let rawValue = Double(normalized), rawValue.isFinite else {
             skipSecondsError = String(localized: "请输入数字")
             return
         }
+        let value = Int(rawValue.rounded(.toNearestOrAwayFromZero))
         guard value > 0 else {
             skipSecondsError = String(localized: "请输入大于0的数字")
             return
