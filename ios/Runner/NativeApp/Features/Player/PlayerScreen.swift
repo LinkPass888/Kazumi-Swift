@@ -1299,16 +1299,21 @@ struct PlayerScreen: View {
     }
 
     /// 控制层（顶栏、底栏、左右锁屏与截图键）左侧安全内边距：
-    /// 全屏下既完整避开灵动岛/侧边竖栏安全区，又保证距物理屏幕左缘至少 `28pt` 以远离屏幕大圆角。
+    /// - 就地全屏（Duo / iPad）：系统状态栏与侧边竖栏均已隐藏，无需避让竖栏，仅留 `28pt` 避开屏幕圆角；
+    /// - 手机横屏全屏：完整避开灵动岛安全区且距物理左缘不少于 `28pt`。
     private var controlLeadingPadding: CGFloat {
         guard isFullscreen else { return 16 }
+        if usesInlineFullscreen { return 28 }
         let safeLeading = max(containerInsets.leading, sameOrientationSafeSnapshot.leading)
         return max(28, safeLeading + 16)
     }
 
-    /// 控制层右侧安全内边距：全屏下避开右侧安全区并保证距物理屏幕右缘至少 `28pt`。
+    /// 控制层右侧安全内边距：
+    /// - 就地全屏（Duo / iPad）：全屏态右侧系统竖栏已隐藏，不再沿用非全屏竖栏内缩，统一留 `28pt` 避开屏幕圆角；
+    /// - 手机横屏全屏：避开右侧灵动岛安全区且距物理右缘不少于 `28pt`。
     private var controlTrailingPadding: CGFloat {
         guard isFullscreen else { return 16 }
+        if usesInlineFullscreen { return 28 }
         let safeTrailing = max(containerInsets.trailing, sameOrientationSafeSnapshot.trailing)
         return max(28, safeTrailing + 16)
     }
@@ -2753,11 +2758,11 @@ struct PlayerScreen: View {
         .accessibilityHint("点按复制完整地址")
     }
 
-    /// 片头片尾跳过胶囊的右边距与底边距（§7）：
-    /// 统一横竖屏避让逻辑——控制栏显示时平滑上移至底栏上沿上方 12pt，
-    /// 控制栏隐藏时沉降回右下安全区（距底安全区 16pt、距右安全区 16pt）。
+    /// 片头片尾跳过胶囊的右边距与底边距：
+    /// 右缘紧贴右侧垂直居中的截图按钮热区左缘（`controlTrailingPadding + toolbarHitSize`，与相机图标留约 10pt 视觉间距），
+    /// 彻底错开截图按钮所在的垂直列，既不重叠也不拉得过远。
     private var skipPillTrailingInset: CGFloat {
-        isFullscreen ? controlTrailingPadding : 16
+        controlTrailingPadding + toolbarHitSize
     }
 
     private var skipPillBottomInset: CGFloat {
@@ -4301,7 +4306,9 @@ struct PlayerScreen: View {
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(.systemBackground))
+        // 仅向下延伸至底部安全区，禁止向左侧（.leading）安全区外溢浅色背景，
+        // 保证手机横屏非全屏时左侧灵动岛安全区从顶到底保持完整纯黑，不会上黑下白漏出半截灵动岛。
+        .background(Color(.systemBackground), ignoresSafeAreaEdges: .bottom)
     }
 
     private func wideCollectMenuButton(accent: Color) -> some View {
