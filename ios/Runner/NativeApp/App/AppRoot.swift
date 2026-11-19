@@ -110,6 +110,19 @@ struct AppRoot: View {
                 )
             }
         }
+        .sheet(isPresented: Binding(
+            get: { environment.router.pendingImportRule != nil },
+            set: { if !$0 { environment.router.pendingImportRule = nil } }
+        )) {
+            if let rule = environment.router.pendingImportRule {
+                PluginImportSheet(initialText: rule) { summary in
+                    for plugin in summary.plugins {
+                        _ = environment.plugins.save(plugin)
+                    }
+                    environment.router.pendingImportRule = nil
+                }
+            }
+        }
     }
 }
 

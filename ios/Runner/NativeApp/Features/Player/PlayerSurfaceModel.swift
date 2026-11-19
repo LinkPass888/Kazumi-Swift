@@ -172,12 +172,16 @@ final class PlayerSurfaceModel {
     /// 顶部那条留给说明性的话（弹幕、错误、同步进度）。
     var hudToastMessage: String?
 
+    /// 同播（Syncplay 等）状态广播回调：(isPaused, position, isSeek)
+    var onPlayStateBroadcast: ((_ isPaused: Bool, _ position: Double, _ isSeek: Bool) -> Void)?
+
     func play() {
         autoPlayPending = false
         wantsPlaying = true
         engine?.play()
         isPlaying = true
         applyDesiredRate()
+        onPlayStateBroadcast?(false, currentTime, false)
     }
 
     func pause() {
@@ -186,6 +190,7 @@ final class PlayerSurfaceModel {
         wantsPlaying = false
         engine?.pause()
         isPlaying = false
+        onPlayStateBroadcast?(true, currentTime, false)
     }
 
     /// 后台渲染锁（原因见 `MPVEngine.setRenderingLocked`）。
@@ -217,6 +222,7 @@ final class PlayerSurfaceModel {
         onPlaybackDiscontinuity?(time, corePaused)
         engine?.seek(to: time)
         currentTime = time
+        onPlayStateBroadcast?(corePaused, time, true)
     }
 
     /// 主动 seek 让媒体时间轴跳变；先把看门狗基线挪到落点，

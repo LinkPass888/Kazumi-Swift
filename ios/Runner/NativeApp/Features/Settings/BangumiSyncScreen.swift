@@ -84,6 +84,8 @@ struct BangumiSyncScreen: View {
                 )
             }
         }
+        .frame(maxWidth: 700)
+        .frame(maxWidth: .infinity)
         .animation(.snappy, value: banner != nil)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("追番同步")

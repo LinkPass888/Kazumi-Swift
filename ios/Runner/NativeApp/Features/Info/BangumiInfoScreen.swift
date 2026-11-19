@@ -1002,7 +1002,7 @@ extension BangumiInfoScreen {
                 rank: item.rank,
                 tags: item.tags.map(\.name),
                 totalEpisodes: controller.episodes.count,
-                currentEpisode: 0,
+                currentEpisode: library.entry(for: item.id)?.currentEpisode ?? 0,
                 addedAt: library.entry(for: item.id)?.addedAt ?? Date(),
                 updatedAt: Date()
             )
@@ -1102,7 +1102,7 @@ extension BangumiInfoScreen {
                 rank: item.rank,
                 tags: item.tags.map(\.name),
                 totalEpisodes: totalEpisodes,
-                currentEpisode: 0,
+                currentEpisode: library.entry(for: item.id)?.currentEpisode ?? 0,
                 addedAt: library.entry(for: item.id)?.addedAt ?? Date(),
                 updatedAt: Date()
             )

@@ -187,7 +187,7 @@ struct PluginListView: View {
                         row(plugin)
                             .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
                     }
-                    .onMove(perform: move)
+                    .onMove(perform: filter == .all ? move : nil)
                 } footer: {
                     Text(footerText)
                 }
@@ -197,6 +197,7 @@ struct PluginListView: View {
         .listSectionSpacing(.custom(12))
         // 行高 48：List 自己有个最小行高，把内容改成多少都压不下来，只能改那个下限。
         .environment(\.defaultMinListRowHeight, 48)
+        .environment(\.editMode, isEditingSelection ? .constant(.active) : .constant(.inactive))
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.heroBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("规则管理")

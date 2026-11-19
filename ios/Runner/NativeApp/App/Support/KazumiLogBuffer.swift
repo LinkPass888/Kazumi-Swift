@@ -64,6 +64,10 @@ final class KazumiLogBuffer: Sendable {
     func clear(_ category: Category) {
         storage.withLock { $0[category] = [] }
     }
+
+    func clearAll() {
+        storage.withLock { $0.removeAll() }
+    }
 }
 
 /// Pure text export of a chronological snapshot (or a category-filtered snapshot).

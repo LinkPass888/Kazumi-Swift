@@ -275,7 +275,6 @@ enum WebDAVSync {
             rules = remote?.danmakuRules ?? ""
         }
 
-        progress?(ProgressEvent(text: String(localized: "正在上传合并结果…"), current: 0, total: 0))
         let payload = WebDAVClient.Payload(
             entries: entries,
             history: history,
@@ -283,14 +282,24 @@ enum WebDAVSync {
             legacyCollectMergedAt: legacyCollectMergedAt,
             removedEntries: mergedRemovals
         )
-        do {
-            try await client.uploadAndVerify(payload)
-        } catch {
-            return Outcome(
-                ok: false,
-                message: String(localized: "同步没能完成：\(Self.friendlyText(error))"),
-                log: String(localized: "同步写云盘失败：\(String(describing: Self.technicalText(error)))")
-            )
+        let isRemoteIdentical = (remote != nil && !cloudBackupWasEmpty) &&
+            remote?.entries == entries &&
+            remote?.history == history &&
+            remote?.danmakuRules == rules &&
+            remote?.legacyCollectMergedAt == legacyCollectMergedAt &&
+            remote?.removedEntries == mergedRemovals
+
+        if !isRemoteIdentical {
+            progress?(ProgressEvent(text: String(localized: "正在上传合并结果…"), current: 0, total: 0))
+            do {
+                try await client.uploadAndVerify(payload)
+            } catch {
+                return Outcome(
+                    ok: false,
+                    message: String(localized: "同步没能完成：\(Self.friendlyText(error))"),
+                    log: String(localized: "同步写云盘失败：\(String(describing: Self.technicalText(error)))")
+                )
+            }
         }
 
         if contents.contains(.collect) {

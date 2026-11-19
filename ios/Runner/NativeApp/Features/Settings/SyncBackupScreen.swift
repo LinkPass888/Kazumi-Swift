@@ -137,6 +137,8 @@ struct SyncBackupScreen: View {
                 Text("文件")
             }
         }
+        .frame(maxWidth: 700)
+        .frame(maxWidth: .infinity)
         // 这一页今天确实只做账号、WebDAV 备份与设置备份，没有任何自动同步，
         // 所以叫「账号与备份」而不是「同步备份」。只有等分件版同步、
         // 「启用 WebDAV」总闸与自动推送三件事都落地后，才改回「同步备份」。

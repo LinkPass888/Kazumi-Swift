@@ -13,6 +13,7 @@ struct PluginImportSheet: View {
     @Environment(PluginsController.self) private var plugins
     @Environment(\.colorScheme) private var colorScheme
 
+    var initialText: String = ""
     /// 由调用方执行真正的写入（包含错误提示）。
     let onConfirm: (PluginImportSummary) async -> Void
 
@@ -91,6 +92,18 @@ struct PluginImportSheet: View {
         }
         .presentationDetents([.medium, .large])
         .onChange(of: text) { _, _ in analyze() }
+        .onAppear {
+            if !initialText.isEmpty {
+                text = initialText
+                analyze()
+            } else if let clip = UIPasteboard.general.string, !clip.isEmpty {
+                let trimmed = clip.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.contains("kazumi://") || trimmed.contains("\"name\"") {
+                    text = trimmed
+                    analyze()
+                }
+            }
+        }
     }
 
     @ViewBuilder

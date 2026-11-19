@@ -128,6 +128,7 @@ final class DanmakuOverlayView: UIView {
         var showBiliBili = true
         var showGamer = true
         var showDanDan = true
+        var filterRules: [String] = []
 
         var border = true
         var borderSize: Double = 1.5
@@ -146,6 +147,27 @@ final class DanmakuOverlayView: UIView {
             return true
         }
 
+        /// 是否匹配关键词屏蔽（包含普通字面量与 /pattern/ 正则屏蔽）。
+        func allowsContent(_ text: String) -> Bool {
+            guard !filterRules.isEmpty else { return true }
+            for rule in filterRules {
+                if rule.hasPrefix("/") && rule.hasSuffix("/") && rule.count >= 2 {
+                    let pattern = String(rule.dropFirst().dropLast())
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                        if regex.firstMatch(in: text, options: [], range: range) != nil {
+                            return false
+                        }
+                    }
+                } else {
+                    if text.localizedCaseInsensitiveContains(rule) {
+                        return false
+                    }
+                }
+            }
+            return true
+        }
+
         /// 只挑「同一批弹幕该怎么画」相关的项：这几项一变，已经画出来的要清掉重来。
         var filterSignature: Int {
             var hasher = Hasher()
@@ -157,6 +179,7 @@ final class DanmakuOverlayView: UIView {
             hasher.combine(showBiliBili)
             hasher.combine(showGamer)
             hasher.combine(showDanDan)
+            hasher.combine(filterRules)
             return hasher.finalize()
         }
     }
@@ -240,7 +263,7 @@ final class DanmakuOverlayView: UIView {
             && lastFilterSignature != newStyle.filterSignature
         if newSignature != signature || filtersChanged {
             signature = newSignature
-            let allowed = newComments.filter { newStyle.allows($0.source) }
+            let allowed = newComments.filter { newStyle.allows($0.source) && newStyle.allowsContent($0.text) }
             let ordered = allowed.sorted { $0.time < $1.time }
             comments = newStyle.deduplication ? Self.merged(ordered) : ordered
             clearLabels()

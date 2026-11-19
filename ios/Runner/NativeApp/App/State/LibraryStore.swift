@@ -408,7 +408,7 @@ final class LibraryStore {
         } else {
             history.insert(record, at: 0)
         }
-        save()
+        save(debounce: true)
     }
 
     // MARK: - 持久化
@@ -441,9 +441,31 @@ final class LibraryStore {
         }
     }
 
-    /// 写回磁盘。数据量很小（几百条），同步写 + `.atomic` 足够快，
-    /// 也不用担心后台任务还没落地就被系统杀掉。
-    private func save() {
+    @ObservationIgnored private var pendingSaveTask: Task<Void, Never>?
+
+    /// 立即将缓冲的变更写回磁盘。
+    func flush() {
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
+        saveNow()
+    }
+
+    /// 写回磁盘。默认立即落盘；高频写入（如播放中定期落进度）支持防抖，
+    /// 避免密集触发整份 JSON 编码与同步磁盘 I/O。
+    private func save(debounce: Bool = false) {
+        if debounce {
+            pendingSaveTask?.cancel()
+            pendingSaveTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+                self?.saveNow()
+            }
+        } else {
+            flush()
+        }
+    }
+
+    private func saveNow() {
         do {
             let directory = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -516,6 +538,40 @@ final class LibraryStore {
         } else {
             entries.append(entry)
         }
+        save()
+        if watchingSignature != previousWatching {
+            onWatchingChanged?()
+        }
+    }
+
+    /// 批量更新追番条目，只落盘一次，避免上百条记录逐条落盘卡死主线程。
+    func upsertMany(_ newEntries: [LibraryEntry]) {
+        guard !newEntries.isEmpty else { return }
+        let previousWatching = watchingSignature
+        let newIDs = Set(newEntries.map(\.id))
+        removedEntries.removeAll { newIDs.contains($0.id) }
+
+        var entryMap: [Int: LibraryEntry] = [:]
+        for entry in entries {
+            entryMap[entry.id] = entry
+        }
+        for entry in newEntries {
+            entryMap[entry.id] = entry
+        }
+
+        var result: [LibraryEntry] = []
+        var seen = Set<Int>()
+        for entry in entries {
+            if let updated = entryMap[entry.id], seen.insert(entry.id).inserted {
+                result.append(updated)
+            }
+        }
+        for entry in newEntries {
+            if seen.insert(entry.id).inserted {
+                result.append(entry)
+            }
+        }
+        self.entries = result
         save()
         if watchingSignature != previousWatching {
             onWatchingChanged?()

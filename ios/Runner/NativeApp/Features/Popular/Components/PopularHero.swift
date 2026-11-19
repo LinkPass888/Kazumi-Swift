@@ -1181,7 +1181,7 @@ struct PopularHero: View {
         isToggling = true
         defer { isToggling = false }
 
-        let next: CollectType = collectType == .none ? .watching : .none
+        let next: CollectType = collectType == .watching ? .none : .watching
         let syncEnabled = settings.bangumiSyncEnable
         guard syncEnabled else {
             applyCollect(poster, next)
@@ -1230,7 +1230,7 @@ struct PopularHero: View {
                 rank: 0,
                 tags: [],
                 totalEpisodes: poster.totalEpisodes,
-                currentEpisode: 0,
+                currentEpisode: library.entry(for: poster.id)?.currentEpisode ?? 0,
                 addedAt: library.entry(for: poster.id)?.addedAt ?? Date(),
                 updatedAt: Date()
             )

@@ -128,6 +128,8 @@ struct StorageScreen: View {
                 }
             }
         }
+        .frame(maxWidth: 700)
+        .frame(maxWidth: .infinity)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("存储与日志")
         .navigationBarTitleDisplayMode(.large)
@@ -206,6 +208,9 @@ struct StorageScreen: View {
 
     private func formattedSize(_ raw: Int64) -> String {
         let bytes = Double(raw)
+        if bytes >= 1024 * 1024 * 1024 {
+            return String(format: "%.2f GB", bytes / (1024 * 1024 * 1024))
+        }
         if bytes >= 1024 * 1024 {
             return String(format: "%.1f MB", bytes / (1024 * 1024))
         }
@@ -220,6 +225,9 @@ struct StorageScreen: View {
     private var airTimeCacheDescription: String {
         guard airTimeCache.bytes > 0 else { return "—" }
         let bytes = Double(airTimeCache.bytes)
+        if bytes >= 1024 * 1024 * 1024 {
+            return String(format: "%.2f GB", bytes / (1024 * 1024 * 1024))
+        }
         if bytes >= 1024 * 1024 {
             return String(format: "%.1f MB", bytes / (1024 * 1024))
         }
@@ -229,10 +237,16 @@ struct StorageScreen: View {
     private func refreshSize() async {
         cacheBytes = await KazumiImageLoader.shared.diskSizeInBytes()
         airTimeCache = BangumiAirTimeService.shared.cacheDiagnostics()
-        offlineBytes = environment.downloads.totalBytes()
-        offlineEpisodes = environment.downloads.records.reduce(0) {
-            $0 + $1.episodes.filter(\.isPlayableOffline).count
-        }
+        let downloads = environment.downloads
+        let (bytes, episodes) = await Task.detached(priority: .utility) {
+            let total = downloads.totalBytes()
+            let count = downloads.records.reduce(0) {
+                $0 + $1.episodes.filter(\.isPlayableOffline).count
+            }
+            return (total, count)
+        }.value
+        offlineBytes = bytes
+        offlineEpisodes = episodes
         // 旧目录可能几百 MB，别在主线程上扫。
         legacyBytes = await Task.detached(priority: .utility) {
             AppEnvironment.legacyDownloadUsage()

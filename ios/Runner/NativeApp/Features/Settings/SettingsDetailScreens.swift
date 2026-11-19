@@ -409,8 +409,8 @@ struct DanmakuSettingsScreen: View {
             }
             Section {
                 Group {
-                    Button {
-                        router.push(.danmakuShield)
+                    NavigationLink {
+                        DanmakuShieldScreen()
                     } label: {
                         Label("关键词屏蔽", systemImage: "eye.slash")
                     }

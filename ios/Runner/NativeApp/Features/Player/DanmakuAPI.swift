@@ -245,12 +245,19 @@ enum DanmakuAPI {
 
     // MARK: - 接口
 
+    private static let animeIDCache = OSAllocatedUnfairLock<[Int: Int]>(initialState: [:])
+
     /// 对应 getDanDanBangumiIDByBgmBangumiID。返回 0 表示没有映射。
     static func danDanBangumiID(bgmID: Int) async throws -> Int {
+        if let cached = animeIDCache.withLock({ $0[bgmID] }) {
+            return cached
+        }
         let path = "/api/v2/bangumi/bgmtv/\(bgmID)"
         let data = try await get(path: path)
         let decoded = try JSONDecoder().decode(BangumiResponse.self, from: data)
-        return decoded.bangumi.animeId
+        let id = decoded.bangumi.animeId
+        animeIDCache.withLock { $0[bgmID] = id }
+        return id
     }
 
     /// 对应 getDanDanmaku：episodeId = animeId + 集数补足四位。

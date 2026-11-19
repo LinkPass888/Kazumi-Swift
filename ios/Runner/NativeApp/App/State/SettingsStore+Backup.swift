@@ -116,6 +116,25 @@ extension SettingsStore {
             SettingsKey.danmakuOpacity,
             SettingsKey.danmakuFontSize,
             SettingsKey.danmakuArea,
+            SettingsKey.danmakuDuration,
+            SettingsKey.danmakuLineHeight,
+            SettingsKey.danmakuFollowSpeed,
+            SettingsKey.danmakuTop,
+            SettingsKey.danmakuBottom,
+            SettingsKey.danmakuScroll,
+            SettingsKey.danmakuMassive,
+            SettingsKey.danmakuDeduplication,
+            SettingsKey.danmakuBorder,
+            SettingsKey.danmakuBorderSize,
+            SettingsKey.danmakuColor,
+            SettingsKey.danmakuFontWeight,
+            SettingsKey.danmakuBiliBiliSource,
+            SettingsKey.danmakuGamerSource,
+            SettingsKey.danmakuDanDanSource,
+            SettingsKey.hardwareDecodeEnabled,
+            SettingsKey.hardwareDecodeMode,
+            SettingsKey.lowMemoryPolicy,
+            SettingsKey.aniSkipLookup,
             SettingsKey.danmakuAPIURL,
             SettingsKey.danmakuAPIRequestHeaders,
             SettingsKey.downloadParallelEpisodes,
@@ -144,6 +163,10 @@ extension SettingsStore {
             SettingsKey.webDavEnableCollect,
             SettingsKey.webDavEnableDanmakuShield,
             SettingsKey.lastDLNAAddress,
+            SettingsKey.syncPlayEndPoint,
+            SettingsKey.syncPlayRoom,
+            SettingsKey.syncPlayPassword,
+            SettingsKey.syncPlayUsername,
         ]
         for (local, legacy) in legacyKeys {
             keys.insert(local)
@@ -202,9 +225,13 @@ extension SettingsStore {
             (SettingsKey.webDavEnableDanmakuShield, .bool(webDavEnableDanmakuShield)),
             (SettingsKey.proxyEnabled, .bool(proxyEnabled)),
             (SettingsKey.lastDLNAAddress, .string(lastDLNAAddress)),
+            (SettingsKey.syncPlayEndPoint, .string(syncPlayEndPoint)),
+            (SettingsKey.syncPlayRoom, .string(syncPlayRoom)),
+            (SettingsKey.syncPlayUsername, .string(syncPlayUsername)),
         ]
         if !omitCredentials {
             pairs += [
+                (SettingsKey.syncPlayPassword, .string(syncPlayPassword)),
                 (SettingsKey.webDAVURL, .string(webDAVURL)),
                 (SettingsKey.webDAVUser, .string(webDAVUser)),
                 (SettingsKey.webDAVPassword, .string(webDAVPassword)),
@@ -307,6 +334,84 @@ extension SettingsStore {
         }
         if let number = value(SettingsKey.danmakuArea)?.doubleValue {
             danmakuArea = number
+            restored += 1
+        }
+        if let number = value(SettingsKey.danmakuDuration)?.doubleValue {
+            danmakuDuration = number
+            restored += 1
+        }
+        if let number = value(SettingsKey.danmakuLineHeight)?.doubleValue {
+            danmakuLineHeight = number
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuFollowSpeed)?.boolValue {
+            danmakuFollowSpeed = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuTop)?.boolValue {
+            danmakuTop = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuBottom)?.boolValue {
+            danmakuBottom = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuScroll)?.boolValue {
+            danmakuScroll = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuMassive)?.boolValue {
+            danmakuMassive = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuDeduplication)?.boolValue {
+            danmakuDeduplication = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuBorder)?.boolValue {
+            danmakuBorder = flag
+            restored += 1
+        }
+        if let number = value(SettingsKey.danmakuBorderSize)?.doubleValue {
+            danmakuBorderSize = number
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuColor)?.boolValue {
+            danmakuColor = flag
+            restored += 1
+        }
+        if let number = value(SettingsKey.danmakuFontWeight)?.intValue {
+            danmakuFontWeight = number
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuBiliBiliSource)?.boolValue {
+            danmakuBiliBiliSource = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuGamerSource)?.boolValue {
+            danmakuGamerSource = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.danmakuDanDanSource)?.boolValue {
+            danmakuDanDanSource = flag
+            restored += 1
+        }
+        if let flag = value(SettingsKey.hardwareDecodeEnabled)?.boolValue {
+            hardwareDecodeEnabled = flag
+            restored += 1
+        }
+        if let raw = value(SettingsKey.hardwareDecodeMode)?.stringValue,
+           let mode = HardwareDecodeMode(rawValue: raw) {
+            hardwareDecodeMode = mode
+            restored += 1
+        }
+        if let raw = value(SettingsKey.lowMemoryPolicy)?.stringValue,
+           let mode = LowMemoryMode(rawValue: raw) {
+            lowMemoryMode = mode
+            restored += 1
+        }
+        if let flag = value(SettingsKey.aniSkipLookup)?.boolValue {
+            aniSkipLookup = flag
             restored += 1
         }
         if let number = value(SettingsKey.playSpeed)?.doubleValue {
@@ -518,6 +623,22 @@ extension SettingsStore {
             lastDLNAAddress = text
             restored += 1
         }
+        if let text = value(SettingsKey.syncPlayEndPoint)?.stringValue {
+            syncPlayEndPoint = text
+            restored += 1
+        }
+        if let text = value(SettingsKey.syncPlayRoom)?.stringValue {
+            syncPlayRoom = text
+            restored += 1
+        }
+        if let text = value(SettingsKey.syncPlayPassword)?.stringValue {
+            syncPlayPassword = text
+            restored += 1
+        }
+        if let text = value(SettingsKey.syncPlayUsername)?.stringValue {
+            syncPlayUsername = text
+            restored += 1
+        }
         // 未被上面任何属性接收的键整段写回（原版恢复备份就是整段覆盖设置箱）。
         //
         // 这一层有两个作用：
@@ -535,6 +656,11 @@ extension SettingsStore {
             guard persistRawSetting(rawValue, forKey: key) else { continue }
             restored += 1
         }
+        // 恢复完成后同步全局网络与镜像状态，使新设置立即生效无需重启
+        let selectedMirror = RulesMirror(rawValue: rulesMirror) ?? .ghProxy
+        RulesRepoClient.mirror.withLock { $0 = selectedMirror }
+        KazumiNetworkPolicy.imageAcceleration = ImageAcceleration(rawValue: imageAcceleration) ?? .direct
+        BangumiAcceleration.mode = enableBangumiProxy ? .mirror : .direct
         return restored
     }
 }

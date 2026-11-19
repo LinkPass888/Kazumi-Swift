@@ -503,7 +503,7 @@ extension VideoSourceWebView: WKNavigationDelegate {
         let message = "No video source found, retrying (\(retryCount))"
         emit(message)
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(4))
             // 不捕获参数里的 WKWebView（非 Sendable），统一走自身的 webView 引用。
             guard self.isLoading, !self.isVideoSourceLoaded, let target = self.webView?.url else { return }
             self.isLoading = true

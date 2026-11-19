@@ -217,11 +217,9 @@ final class BangumiSyncEngine {
         }
         if !plan.remoteOnlyPuts.isEmpty {
             onProgress(String(localized: "正在补全本地缺失状态"), done, total)
-            for put in plan.remoteOnlyPuts {
-                apply(put)
-                done += 1
-                onProgress(String(localized: "正在补全本地缺失状态"), done, total)
-            }
+            applyMany(plan.remoteOnlyPuts)
+            done += plan.remoteOnlyPuts.count
+            onProgress(String(localized: "正在补全本地缺失状态"), done, total)
         }
         if !plan.conflictUploads.isEmpty {
             onProgress(String(localized: "\(priority.label)：正在上传冲突状态"), done, total)
@@ -237,11 +235,9 @@ final class BangumiSyncEngine {
         }
         if !plan.conflictLocalUpdates.isEmpty {
             onProgress(String(localized: "\(priority.label)：正在更新本地冲突状态"), done, total)
-            for put in plan.conflictLocalUpdates {
-                apply(put)
-                done += 1
-                onProgress(String(localized: "\(priority.label)：正在更新本地冲突状态"), done, total)
-            }
+            applyMany(plan.conflictLocalUpdates)
+            done += plan.conflictLocalUpdates.count
+            onProgress(String(localized: "\(priority.label)：正在更新本地冲突状态"), done, total)
         }
         onProgress(String(localized: "Bangumi 状态同步完成"), 1, 1)
     }
@@ -379,6 +375,23 @@ final class BangumiSyncEngine {
         } else {
             library.upsert(put.entry)
         }
+    }
+
+    private func applyMany(_ puts: [LocalPut]) {
+        guard !puts.isEmpty else { return }
+        var updatedEntries: [LibraryEntry] = []
+        for put in puts {
+            if var existing = library.entry(for: put.entry.id) {
+                existing.type = put.entry.type
+                existing.updatedAt = put.entry.updatedAt
+                if existing.nameCn.isEmpty { existing.nameCn = put.entry.nameCn }
+                if existing.imageURL.isEmpty { existing.imageURL = put.entry.imageURL }
+                updatedEntries.append(existing)
+            } else {
+                updatedEntries.append(put.entry)
+            }
+        }
+        library.upsertMany(updatedEntries)
     }
 
     // MARK: - 错误文案

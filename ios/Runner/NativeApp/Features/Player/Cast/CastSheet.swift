@@ -136,14 +136,14 @@ struct CastSheet: View {
                 manualIP = settings.lastDLNAAddress
             }
             // DLNA 一进来就开搜，切过去就有列表；AirPlay 不用搜。
-            if method == .dlna { browser.start() }
+            if method == .dlna { browser.start(preferredAddress: settings.lastDLNAAddress) }
         }
         .onDisappear {
             browser.stop()
         }
         .onChange(of: method) { _, newValue in
             if newValue == .dlna {
-                browser.start()
+                browser.start(preferredAddress: settings.lastDLNAAddress)
             } else {
                 browser.stop()
             }
@@ -371,7 +371,7 @@ struct CastSheet: View {
                 .lineLimit(3)
             HStack(spacing: 12) {
                 if failure.allowsRetry {
-                    outlinedButton("重试") { browser.restart() }
+                    outlinedButton("重试") { browser.restart(preferredAddress: settings.lastDLNAAddress) }
                 }
                 if failure.allowsSettings {
                     outlinedButton("打开设置") {
