@@ -157,9 +157,7 @@ final class PlayerController {
         // 在线列表在后台静默抓取，不挡播放。
         if let local = localFile?(currentEpisode) {
             startLocalPlayback(local)
-            if episodes.isEmpty {
-                refreshEpisodeListInBackground()
-            }
+            refreshEpisodeListInBackground()
             return
         }
         // 提前并发拉取弹幕：集数已定，无须等待耗时数秒的网页嗅探与章节解析结束（P1 优化）

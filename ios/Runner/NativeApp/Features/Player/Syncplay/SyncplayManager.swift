@@ -56,7 +56,7 @@ final class SyncplayManager {
             errorMessage = String(localized: "请输入房间名")
             return
         }
-        let user = trimmedUser.isEmpty ? String(localized: "Kazumi用户") : trimmedUser
+        let user = trimmedUser.isEmpty ? String(localized: "Kazumi 用户") : trimmedUser
 
         // 解析 host 和 port
         let host: String
@@ -168,6 +168,10 @@ final class SyncplayManager {
             }
 
         case .playStateChanged(let update):
+            // 过滤自身操作的服务端回声，避免触发本地二次重复响应与震荡
+            if let setBy = update.setBy, setBy == currentUser {
+                return
+            }
             let actorName = update.setBy ?? String(localized: "对方")
             isApplyingRemoteUpdate = true
             defer { isApplyingRemoteUpdate = false }

@@ -57,7 +57,7 @@ struct SyncPlaySheet: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        Text("公共服务:")
+                        Text("公共服务：")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         ForEach(publicServers, id: \.self) { srv in
@@ -114,7 +114,7 @@ struct SyncPlaySheet: View {
                         } else {
                             Image(systemName: "person.2.fill")
                                 .padding(.trailing, 2)
-                            Text("加入同播房间")
+                            Text("加入一起看房间")
                                 .fontWeight(.semibold)
                         }
                         Spacer()
@@ -158,7 +158,7 @@ struct SyncPlaySheet: View {
                 }
                 .padding(.vertical, 4)
             } header: {
-                Text("当前同播状态")
+                Text("当前连接状态")
             }
 
             Section {
@@ -178,7 +178,7 @@ struct SyncPlaySheet: View {
                                     Text(member.name)
                                         .font(.subheadline.weight(.semibold))
                                     if member.name == syncplay.currentUser {
-                                        Text("(我)")
+                                        Text("（我）")
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
                                     }
@@ -196,7 +196,7 @@ struct SyncPlaySheet: View {
                     }
                 }
             } header: {
-                Text("房间成员 (\(max(1, syncplay.members.count)) 人)")
+                Text("房间成员（\(max(1, syncplay.members.count)) 人）")
             }
 
             Section {
@@ -215,7 +215,7 @@ struct SyncPlaySheet: View {
     }
 
     private func connect() {
-        let defaultUser = settings.bangumiUsername.isEmpty ? String(localized: "Kazumi用户") : settings.bangumiUsername
+        let defaultUser = settings.bangumiUsername.isEmpty ? String(localized: "Kazumi 用户") : settings.bangumiUsername
         let username = settings.syncPlayUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? defaultUser
             : settings.syncPlayUsername

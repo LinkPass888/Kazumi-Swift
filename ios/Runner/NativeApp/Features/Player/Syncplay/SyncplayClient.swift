@@ -79,6 +79,8 @@ final class SyncplayClient: @unchecked Sendable {
     func connect() {
         queue.async { [weak self] in
             guard let self, !self.isClosed else { return }
+            self.members = [:]
+            self.members[self.username] = SyncplayMember(name: self.username, room: self.room)
             let endpoint = NWEndpoint.hostPort(
                 host: NWEndpoint.Host(self.host),
                 port: NWEndpoint.Port(rawValue: UInt16(self.port)) ?? 8999
@@ -95,6 +97,7 @@ final class SyncplayClient: @unchecked Sendable {
                     self.sendHello()
                     self.startReading()
                     self.startPingLoop()
+                    self.onEvent?(.userListUpdated(Array(self.members.values)))
                 case .failed(let error):
                     self.disconnect(reason: String(localized: "连接失败：\(error.localizedDescription)"))
                 case .cancelled:
@@ -166,6 +169,12 @@ final class SyncplayClient: @unchecked Sendable {
     func sendFile(name: String, duration: Double, size: Int = 0) {
         queue.async { [weak self] in
             guard let self, !self.isClosed else { return }
+            var me = self.members[self.username] ?? SyncplayMember(name: self.username, room: self.room)
+            me.fileName = name
+            me.duration = duration
+            self.members[self.username] = me
+            self.onEvent?(.userListUpdated(Array(self.members.values)))
+
             let fileDict: [String: Any] = [
                 "name": name,
                 "duration": duration,
@@ -306,10 +315,10 @@ final class SyncplayClient: @unchecked Sendable {
 
         // IgnoringOnTheFly 避免本地操作回声
         if let ignoring = state["ignoringOnTheFly"] as? [String: Any] {
-            if let serverAck = ignoring["server"] as? Int {
+            if let serverAck = (ignoring["server"] as? NSNumber)?.intValue ?? (ignoring["server"] as? Int) {
                 clientIgnoringOnTheFly = max(0, clientIgnoringOnTheFly - serverAck)
             }
-            if let clientAck = ignoring["client"] as? Int {
+            if let clientAck = (ignoring["client"] as? NSNumber)?.intValue ?? (ignoring["client"] as? Int) {
                 serverIgnoringOnTheFly = clientAck
             }
         }
@@ -353,12 +362,17 @@ final class SyncplayClient: @unchecked Sendable {
                     if eventObj["joined"] as? Bool == true {
                         onEvent?(.userJoined(userName))
                     } else if eventObj["left"] as? Bool == true {
-                        members.removeValue(forKey: userName)
+                        if userName != username {
+                            members.removeValue(forKey: userName)
+                        }
                         onEvent?(.userLeft(userName))
                         continue
                     }
                 }
                 members[userName] = member
+            }
+            if members[username] == nil {
+                members[username] = SyncplayMember(name: username, room: room)
             }
             onEvent?(.userListUpdated(Array(members.values)))
         }
@@ -380,7 +394,14 @@ final class SyncplayClient: @unchecked Sendable {
                     if let last = self.lastLatencyCalculation {
                         pingObj["latencyCalculation"] = last
                     }
-                    self.sendJSON(["State": ["ping": pingObj]])
+                    var stateDict: [String: Any] = ["ping": pingObj]
+                    if self.clientIgnoringOnTheFly > 0 || self.serverIgnoringOnTheFly > 0 {
+                        var fly: [String: Any] = [:]
+                        if self.clientIgnoringOnTheFly > 0 { fly["client"] = self.clientIgnoringOnTheFly }
+                        if self.serverIgnoringOnTheFly > 0 { fly["server"] = self.serverIgnoringOnTheFly }
+                        stateDict["ignoringOnTheFly"] = fly
+                    }
+                    self.sendJSON(["State": stateDict])
                 }
             }
         }

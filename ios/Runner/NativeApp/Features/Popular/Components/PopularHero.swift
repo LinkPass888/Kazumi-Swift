@@ -1140,7 +1140,7 @@ struct PopularHero: View {
                 guard revision == router.externalNavigationRevision,
                       router.pendingExternalLink == nil else { return }
                 SourceSheetCoordinator.shared.dismiss()
-                returnToSourcesAfterPlayer = true
+                returnToSourcesAfterPlayer = false
                 depthBeforePlayer = navigationDepth
                 // 跟详情页「开始观看」一个口径：这部剧在这条规则上看到哪就从哪起。
                 let point = library.resumePoint(for: controller.item.id, pluginName: pluginName)
