@@ -14834,7 +14834,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "目前連接狀態"
+            "value": "目前連線狀態"
           }
         }
       }
@@ -14994,7 +14994,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "已連接到「%@」"
+            "value": "已連線到「%@」"
           }
         }
       }
@@ -15124,7 +15124,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "一起看 · 已連接（%lldms）"
+            "value": "一起看 · 已連線（%lldms）"
           }
         }
       }
@@ -15134,17 +15134,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "一起看 · 已連接（%@ms）"
-          }
-        }
-      }
-    },
-    "一起看 · 已连接 (%lldms)": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一起看 · 已連接 (%lldms)"
+            "value": "一起看 · 已連線（%@ms）"
           }
         }
       }
@@ -15155,6 +15145,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "確定清空「%@」分類的日誌？"
+          }
+        }
+      }
+    },
+    "房间 · %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "房間 · %@"
           }
         }
       }

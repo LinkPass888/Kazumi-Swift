@@ -2845,14 +2845,14 @@ struct PlayerScreen: View {
     private var moreMenuItems: [SystemMenuButton.Item] {
         var items: [SystemMenuButton.Item] = [
             SystemMenuButton.Item(
-                title: "弹幕设置",
+                title: String(localized: "弹幕设置"),
                 symbol: "captions.bubble",
                 symbolImage: danmakuSettingsIcon
             ) {
                 closeMenu()
                 openSheet(.danmakuSettings)
             },
-            SystemMenuButton.Item(title: "弹幕检索", symbol: "bubble.left.and.bubble.right") {
+            SystemMenuButton.Item(title: String(localized: "弹幕检索"), symbol: "bubble.left.and.bubble.right") {
                 closeMenu()
                 resumesAfterDanmakuSearch = true
                 surface.pause()
@@ -2864,7 +2864,7 @@ struct PlayerScreen: View {
         if !showsInlineSuperResolution {
             items.append(
                 SystemMenuButton.Item(
-                    title: "超分辨率",
+                    title: String(localized: "超分辨率"),
                     symbol: "wand.and.stars",
                     subtitle: settings.playbackSuperResolutionMode.title,
                     selection: .init(options: SuperResolutionMode.allCases.map { mode in
@@ -2881,7 +2881,7 @@ struct PlayerScreen: View {
 
         items.append(contentsOf: [
             SystemMenuButton.Item(
-                title: "视频比例",
+                title: String(localized: "视频比例"),
                 symbol: "aspectratio",
                 subtitle: aspectRatioMode.label,
                 selection: .init(options: PlayerAspectRatioMode.allCases.map { mode in
@@ -2890,11 +2890,11 @@ struct PlayerScreen: View {
                     }
                 })
             ) {},
-            SystemMenuButton.Item(title: "播放信息", symbol: "info.circle") {
+            SystemMenuButton.Item(title: String(localized: "播放信息"), symbol: "info.circle") {
                 closeMenu()
                 openSheet(.videoInfo)
             },
-            SystemMenuButton.Item(title: "远程投屏", symbol: "airplayvideo") {
+            SystemMenuButton.Item(title: String(localized: "远程投屏"), symbol: "airplayvideo") {
                 closeMenu()
                 openSheet(.airPlay)
             },
@@ -4375,7 +4375,7 @@ struct PlayerScreen: View {
 
             Picker("", selection: $detailTab) {
                 ForEach(PlayerDetailTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    Text(LocalizedStringKey(tab.rawValue)).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
