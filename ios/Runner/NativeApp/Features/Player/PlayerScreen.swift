@@ -84,163 +84,6 @@ enum PlayerSheet: String, Identifiable {
     var id: String { rawValue }
 }
 
-/// 一次竖滑浮层要显示的内容：调的是亮度还是音量，现在到多少。
-struct GestureHUDValue: Equatable {
-    enum Kind { case brightness, volume }
-
-    var kind: Kind
-    var value: Double
-
-    /// 横条左边那颗 15pt 图标，**跟着档位换**（LP 4876）：
-    /// 音量 0 是静音，往上依次加一道声波；亮度低半颗小太阳、高半颗大太阳。
-    var symbol: String {
-        // 先夹到 0–1 再分档（Colo 4879）：拖到负数会落进最大那档。
-        let level = max(0, min(1, value))
-        switch kind {
-        // 亮度两档，对半。
-        case .brightness:
-            return level <= 0.5 ? "sun.min.fill" : "sun.max.fill"
-        // 音量四档，分界 1/3、2/3。
-        case .volume:
-            if level <= 0 { return "speaker.slash.fill" }
-            if level <= 1.0 / 3.0 { return "speaker.wave.1.fill" }
-            if level <= 2.0 / 3.0 { return "speaker.wave.2.fill" }
-            return "speaker.wave.3.fill"
-        }
-    }
-
-    /// 这颗符号自己的颜色（LP 4876 给的色）：音量 #00C0E8、亮度 #FFCC00，
-    /// 轨道和数值仍是白的。
-    var symbolColor: Color {
-        switch kind {
-        case .brightness: return Color(red: 1.0, green: 0.8, blue: 0.0)
-        case .volume: return Color(red: 0.0, green: 0.7529, blue: 0.9098)
-        }
-    }
-}
-
-/// 画面这一次拖动调的是哪一路（起手时定死，中途不改）。
-enum DragAxis {
-    case seek
-    case brightness
-    case volume
-    /// 贴着左边缘往右拖：这是侧滑返回，画面手势这一路什么都不做。
-    case ignored
-}
-
-/// 系统音量：改音量时 iOS 自己会在屏幕边上弹那条音量浮条，所以这里只负责换算，
-/// 不再画第二条（两条叠在一起是原版被吐槽的地方）。
-@MainActor
-final class PlayerVolumeControl {
-    static let shared = PlayerVolumeControl()
-
-    /// MPVolumeView 内部的音量滑杆；拿到之后系统音量就能直接写。
-    weak var slider: UISlider?
-
-    /// 刚由我们写下去的那一拍：这期间观察到的音量变化是回声，不是按了键。
-    private(set) var isWriting = false
-
-    var current: Double {
-        if let slider = liveSlider() { return Double(slider.value) }
-        return Double(AVAudioSession.sharedInstance().outputVolume)
-    }
-
-    /// 给「音量键浮层」KVO 用的滑杆：现找一个活着的，找不到就按需挂宿主（只挂一次）。
-    /// 加载 / 缓冲 / 暂停时系统把音量键记在媒体音量上，会话音量不一定报变化，
-    /// 这条才是那几个阶段唯一能看到按键的地方（LP 2026-11-08）。
-    func sliderForKeys() -> UISlider? {
-        liveSlider()
-    }
-
-    func set(_ value: Double) {
-        guard let slider = liveSlider() else { return }
-        let clamped = Float(min(1, max(0, value)))
-        slider.value = clamped
-        isWriting = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            isWriting = false
-        }
-        // 两种事件都发：不同 iOS 版本认的不一样，只发一种常常写了不生效。
-        slider.sendActions(for: .valueChanged)
-        slider.sendActions(for: .touchUpInside)
-    }
-
-    /// **每次都现找一个活着的滑杆**（LP 2026-10-28 实机「调过一次之后上下都滑不动」）：
-    /// MPVolumeView 内部的滑杆会随着系统音量浮层、视图重建被换掉，早先缓存的
-    /// 那个 weak 引用一旦是旧对象，写进去既不改音量也不报错——表现就是第一下能调、
-    /// 之后两个方向都没反应。这里只认「还挂在窗口上」的那一个。
-    private func liveSlider() -> UISlider? {
-        if let slider, slider.window != nil { return slider }
-        slider = nil
-        guard let found = Self.searchSlider() else { return nil }
-        slider = found
-        return found
-    }
-
-    /// 在窗口里找 MPVolumeView 的滑杆；一个都没有就自己挂一个再找（**只挂一次**）。
-    static func searchSlider() -> UISlider? {
-        let windows = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-        for window in windows {
-            if let view = findVolumeView(in: window), let slider = findSlider(in: view) {
-                return slider
-            }
-        }
-        // 视图树里没有：往 key window 上挂一个（1×1、几乎透明），下次就能找到。
-        //
-        // 只挂一次（LP 2026-11-08）：这个函数会被页面出现、手势起手、音量键观察
-        // 反复调用，每失败一次就再加一个 MPVolumeView，窗口里的视图会越堆越多
-        // ——那既吃内存，也会让主线程在每次布局时多走几百个子视图。
-        guard !didInstallFallbackView else { return nil }
-        for window in windows where window.isKeyWindow {
-            didInstallFallbackView = true
-            let view = MPVolumeView(frame: CGRect(x: -20, y: -20, width: 1, height: 1))
-            view.alpha = 0.01
-            window.addSubview(view)
-            return findSlider(in: view)
-        }
-        return nil
-    }
-
-    /// 上面那个兜底宿主只挂一次就够，标记留在进程里。
-    private static var didInstallFallbackView = false
-
-    private static func findVolumeView(in view: UIView) -> MPVolumeView? {
-        if let volume = view as? MPVolumeView { return volume }
-        for child in view.subviews {
-            if let found = findVolumeView(in: child) { return found }
-        }
-        return nil
-    }
-
-    private static func findSlider(in view: UIView) -> UISlider? {
-        if let slider = view as? UISlider { return slider }
-        for child in view.subviews {
-            if let found = findSlider(in: child) { return found }
-        }
-        return nil
-    }
-}
-
-/// 把 MPVolumeView 塞进视图树（1×1、几乎全透明），只为拿到它的音量滑杆。
-private struct SystemVolumeHost: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
-        view.alpha = 0.01
-        // 滑杆不一定直接是第一层子视图，交给统一的递归查找（可能晚一两拍才装上，重试几次）。
-        for delay in [0, 0.15, 0.4, 0.9] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                _ = PlayerVolumeControl.searchSlider()
-            }
-        }
-        return view
-    }
-
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
-}
-
 struct PlayerScreen: View {
     var bangumiID: Int
     var episode: Int
@@ -398,13 +241,15 @@ struct PlayerScreen: View {
     @State private var activeSheet: PlayerSheet?
     /// 从「更多 → 弹幕检索」进来时先暂停；换完或取消，只要离开检索页就续播。
     @State private var resumesAfterDanmakuSearch = false
+    /// 从「弹幕设置」进来时若正在播放先暂停；关掉弹幕设置后自动续播。
+    @State private var resumesAfterDanmakuSettings = false
     /// 「播放信息」里点了媒体地址后的「已复制」提示，1.2 秒后自动收回。
     @State private var mediaURLCopied = false
     @State private var mediaURLCopiedTask: Task<Void, Never>?
     /// 横屏选集：从右侧滑进来的玻璃窗口（LP 3637 要的，不再是铺满整屏的面板）。
     @State private var showsEpisodesPanel = false
-    /// 定时关闭：还剩多少秒，nil 就是没定。
-    @State private var sleepTimerRemaining: Int?
+    /// 定时关闭：截止时刻，nil 就是没定。
+    @State private var sleepTimerEnd: Date?
     @State private var sleepTimerChosenMinutes: Int?
     @State private var sleepTimerTask: Task<Void, Never>?
     /// 片头片尾弹窗：AniSkip 的时间轴 + 倒数 / 撤销 / 切集三态。
@@ -539,7 +384,9 @@ struct PlayerScreen: View {
                 Color.clear
                     .onAppear {
                         logLifecycleSnapshot("onAppear")
+                        SourceSheetCoordinator.shared.shouldReopenSourcesOnReturn = false
                         recordSafeAreaGeometry(size: proxy.size, insets: proxy.safeAreaInsets)
+                        updateIdleTimer()
                     }
                     .onChange(of: proxy.safeAreaInsets) { _, insets in
                         recordSafeAreaGeometry(size: proxy.size, insets: insets)
@@ -596,9 +443,14 @@ struct PlayerScreen: View {
         .overlay { skipSecondsDialog }
         .sheet(item: $activeSheet, onDismiss: {
             scheduleControlsHide()
-            guard resumesAfterDanmakuSearch else { return }
-            resumesAfterDanmakuSearch = false
-            surface.play()
+            if resumesAfterDanmakuSearch {
+                resumesAfterDanmakuSearch = false
+                surface.play()
+            }
+            if resumesAfterDanmakuSettings {
+                resumesAfterDanmakuSettings = false
+                surface.play()
+            }
         }) { sheet in
             sheetContent(sheet)
         }
@@ -667,6 +519,19 @@ struct PlayerScreen: View {
                 surface.hudToastMessage = message
             }
         }
+        .onChange(of: SyncplayManager.shared.lastToast) { _, toast in
+            if let toast, !toast.isEmpty {
+                surface.hudToastMessage = toast
+            }
+        }
+        .onChange(of: activeSheet) { _, sheet in
+            if sheet == .danmakuSettings {
+                if surface.isPlaying {
+                    resumesAfterDanmakuSettings = true
+                    surface.pause()
+                }
+            }
+        }
         .onChange(of: controller?.danmakuStatus) { _, status in
             switch status {
             case .unavailable, .failed:
@@ -684,6 +549,14 @@ struct PlayerScreen: View {
         .onChange(of: controller?.phase) { _, phase in
             if phase == .ready {
                 scheduleControlsHide()
+                SourceSheetCoordinator.shared.shouldReopenSourcesOnReturn = false
+            } else if case .failed = phase {
+                SourceSheetCoordinator.shared.markFailedReturnToSources()
+            }
+        }
+        .onChange(of: surface.errorMessage) { _, error in
+            if error != nil {
+                SourceSheetCoordinator.shared.markFailedReturnToSources()
             }
         }
         .onChange(of: surface.isPlaying) { _, playing in
@@ -698,7 +571,7 @@ struct PlayerScreen: View {
                 // 切后台那一拍我们刚 pause()，内核还会有一两个快照报「还在走」，
                 // 那不是用户的意思：只有在前台真的播起来，才算「用户亲手按的暂停」
                 // 作废。不然这一拍会把 pausedByBackground 洗掉，回前台就不续播了。
-                if surface.engine?.playerScene?.activationState == .foregroundActive { pausedByBackground = false }
+                if isForegroundActive { pausedByBackground = false }
                 // 起播那一刻立即写一次：不然要等到下一个 2 秒节拍，
                 // 万一这期间出事，控制中心一次都没写出去过。
                 syncNowPlaying()
@@ -749,6 +622,9 @@ struct PlayerScreen: View {
                 if nowPlayingTick % 8 == 0 {
                     syncNowPlaying()
                 }
+                if nowPlayingTick % 4 == 0 {
+                    updateIdleTimer()
+                }
                 if let target = skipPill.consumeSeekTarget() {
                     surface.seek(to: target)
                 }
@@ -764,9 +640,7 @@ struct PlayerScreen: View {
         // 保留现有 UIScene 通知订阅和处理顺序。
         // 回调标记仅表示收到通知，不表明其触发来源。
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didEnterBackgroundNotification)) { notification in
-            guard let scene = notification.object as? UIScene,
-                  let playerScene = surface.engine?.playerScene,
-                  scene === playerScene else { return }
+            guard sceneMatchesPlayer(notification.object as? UIScene) else { return }
             sceneIsActive = false
             logLifecycleSnapshot("UIScene.didEnterBackgroundNotification.received", scene: notification.object as? UIScene)
             // 进后台 / 锁屏一律放弃常亮；回前台且还在播再重新判断。
@@ -776,9 +650,7 @@ struct PlayerScreen: View {
             handleBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { notification in
-            guard let scene = notification.object as? UIScene,
-                  let playerScene = surface.engine?.playerScene,
-                  scene === playerScene else { return }
+            guard sceneMatchesPlayer(notification.object as? UIScene) else { return }
             sceneIsActive = true
             logLifecycleSnapshot("UIScene.didActivateNotification.received", scene: notification.object as? UIScene)
             updateIdleTimer()
@@ -813,24 +685,23 @@ struct PlayerScreen: View {
     private var screenLifecycleObservers: some View {
         playbackObservers
         // 自动隐藏：用 `.task(id:)` 而不是自建 Task，离开页面时系统会自己取消。
-        .task {
+        .task(id: menuOpen) {
+            guard menuOpen else { return }
             // 看菜单还在不在：在就不收控制栏，收了就恢复自动隐藏。
-            while !Task.isCancelled {
+            while !Task.isCancelled && menuOpen {
                 try? await Task.sleep(for: .milliseconds(300))
-                if menuOpen {
-                    if SystemMenuProbe.isPresented {
-                        probeSawMenu = true
-                        probeLastSeen = Date()
-                    } else if probeSawMenu, Date().timeIntervalSince(probeLastSeen) > 1.2 {
-                        // 菜单已经收了：控制栏恢复自动隐藏。
-                        menuOpen = false
-                        probeSawMenu = false
-                        scheduleControlsHide()
-                    } else if !probeSawMenu, Date().timeIntervalSince(menuOpenedAt) > 45 {
-                        // 探测器没认出来（换过实现就不一定认得出），留个上限，别把控制栏钉死。
-                        menuOpen = false
-                        scheduleControlsHide()
-                    }
+                if SystemMenuProbe.isPresented {
+                    probeSawMenu = true
+                    probeLastSeen = Date()
+                } else if probeSawMenu, Date().timeIntervalSince(probeLastSeen) > 1.2 {
+                    // 菜单已经收了：控制栏恢复自动隐藏。
+                    menuOpen = false
+                    probeSawMenu = false
+                    scheduleControlsHide()
+                } else if !probeSawMenu, Date().timeIntervalSince(menuOpenedAt) > 45 {
+                    // 探测器没认出来（换过实现就不一定认得出），留个上限，别把控制栏钉死。
+                    menuOpen = false
+                    scheduleControlsHide()
                 }
             }
         }
@@ -890,6 +761,9 @@ struct PlayerScreen: View {
             }
         }
         .onDisappear {
+            if isPlaybackFailed {
+                SourceSheetCoordinator.shared.markFailedReturnToSources()
+            }
             // A view lifecycle callback is not evidence of a deliberate return action.
             logLifecycleSnapshot("onDisappear.beforeCardClear")
             // 保留现有清理顺序。
@@ -910,6 +784,11 @@ struct PlayerScreen: View {
             // 先摘掉结束回调，避免关闭播放器时的 finish 又被当成「播完」触发连播。
             surface.onFinish = nil
             surface.onPlaybackStarted = nil
+            surface.onPlayStateBroadcast = nil
+            SyncplayManager.shared.onRemotePlay = nil
+            SyncplayManager.shared.onRemotePause = nil
+            SyncplayManager.shared.onRemoteSeek = nil
+            SyncplayManager.shared.disconnect()
             // 长按手势若被系统取消，松手回调不会来，退出时兜一次恢复。
             endTemporarySpeed()
             // 横屏直接离开时先明确请求竖屏；只放开方向集合不会触发旋转，
@@ -989,7 +868,7 @@ struct PlayerScreen: View {
         case .syncPlay:
             SyncPlaySheet(
                 settings: settings,
-                showingSyncPlay: Binding(
+                isPresented: Binding(
                     get: { activeSheet == .syncPlay },
                     set: { if !$0 { activeSheet = nil } }
                 ),
@@ -1006,6 +885,7 @@ struct PlayerScreen: View {
     /// 逻辑一行没改。
     private func bootstrapPlaybackIfNeeded() async {
         guard controller == nil else { return }
+        SourceSheetCoordinator.shared.shouldReopenSourcesOnReturn = false
         // 先把两个 store 取成局部常量：闭包会长期挂在 surface 上，
         // 这样试不会把整个 View（含 @Environment 包装器）一起捕获。
         let settingsStore = settings
@@ -1075,9 +955,13 @@ struct PlayerScreen: View {
             // （真机日志里 `模式=AVAudioSessionModeMoviePlayback` 就是它盖的，LP 4993）。
             // 所以起播一稳定就立刻掰回 `.default`，不等 2 秒那一次轮询。
             PlayerAudioSession.shared.reapplyIfNeeded()
+            updateIdleTimer()
+            if let ep = created?.currentEpisode, surface.duration > 0 {
+                SyncplayManager.shared.onLocalEpisode(title: "EP\(ep)", duration: surface.duration)
+            }
             if settingsStore.backgroundAutoPiP,
                pictureInPicture?.hasOngoingPictureInPicture != true,
-               surface.engine?.playerScene?.activationState == .foregroundActive {
+               isForegroundActive {
                 makePictureInPictureController(settingsStore: settingsStore)
             }
         }
@@ -1108,7 +992,54 @@ struct PlayerScreen: View {
         if settingsStore.backgroundAutoPiP {
             makePictureInPictureController(settingsStore: settingsStore)
         }
+        setupSyncplayBindings()
         await created.start()
+    }
+
+    /// 绑定一起看（Syncplay）本地广播与远端指令。
+    private func setupSyncplayBindings() {
+        let playerSurface = surface
+        surface.onPlayStateBroadcast = { isPaused, pos, isSeek in
+            if isSeek {
+                SyncplayManager.shared.onLocalSeek(to: pos, paused: isPaused)
+            } else if isPaused {
+                SyncplayManager.shared.onLocalPause(position: pos)
+            } else {
+                SyncplayManager.shared.onLocalPlay(position: pos)
+            }
+        }
+
+        SyncplayManager.shared.onRemotePlay = { [weak playerSurface] user, pos in
+            guard let playerSurface else { return }
+            if playerSurface.isPaused {
+                playerSurface.play()
+            }
+            if abs(playerSurface.currentTime - pos) > 2.0 && pos > 0 {
+                playerSurface.seek(to: pos)
+            }
+            playerSurface.toastMessage = String(localized: "\(user) 开始了播放")
+        }
+
+        SyncplayManager.shared.onRemotePause = { [weak playerSurface] user, pos in
+            guard let playerSurface else { return }
+            if !playerSurface.isPaused {
+                playerSurface.pause()
+            }
+            if abs(playerSurface.currentTime - pos) > 2.0 && pos > 0 {
+                playerSurface.seek(to: pos)
+            }
+            playerSurface.toastMessage = String(localized: "\(user) 暂停了播放")
+        }
+
+        SyncplayManager.shared.onRemoteSeek = { [weak playerSurface] user, pos in
+            guard let playerSurface else { return }
+            playerSurface.seek(to: pos)
+            let s = Int(pos.rounded())
+            let mm = s / 60
+            let ss = s % 60
+            let clockStr = String(format: "%02d:%02d", mm, ss)
+            playerSurface.toastMessage = String(localized: "\(user) 跳转到了 \(clockStr)")
+        }
     }
 
     /// 建（或复用）画中画控制器。
@@ -1154,12 +1085,9 @@ struct PlayerScreen: View {
                     backgroundPaused.wrappedValue = false
                     if !surface.isPlaying { surface.play() }
                 }
-                let active = surface.engine?.playerScene?.activationState == .foregroundActive
+                let active = isForegroundActive
                 playerSceneActive.wrappedValue = active
-                let keepAwake = surface.isPlaying && active
-                if UIApplication.shared.isIdleTimerDisabled != keepAwake {
-                    UIApplication.shared.isIdleTimerDisabled = keepAwake
-                }
+                updateIdleTimer()
             }
         }
         pip.onActiveChanged = { [weak surface] active in
@@ -1607,6 +1535,12 @@ struct PlayerScreen: View {
         controller?.phase ?? .idle
     }
 
+    private var isPlaybackFailed: Bool {
+        if case .failed = controller?.phase { return true }
+        if surface.errorMessage != nil { return true }
+        return false
+    }
+
     private var controlsShown: Bool {
         guard !isSurfaceLocked else { return false }
         return controlsVisible || pinsControls
@@ -1759,7 +1693,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel(isSurfaceLocked ? "解锁画面" : "锁定画面")
+        .accessibilityLabel(isSurfaceLocked ? String(localized: "解锁画面") : String(localized: "锁定画面"))
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 
@@ -1772,7 +1706,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel("截图")
+        .accessibilityLabel(String(localized: "截图"))
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 
@@ -1893,7 +1827,7 @@ struct PlayerScreen: View {
                     )
             )
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("快进")
+            .accessibilityLabel(String(localized: "快进"))
             .accessibilityHint(String(localized: "快进\(String(describing: settings.buttonSkipTime))秒，长按修改时间"))
             .accessibilityAddTraits(.isButton)
     }
@@ -2197,6 +2131,14 @@ struct PlayerScreen: View {
 
     private func openSheet(_ sheet: PlayerSheet) {
         showControls()
+        if sheet == .danmakuSettings {
+            if surface.isPlaying {
+                resumesAfterDanmakuSettings = true
+                surface.pause()
+            } else {
+                resumesAfterDanmakuSettings = false
+            }
+        }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
             activeSheet = sheet
@@ -2221,13 +2163,29 @@ struct PlayerScreen: View {
         PlayerAudioSession.shared.restore()
     }
 
+    private func sceneMatchesPlayer(_ scene: UIScene?) -> Bool {
+        guard let scene else { return false }
+        if let playerScene = surface.engine?.playerScene {
+            return scene === playerScene
+        }
+        return true
+    }
+
+    private var isForegroundActive: Bool {
+        if let scene = surface.engine?.playerScene {
+            return scene.activationState == .foregroundActive
+        }
+        return sceneIsActive && UIApplication.shared.applicationState != .background
+    }
+
     /// 屏幕常亮：只在「真的在播」且 App 在前台时开；暂停、缓冲、播完、退后台、离开播放器全部恢复默认，
     /// 免得暂停一晚上屏幕还亮着。锁手势不影响——那时内核照样在播，就照样常亮。
     private func updateIdleTimer() {
-        let active = surface.engine?.playerScene?.activationState == .foregroundActive
+        let active = isForegroundActive
         let keepAwake = surface.isPlaying && active
         if UIApplication.shared.isIdleTimerDisabled != keepAwake {
             UIApplication.shared.isIdleTimerDisabled = keepAwake
+            KazumiLogBuffer.player("屏幕常亮: keepAwake=\(keepAwake) (isPlaying=\(surface.isPlaying), active=\(active))")
         }
     }
 
@@ -2273,6 +2231,7 @@ struct PlayerScreen: View {
         style.borderSize = settings.danmakuBorderSize
         style.useColor = settings.danmakuColor
         style.fontWeight = settings.danmakuFontWeight
+        style.filterRules = settings.danmakuFilterRules
         return style
     }
 
@@ -2330,13 +2289,16 @@ struct PlayerScreen: View {
         HStack(spacing: 6) {
             PlayerIconButton(hitSize: 44) {
                 logLifecycleSnapshot("returnButton.tapped")
+                if isPlaybackFailed {
+                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                }
                 dismiss()
             } content: {
                 Image(systemName: "chevron.left")
                     .playerIcon(pointSize: l2SymbolSize, weight: .semibold)
                     .foregroundStyle(.white)
             }
-            .accessibilityLabel("返回")
+            .accessibilityLabel(String(localized: "返回"))
 
             if isFullscreen {
                 let meta = nowPlayingMeta(controller)
@@ -2356,6 +2318,29 @@ struct PlayerScreen: View {
             }
 
             HStack(spacing: 4) {
+                if SyncplayManager.shared.isConnected {
+                    Button {
+                        openSheet(.syncPlay)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 6, height: 6)
+                            Image(systemName: "person.2.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                            if SyncplayManager.shared.rttMs > 0 {
+                                Text("\(SyncplayManager.shared.rttMs)ms")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(String(localized: "一起看状态"))
+                }
                 skipForwardButton
                 if isFullscreen {
                     collectButton
@@ -2409,7 +2394,7 @@ struct PlayerScreen: View {
                 items: collectMenuItems,
                 title: nil,
                 symbol: collectSymbolName,
-                accessibilityLabel: "追番状态",
+                accessibilityLabel: String(localized: "追番状态"),
                 tint: .white,
                 symbolSize: l2SymbolSize,
                 symbolWeight: .medium,
@@ -2546,6 +2531,12 @@ struct PlayerScreen: View {
     }
 
     /// 用户选的那一档（选中的勾看它，不跟着倒数变）。
+    private var sleepTimerRemaining: Int? {
+        guard let sleepTimerEnd else { return nil }
+        let diff = Int(sleepTimerEnd.timeIntervalSinceNow)
+        return max(0, diff)
+    }
+
     private var sleepTimerMinutes: Int? {
         sleepTimerChosenMinutes
     }
@@ -2563,18 +2554,13 @@ struct PlayerScreen: View {
     private func startSleepTimer(minutes: Int) {
         noteInteraction()
         sleepTimerTask?.cancel()
-        sleepTimerRemaining = minutes * 60
+        let seconds = Double(minutes * 60)
+        sleepTimerEnd = Date().addingTimeInterval(seconds)
         sleepTimerChosenMinutes = minutes
-        let target = minutes * 60
         sleepTimerTask = Task { @MainActor in
-            var left = target
-            while left > 0 {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled { return }
-                left -= 1
-                sleepTimerRemaining = left
-            }
-            sleepTimerRemaining = nil
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            sleepTimerEnd = nil
             sleepTimerChosenMinutes = nil
             surface.pause()
             // 定时关闭那句跟倍速、收藏同一条线（LP 4668）。
@@ -2587,7 +2573,7 @@ struct PlayerScreen: View {
     private func cancelSleepTimer() {
         sleepTimerTask?.cancel()
         sleepTimerTask = nil
-        sleepTimerRemaining = nil
+        sleepTimerEnd = nil
         sleepTimerChosenMinutes = nil
     }
 
@@ -2794,7 +2780,21 @@ struct PlayerScreen: View {
                 )
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel(danmakuEnabled ? "关闭弹幕" : "打开弹幕")
+        .accessibilityLabel(danmakuEnabled ? String(localized: "关闭弹幕") : String(localized: "打开弹幕"))
+    }
+
+    /// 全屏弹幕设置按钮（位于弹幕开关右侧）。
+    private var danmakuSettingsButton: some View {
+        PlayerIconButton(hitSize: toolbarHitSize) {
+            noteInteraction()
+            openSheet(.danmakuSettings)
+        } content: {
+            Image(uiImage: danmakuSettingsIcon)
+                .renderingMode(.template)
+                .playerIcon(pointSize: l2SymbolSize, weight: .medium)
+                .foregroundStyle(.white)
+        }
+        .accessibilityLabel(String(localized: "弹幕设置"))
     }
 
     private func handleDanmakuButton() {
@@ -2868,7 +2868,7 @@ struct PlayerScreen: View {
                 items: moreMenuItems,
                 title: nil,
                 symbol: "ellipsis",
-                accessibilityLabel: "更多选项",
+                accessibilityLabel: String(localized: "更多选项"),
                 tint: .white,
                 symbolSize: l2SymbolSize,
                 symbolWeight: .medium,
@@ -2882,14 +2882,14 @@ struct PlayerScreen: View {
     private var moreMenuItems: [SystemMenuButton.Item] {
         var items: [SystemMenuButton.Item] = [
             SystemMenuButton.Item(
-                title: "弹幕设置",
+                title: String(localized: "弹幕设置"),
                 symbol: "captions.bubble",
                 symbolImage: danmakuSettingsIcon
             ) {
                 closeMenu()
                 openSheet(.danmakuSettings)
             },
-            SystemMenuButton.Item(title: "弹幕检索", symbol: "bubble.left.and.bubble.right") {
+            SystemMenuButton.Item(title: String(localized: "弹幕检索"), symbol: "bubble.left.and.bubble.right") {
                 closeMenu()
                 resumesAfterDanmakuSearch = true
                 surface.pause()
@@ -2901,7 +2901,7 @@ struct PlayerScreen: View {
         if !showsInlineSuperResolution {
             items.append(
                 SystemMenuButton.Item(
-                    title: "超分辨率",
+                    title: String(localized: "超分辨率"),
                     symbol: "wand.and.stars",
                     subtitle: settings.playbackSuperResolutionMode.title,
                     selection: .init(options: SuperResolutionMode.allCases.map { mode in
@@ -2918,7 +2918,7 @@ struct PlayerScreen: View {
 
         items.append(contentsOf: [
             SystemMenuButton.Item(
-                title: "视频比例",
+                title: String(localized: "视频比例"),
                 symbol: "aspectratio",
                 subtitle: aspectRatioMode.label,
                 selection: .init(options: PlayerAspectRatioMode.allCases.map { mode in
@@ -2927,11 +2927,11 @@ struct PlayerScreen: View {
                     }
                 })
             ) {},
-            SystemMenuButton.Item(title: "播放信息", symbol: "info.circle") {
+            SystemMenuButton.Item(title: String(localized: "播放信息"), symbol: "info.circle") {
                 closeMenu()
                 openSheet(.videoInfo)
             },
-            SystemMenuButton.Item(title: "远程投屏", symbol: "airplayvideo") {
+            SystemMenuButton.Item(title: String(localized: "远程投屏"), symbol: "airplayvideo") {
                 closeMenu()
                 openSheet(.airPlay)
             },
@@ -2939,7 +2939,12 @@ struct PlayerScreen: View {
                 closeMenu()
                 openSheet(.externalPlay)
             },
-            SystemMenuButton.Item(title: "一起看", symbol: "person.2.wave.2") {
+            SystemMenuButton.Item(
+                title: SyncplayManager.shared.isConnected
+                    ? String(localized: "一起看 · 已连接（\(SyncplayManager.shared.rttMs)ms）")
+                    : String(localized: "一起看"),
+                symbol: "person.2.wave.2"
+            ) {
                 closeMenu()
                 openSheet(.syncPlay)
             },
@@ -2982,11 +2987,19 @@ struct PlayerScreen: View {
                 .foregroundStyle(.white.opacity(0.9))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
-            Button("重新加载") {
-                surface.errorMessage = nil
-                Task { await controller.retry() }
+            HStack(spacing: 12) {
+                Button("重新加载") {
+                    surface.errorMessage = nil
+                    Task { await controller.retry() }
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("返回选源") {
+                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
         }
     }
 
@@ -3141,6 +3154,9 @@ struct PlayerScreen: View {
                     desktopVolumeControl
                 }
                 danmakuButton
+                if isFullscreen {
+                    danmakuSettingsButton
+                }
                 danmakuField
                     .frame(maxWidth: .infinity)
                 if showsInlineSuperResolution {
@@ -3266,7 +3282,7 @@ struct PlayerScreen: View {
                 .foregroundStyle(.white)
                 .contentTransition(.symbolEffect(.replace))
         }
-        .accessibilityLabel(surface.isPlaying ? "暂停" : "播放")
+        .accessibilityLabel(surface.isPlaying ? String(localized: "暂停") : String(localized: "播放"))
     }
 
     private var fullscreenButton: some View {
@@ -3279,7 +3295,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium, optical: .detailed)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel(isFullscreen ? "退出全屏" : "全屏")
+        .accessibilityLabel(isFullscreen ? String(localized: "退出全屏") : String(localized: "全屏"))
     }
 
     /// 下一集（L2 常驻工具栏层级）。
@@ -3295,7 +3311,7 @@ struct PlayerScreen: View {
                 .foregroundStyle(.white.opacity(hasNext ? 1 : 0.35))
         }
         .disabled(!hasNext)
-        .accessibilityLabel("下一集")
+        .accessibilityLabel(String(localized: "下一集"))
     }
 
     /// 超分辨率（纯白单色渲染，避免分层模式把星点染灰）。
@@ -3356,7 +3372,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel("选集")
+        .accessibilityLabel(String(localized: "选集"))
     }
 
     /// 全屏右侧选集抽屉（§7 G3）：
@@ -3552,7 +3568,7 @@ struct PlayerScreen: View {
         }
         .frame(height: height)
         .accessibilityElement()
-        .accessibilityLabel("播放进度")
+        .accessibilityLabel(String(localized: "播放进度"))
         .accessibilityValue(timeText(current))
     }
 
@@ -4404,7 +4420,7 @@ struct PlayerScreen: View {
 
             Picker("", selection: $detailTab) {
                 ForEach(PlayerDetailTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    Text(LocalizedStringKey(tab.rawValue)).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
@@ -4663,7 +4679,10 @@ struct PlayerScreen: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                Button("返回选源") { dismiss() }
+                Button("返回选源") {
+                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                    dismiss()
+                }
                     .buttonStyle(.bordered)
             }
         }
@@ -4941,7 +4960,7 @@ struct PlayerScreen: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(PlayerPressStyle())
-        .accessibilityLabel("下载剧集")
+        .accessibilityLabel(String(localized: "下载剧集"))
     }
 
     /// 选择态的三颗按钮：取消 / 全选（取消全选）/ 下载 N 集。
@@ -5099,7 +5118,7 @@ struct PlayerScreen: View {
                         .contentShape(Rectangle())
                 }
                 .disabled(isLoadingComments)
-                .accessibilityLabel("刷新评论")
+                .accessibilityLabel(String(localized: "刷新评论"))
             }
             .padding(.horizontal, 16)
             .frame(height: 44)
@@ -5591,666 +5610,5 @@ private func persistWatchProgress(
             name: item.displayName,
             imageURL: item.largeImage
         )
-    }
-}
-
-private struct SurfaceTouchGesturesModifier<Drag: Gesture>: ViewModifier {
-    let isEnabled: Bool
-    let allowsDrag: Bool
-    let isSurfaceLocked: Bool
-    let width: CGFloat
-    let onDoubleTap: (CGFloat) -> Void
-    let onSingleTap: () -> Void
-    let dragGesture: Drag
-    let onLongPressTriggered: () -> Void
-    let onPressingChanged: (Bool) -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if !isEnabled {
-            content
-        } else {
-            content
-                .gesture(
-                    ExclusiveGesture(SpatialTapGesture(count: 2), SpatialTapGesture(count: 1))
-                        .onEnded { value in
-                            switch value {
-                            case .first(let tap):
-                                onDoubleTap(tap.location.x)
-                            case .second:
-                                onSingleTap()
-                            }
-                        }
-                )
-                .simultaneousGesture(
-                    dragGesture,
-                    including: allowsDrag ? .all : .none
-                )
-                .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 24) {
-                    onLongPressTriggered()
-                } onPressingChanged: { pressing in
-                    onPressingChanged(pressing)
-                }
-        }
-    }
-}
-
-private enum PlayerStageRole: Sendable {
-    case player
-    case wideInfo
-    case episodes
-}
-
-private struct PlayerStageRoleKey: LayoutValueKey {
-    static let defaultValue: PlayerStageRole = .player
-}
-
-/// 播放页单一扁平自适应舞台布局：
-/// - 全屏：播放器铺满整个区域；
-/// - 宽屏非全屏（Duo 展开 / iPad / 桌面窗口）：左栏顶部 16:9 播放器 + 左栏下方番剧信息与操作工作台，右栏（336–420pt）专职选集与评论；
-/// - 竖屏非全屏：顶部 16:9 播放器 + 下方选集与评论。
-/// `player` 始终作为第 0 个子视图保留在同一层级，转屏、折叠与全屏切换零视图重建。
-private struct PlayerStageLayout: Layout {
-    var isFullscreen: Bool
-    var isWideSplit: Bool
-    var videoAspectRatio: CGFloat
-
-    private static let minWideInfoHeight: CGFloat = 148
-
-    private static func wideSidebarWidth(for totalWidth: CGFloat) -> CGFloat {
-        min(max((totalWidth * 0.39).rounded(), 336), 420)
-    }
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) -> CGSize {
-        CGSize(
-            width: proposal.width ?? 393,
-            height: proposal.height ?? 852
-        )
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) {
-        guard bounds.width > 0, bounds.height > 0 else { return }
-
-        if isFullscreen {
-            for subview in subviews where subview[PlayerStageRoleKey.self] == .player {
-                subview.place(
-                    at: bounds.origin,
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
-                )
-            }
-            return
-        }
-
-        let ratio = max(videoAspectRatio, 0.1)
-
-        if isWideSplit {
-            let sidebarWidth = min(bounds.width * 0.5, Self.wideSidebarWidth(for: bounds.width))
-            let leftWidth = max(1, bounds.width - sidebarWidth)
-            let idealPlayerHeight = (leftWidth / ratio).rounded()
-            let maxPlayerHeight = max(180, bounds.height - Self.minWideInfoHeight)
-            let playerHeight = min(bounds.height, min(idealPlayerHeight, maxPlayerHeight))
-            let infoHeight = max(0, bounds.height - playerHeight)
-
-            for subview in subviews {
-                switch subview[PlayerStageRoleKey.self] {
-                case .player:
-                    subview.place(
-                        at: bounds.origin,
-                        anchor: .topLeading,
-                        proposal: ProposedViewSize(width: leftWidth, height: playerHeight)
-                    )
-                case .wideInfo:
-                    subview.place(
-                        at: CGPoint(x: bounds.minX, y: bounds.minY + playerHeight),
-                        anchor: .topLeading,
-                        proposal: ProposedViewSize(width: leftWidth, height: infoHeight)
-                    )
-                case .episodes:
-                    subview.place(
-                        at: CGPoint(x: bounds.minX + leftWidth, y: bounds.minY),
-                        anchor: .topLeading,
-                        proposal: ProposedViewSize(width: sidebarWidth, height: bounds.height)
-                    )
-                }
-            }
-            return
-        }
-
-        let playerHeight = min(
-            (bounds.width / ratio).rounded(),
-            (bounds.height * 0.65).rounded()
-        )
-        let episodesHeight = max(0, bounds.height - playerHeight)
-
-        for subview in subviews {
-            switch subview[PlayerStageRoleKey.self] {
-            case .player:
-                subview.place(
-                    at: bounds.origin,
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(width: bounds.width, height: playerHeight)
-                )
-            case .episodes:
-                subview.place(
-                    at: CGPoint(x: bounds.minX, y: bounds.minY + playerHeight),
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(width: bounds.width, height: episodesHeight)
-                )
-            case .wideInfo:
-                subview.place(
-                    at: CGPoint(x: bounds.minX, y: bounds.maxY),
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(width: 0, height: 0)
-                )
-            }
-        }
-    }
-}
-
-/// 画面框：竖屏里按画面比例的宽度占满（16:9 就是屏宽 × 屏宽×9/16），
-/// 宽形态左栏或横屏全屏时铺满容器。`.fit` 保证不裁画面——原版竖屏同样不裁。
-private struct PlayerBoxModifier: ViewModifier {
-    var fillsWindow: Bool
-    var aspectRatio: CGFloat
-
-    /// 不分叉。
-    ///
-    /// 这里原来是 `if fillsWindow { … } else { … }`，两种分支是两种视图类型，
-    /// SwiftUI 会当成两棵不同的树：切横屏时整块画面被拆掉重建，mpv 跟着
-    /// `dismantleUIView` 停引擎，进度从 0 重来（LP 2026-10-27「切横屏又丢失进度」）。
-    /// 改成一条修饰符链，只让参数变、结构不变。
-    func body(content: Content) -> some View {
-        content
-            // 全屏时 `aspectRatio` 传的是**容器自己的比例**（`boxAspectRatio`），
-            // 不是 nil：传 nil 会退回内容的固有比例（mpv 视图是方的），
-            // 于是横屏只铺了 382 宽（LP 2026-10-27）。
-            .aspectRatio(aspectRatio, contentMode: .fit)
-            .frame(maxWidth: .infinity, maxHeight: fillsWindow ? .infinity : nil)
-    }
-}
-
-/// 系统分享面板：把媒体地址交给别的 App（VLC、Infuse 之类）打开。
-private struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-// MARK: - 一起看表单（从 PlayerScreen 抽出，避免 @Bindable 作用域问题）
-private struct SyncPlaySheet: View {
-    @Bindable var settings: SettingsStore
-    @Binding var showingSyncPlay: Bool
-    @Bindable var surface: PlayerSurfaceModel
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("服务器") {
-                    TextField("wss:// 或 ws://host:port", text: $settings.syncPlayEndPoint)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                }
-                Section("房间") {
-                    TextField("房间名", text: $settings.syncPlayRoom)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField("口令（可选）", text: $settings.syncPlayPassword)
-                }
-                Section {
-                    Button("创建房间") {
-                        showingSyncPlay = false
-                        let roomName = settings.syncPlayRoom.isEmpty ? String(localized: "默认房间") : settings.syncPlayRoom
-                        surface.toastMessage = String(localized: "一起看：\(roomName)（创建）")
-                    }
-                    Button("加入房间") {
-                        showingSyncPlay = false
-                        let roomName = settings.syncPlayRoom.isEmpty ? String(localized: "默认房间") : settings.syncPlayRoom
-                        surface.toastMessage = String(localized: "一起看：\(roomName)（加入）")
-                    }
-                } header: {
-                    Text("房间操作")
-                } footer: {
-                    Text("可填 wss:// 形式的外网房间服务器。播放同步（WS 客户端与心跳）后续接上。")
-                }
-            }
-            .navigationTitle("一起看")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingSyncPlay = false
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .regular))
-                            .foregroundStyle(Color.primary)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("关闭")
-                }
-            }
-        }
-    }
-}
-
-/// 播放器里那块玻璃底（LP 3637：横屏选集窗口要用 UIKit 的玻璃）。
-/// 用 iOS 26 的 `UIGlassEffect`；这块是浮在视频上的，取 `.regular` 那种，
-/// 别用 `.clear`——画面一动，上面的白字就没地方站。
-/// 播放页按钮的按压反馈：按下缩到 0.92、松开弹回，100ms easeOut。
-/// 不加底色、不变色、不动投影，也不震——iOS 原生按钮本来就不震。
-/// 播放器横竖屏共用的弹幕符号：圆角框里两条错落横线代表飞过的弹幕，
-/// 右下角压一颗小齿轮（设置版）。不写汉字，简繁体、字号糊不糊都不用管。
-/// 外框 18.5×15.5、线宽 1.6，跟 18pt Medium 的 `speedometer` / `sidebar.left`
-/// 墨水高度 15~16pt、线宽 1.5~1.7pt 对齐；整张画布仍锁 20×18 装下齿轮。
-struct DanmakuSettingsGlyph: View {
-    /// 颜色由调用方定：播放器里白色，「更多」菜单渲成模板图后跟系统 tint。
-    var color: Color = .white
-
-    var body: some View {
-        ZStack {
-            // 主体框：可视高 15.5pt、宽 18.5pt，线宽 1.6pt。
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .strokeBorder(lineWidth: 1.6)
-                .frame(width: 18.5, height: 15.5)
-                .overlay {
-                    // 两条错落的胶囊横线＝弹幕，免去一切中文字体和简繁问题。
-                    VStack(spacing: 2.5) {
-                        Capsule()
-                            .frame(width: 9, height: 1.6)
-                            .offset(x: -1.5)
-                        Capsule()
-                            .frame(width: 7, height: 1.6)
-                            .offset(x: 2)
-                    }
-                }
-                .offset(x: -1, y: -1)
-                .overlay(alignment: .bottomTrailing) {
-                    // 齿轮位置的镂空避让圆，避免框线和齿轮叠在一起。
-                    Circle()
-                        .frame(width: 9.5, height: 9.5)
-                        .offset(x: 1, y: 1)
-                        .blendMode(.destinationOut)
-                }
-                .compositingGroup()
-
-            // 右下角小齿轮：8pt，精致但不抢主体。
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 8, weight: .bold))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .offset(x: 0.5, y: 0.5)
-        }
-        .foregroundStyle(color)
-        // 严格锁死 20×18，绝不撑大外面的按钮。
-        .frame(width: 20, height: 18)
-        .contentShape(Rectangle())
-    }
-}
-
-struct PlayerPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.92 : 1)
-            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-    }
-}
-
-/// 播放器浮层的玻璃底：iOS 26 用 SwiftUI 原生 `glassEffect`；
-/// 低版本退回 `GlassBackdrop`，两边都能编译、观感一致。
-/// 一律钉成深色（LP 2026-11-06）：播放器底下永远是画面，不跟系统浅色走。
-private struct PlayerGlassShapeModifier<S: Shape>: ViewModifier {
-    let shape: S
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(.regular.interactive(true), in: shape)
-        } else {
-            content.background {
-                GlassBackdrop()
-                    .clipShape(shape)
-            }
-        }
-    }
-}
-
-private extension View {
-    /// HUD 胶囊统一走这一个入口，调用点只写形状。
-    func playerGlass<S: Shape>(in shape: S) -> some View {
-        modifier(PlayerGlassShapeModifier(shape: shape))
-    }
-}
-
-struct GlassBackdrop: UIViewRepresentable {
-    func makeUIView(context: Context) -> UIVisualEffectView {
-        let effect = UIGlassEffect(style: .regular)
-        effect.isInteractive = true
-        let view = UIVisualEffectView(effect: effect)
-        view.backgroundColor = .clear
-        view.clipsToBounds = true
-        view.overrideUserInterfaceStyle = .dark
-        return view
-    }
-
-    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {}
-}
-
-/// 转屏被拒时系统给的那句话，从后台队列交回主线程的盒子。
-///
-/// UIKit 在自己的队列（崩溃报告里是 `com.apple.root.default-qos`）上回调
-/// `requestGeometryUpdate` 的 errorHandler。闭包字面量写在 `@MainActor` 的
-/// `Task` 里会继承主线程隔离，UIKit 在后台队列上一叫就撞
-/// `_swift_task_checkIsolatedSwift` 断言、整页闪退——平时看不出来，只有系统
-/// **拒绝**这次转屏（回调真的被调）才死（LP 4753 的崩溃报告，真机一进全屏被拒）。
-///
-/// 所以回调里一个字都不碰主线程状态，只往这个带锁的盒子里放一句话，
-/// 主线程那边轮询时再取出来。
-private final class OrientationFailure: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: (generation: Int, message: String)?
-
-    func record(generation: Int, message: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        // 旧请求迟到的回调不许盖掉新请求的结论。
-        if let stored, stored.generation > generation { return }
-        stored = (generation, message)
-    }
-
-    /// 取走属于这一代请求的那句话；不是这一代的就当没发生过。
-    func take(generation: Int) -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let stored, stored.generation == generation else { return nil }
-        self.stored = nil
-        return stored.message
-    }
-}
-
-
-/// 沿着圆角矩形边框走一圈的进度线，起点是左边正中、方向顺时针（LP 5499）。
-///
-/// 不用 `RoundedRectangle().trim`：`trim` 的起点由路径自己决定（落在上边一带），
-/// 换不了，只能自己按段的长度铺。
-private struct EdgeProgressRing: Shape {
-    /// 0…1，画满整圈的多少。
-    var fraction: Double
-    var cornerRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let r = min(cornerRadius, min(rect.width, rect.height) / 2)
-        let arc = CGFloat.pi * r / 2
-        let straightV = max(0, rect.height - 2 * r) / 2   // 单侧竖直线（上下一半）
-        let straightH = max(0, rect.width - 2 * r)        // 单侧水平线
-        // 九段都在这里排好：从左边正中往上，绕一圈回到左边正中。
-        let lengths: [CGFloat] = [straightV, arc, straightH, arc, 2 * straightV, arc, straightH, arc, straightV]
-        let total = lengths.reduce(0, +)
-        guard total > 0 else { return Path() }
-        var remaining = total * max(0, min(1, fraction))
-
-        let midY = rect.midY
-        var cursor = CGPoint(x: rect.minX, y: midY)
-        var path = Path()
-        path.move(to: cursor)
-
-        for (index, length) in lengths.enumerated() where remaining > 0 {
-            let take = min(length, remaining)
-            remaining -= take
-            switch index {
-            case 0: // 左中 → 左上角起点
-                cursor.y -= take
-                path.addLine(to: cursor)
-            case 1: // 左上角
-                let center = CGPoint(x: rect.minX + r, y: rect.minY + r)
-                path.addArc(center: center, radius: r,
-                            startAngle: .radians(.pi),
-                            endAngle: .radians(.pi + (take / max(arc, 0.0001)) * (.pi / 2)),
-                            clockwise: false)
-                cursor = Self.point(center: center, r: r, angle: .pi + (take / max(arc, 0.0001)) * (.pi / 2))
-            case 2: // 上边
-                cursor.x += take
-                path.addLine(to: cursor)
-            case 3: // 右上角
-                let center = CGPoint(x: rect.maxX - r, y: rect.minY + r)
-                path.addArc(center: center, radius: r,
-                            startAngle: .radians(.pi * 1.5),
-                            endAngle: .radians(.pi * 1.5 + (take / max(arc, 0.0001)) * (.pi / 2)),
-                            clockwise: false)
-                cursor = Self.point(center: center, r: r, angle: .pi * 1.5 + (take / max(arc, 0.0001)) * (.pi / 2))
-            case 4: // 右边
-                cursor.y += take
-                path.addLine(to: cursor)
-            case 5: // 右下角
-                let center = CGPoint(x: rect.maxX - r, y: rect.maxY - r)
-                path.addArc(center: center, radius: r,
-                            startAngle: .radians(0),
-                            endAngle: .radians((take / max(arc, 0.0001)) * (.pi / 2)),
-                            clockwise: false)
-                cursor = Self.point(center: center, r: r, angle: (take / max(arc, 0.0001)) * (.pi / 2))
-            case 6: // 下边
-                cursor.x -= take
-                path.addLine(to: cursor)
-            case 7: // 左下角
-                let center = CGPoint(x: rect.minX + r, y: rect.maxY - r)
-                path.addArc(center: center, radius: r,
-                            startAngle: .radians(.pi / 2),
-                            endAngle: .radians(.pi / 2 + (take / max(arc, 0.0001)) * (.pi / 2)),
-                            clockwise: false)
-                cursor = Self.point(center: center, r: r, angle: .pi / 2 + (take / max(arc, 0.0001)) * (.pi / 2))
-            default: // 左边 → 回到正中
-                cursor.y -= take
-                path.addLine(to: cursor)
-            }
-        }
-        return path
-    }
-
-    private static func point(center: CGPoint, r: CGFloat, angle: CGFloat) -> CGPoint {
-        CGPoint(x: center.x + r * cos(angle), y: center.y + r * sin(angle))
-    }
-}
-
-private struct DanmakuSourceSheet: View {
-    let initialKeyword: String
-    let onSelectEpisode: (DanmakuEpisode) async -> String?
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var keyword: String
-    @State private var animes: [DanmakuSearchAnime] = []
-    @State private var selectedAnime: DanmakuSearchAnime?
-    @State private var episodes: [DanmakuEpisode] = []
-    @State private var loading = false
-    @State private var errorMessage: String?
-
-    init(
-        initialKeyword: String,
-        onSelectEpisode: @escaping (DanmakuEpisode) async -> String?
-    ) {
-        self.initialKeyword = initialKeyword
-        self.onSelectEpisode = onSelectEpisode
-        _keyword = State(initialValue: initialKeyword)
-    }
-
-    var body: some View {
-        Group {
-            if let selectedAnime {
-                episodeContent(selectedAnime)
-            } else {
-                searchContent
-            }
-        }
-        .navigationTitle(selectedAnime == nil ? "弹幕检索" : "选择分集")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("关闭") { dismiss() }
-            }
-        }
-        .overlay {
-            if loading {
-                ProgressView()
-                    .padding(18)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-            }
-        }
-        .disabled(loading)
-    }
-
-    private var searchContent: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                TextField("番剧名称", text: $keyword)
-                    .submitLabel(.search)
-                    .onSubmit { Task { await search() } }
-                    .textFieldStyle(.roundedBorder)
-                Button("搜索") {
-                    Task { await search() }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding()
-
-            if let errorMessage {
-                errorLabel(errorMessage)
-            }
-
-            List(animes) { anime in
-                Button {
-                    Task { await loadEpisodes(for: anime) }
-                } label: {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(anime.animeTitle)
-                                .foregroundStyle(.primary)
-                            if !anime.typeDescription.isEmpty {
-                                Text(anime.typeDescription)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .listStyle(.plain)
-        }
-    }
-
-    private func episodeContent(_ anime: DanmakuSearchAnime) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Button {
-                    selectedAnime = nil
-                    episodes = []
-                    errorMessage = nil
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("返回")
-                Text(anime.animeTitle)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding()
-
-            if let errorMessage {
-                errorLabel(errorMessage)
-            }
-
-            List(episodes) { episode in
-                Button {
-                    Task { await select(episode) }
-                } label: {
-                    HStack {
-                        Text(episode.episodeTitle)
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "captions.bubble")
-                            .foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .listStyle(.plain)
-        }
-    }
-
-    private func errorLabel(_ message: String) -> some View {
-        Text(message)
-            .font(.footnote)
-            .foregroundStyle(.red)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
-    }
-
-    private func search() async {
-        let query = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            errorMessage = String(localized: "请输入番剧名称")
-            return
-        }
-        loading = true
-        errorMessage = nil
-        animes = []
-        defer { loading = false }
-        do {
-            animes = try await DanmakuAPI.searchAnimes(query)
-            if animes.isEmpty {
-                errorMessage = String(localized: "未找到番剧")
-            }
-        } catch {
-            errorMessage = String(localized: "搜索失败：\(error.localizedDescription)")
-        }
-    }
-
-    private func loadEpisodes(for anime: DanmakuSearchAnime) async {
-        loading = true
-        errorMessage = nil
-        episodes = []
-        defer { loading = false }
-        do {
-            let result = try await DanmakuAPI.episodes(animeID: anime.animeID)
-            selectedAnime = anime
-            episodes = result
-            if result.isEmpty {
-                errorMessage = String(localized: "暂无分集")
-            }
-        } catch {
-            errorMessage = String(localized: "分集加载失败：\(error.localizedDescription)")
-        }
-    }
-
-    private func select(_ episode: DanmakuEpisode) async {
-        loading = true
-        errorMessage = nil
-        if let failure = await onSelectEpisode(episode) {
-            errorMessage = String(localized: "弹幕源切换失败：\(failure)")
-            loading = false
-        } else {
-            dismiss()
-        }
     }
 }

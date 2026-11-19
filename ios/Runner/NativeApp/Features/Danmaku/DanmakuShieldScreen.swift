@@ -62,6 +62,8 @@ struct DanmakuShieldScreen: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
         // 顶部滚动边缘：渐进模糊（.soft），不另外加材质或底色。
         .scrollEdgeEffectStyle(.soft, for: .top)

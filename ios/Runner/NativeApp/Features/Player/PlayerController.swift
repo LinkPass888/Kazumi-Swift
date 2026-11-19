@@ -152,14 +152,17 @@ final class PlayerController {
         // 地址一摘，容器就会拆掉引擎（`dismantleUIView` → `engine.stop()`），
         // 解析期间不会再有上一集的声音。
         playbackURL = nil
-        // 从观看历史进去时路由只带 bangumiID / 集数，没有播放源，得联网搜一次。
-        // 本地已经下好这一集就先离线起播：断网时那个搜索必然失败，不能让它把
-        // 本地文件挡在外面（#27）。在线列表随后在后台补回来，不挡播放。
-        if source == nil, let local = localFile?(currentEpisode) {
+        // 本地已经下好这一集就先离线秒开起播：无论是从历史、下载列表还是其他入口进入，
+        // 只要本地有文件，绝不让在线章节搜索或网页嗅探把本地文件挡在外面（#27 / #35 / #39）。
+        // 在线列表在后台静默抓取，不挡播放。
+        if let local = localFile?(currentEpisode) {
             startLocalPlayback(local)
             refreshEpisodeListInBackground()
             return
         }
+        // 提前并发拉取弹幕：集数已定，无须等待耗时数秒的网页嗅探与章节解析结束（P1 优化）
+        Task { await loadDanmaku() }
+
         // 先按历史里的规则名把播放源重建出来，再走正常的起播流程。
         if source == nil {
             await resolveSourceFromHistory()
@@ -689,6 +692,21 @@ final class PlayerController {
 
         let episode = currentEpisode
         let road = selectedRoad
+
+        // 1. 若本地存在离线下载弹幕文件，优先读取离线弹幕（断网/飞行模式 0 延迟秒开）
+        if let localVideo = localFile?(episode) {
+            let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
+            if FileManager.default.fileExists(atPath: danmakuURL.path),
+               let data = try? Data(contentsOf: danmakuURL),
+               let comments = try? JSONDecoder().decode([DanmakuComment].self, from: data),
+               !comments.isEmpty {
+                danmakuComments = comments
+                danmakuStatus = .ready
+                KazumiLogBuffer.player("已加载离线本地弹幕：\(comments.count) 条")
+                return
+            }
+        }
+
         let result = await DanmakuAPI.fetch(bangumiID: bangumiID, episode: episode)
         guard currentEpisode == episode, selectedRoad == road else { return }
         switch result {
@@ -696,6 +714,14 @@ final class PlayerController {
             danmakuComments = comments
             danmakuStatus = .ready
             KazumiLogBuffer.player("弹幕已加载：\(comments.count) 条")
+            // 若为已下载的离线视频且本地尚未存有弹幕文件，顺带落盘
+            if let localVideo = localFile?(episode) {
+                let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
+                if !FileManager.default.fileExists(atPath: danmakuURL.path),
+                   let data = try? JSONEncoder().encode(comments) {
+                    try? data.write(to: danmakuURL, options: .atomic)
+                }
+            }
         case .empty:
             danmakuComments = []
             danmakuStatus = .empty
@@ -730,6 +756,12 @@ final class PlayerController {
             danmakuComments = comments
             danmakuStatus = .ready
             danmakuMessage = String(localized: "已切换弹幕源")
+            if let localVideo = localFile?(episode) {
+                let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
+                if let data = try? JSONEncoder().encode(comments) {
+                    try? data.write(to: danmakuURL, options: .atomic)
+                }
+            }
             return .loaded(comments.count)
         } catch {
             guard currentEpisode == episode, selectedRoad == road else {

@@ -378,6 +378,8 @@ final class DownloadCenter {
                     // 分片一起删：本地播放列表指向它们，留下就是垃圾。
                     try? FileManager.default.removeItem(at: folder.appending(path: file))
                 }
+                let danmakuURL = folder.appending(path: "ep-\(episode.number).danmaku.json")
+                try? FileManager.default.removeItem(at: danmakuURL)
                 removeSegments(in: folder, prefix: "ep-\(episode.number)", items: items)
             }
         }
@@ -574,6 +576,22 @@ final class DownloadCenter {
         }
         persist()
         KazumiLogBuffer.network("下载完成：第 \(item.episodeNumber) 集 \(size / 1024 / 1024) MB")
+
+        // 离线下载弹幕：保存弹幕到同一集目录下，离线/飞行模式下可直接加载
+        if record.bangumiID > 0 {
+            let episodeNum = item.episodeNumber
+            let bangumiID = record.bangumiID
+            Task.detached(priority: .utility) {
+                let result = await DanmakuAPI.fetch(bangumiID: bangumiID, episode: episodeNum)
+                if case .success(let comments) = result, !comments.isEmpty {
+                    let fileURL = folder.appending(path: "ep-\(episodeNum).danmaku.json")
+                    if let data = try? JSONEncoder().encode(comments) {
+                        try? data.write(to: fileURL, options: .atomic)
+                        KazumiLogBuffer.storage("离线弹幕下载成功：第 \(episodeNum) 集保存 \(comments.count) 条弹幕")
+                    }
+                }
+            }
+        }
     }
 
     /// 一集真正占了多少地方：本地播放列表 + 它的全部分片。
@@ -650,20 +668,59 @@ final class DownloadCenter {
         return directory.directoryURL.appending(path: name, directoryHint: .isDirectory)
     }
 
+    private func rebaseSandboxPath(_ path: String) -> URL? {
+        let docMarker = "/Documents/"
+        if let range = path.range(of: docMarker) {
+            let rel = String(path[range.upperBound...])
+            let docRoot = AppEnvironment.downloadRoot.deletingLastPathComponent()
+            return docRoot.appending(path: rel, directoryHint: .isDirectory)
+        }
+        let supportMarker = "/Application Support/Kazumi/"
+        if let range = path.range(of: supportMarker) {
+            let rel = String(path[range.upperBound...])
+            return AppEnvironment.storageRoot.appending(path: rel, directoryHint: .isDirectory)
+        }
+        return nil
+    }
+
     private func folderURL(for record: DownloadRecord, episode: DownloadEpisode) -> URL {
         if let path = episode.directoryPath, !path.isEmpty {
-            return URL(fileURLWithPath: path, isDirectory: true)
+            let original = URL(fileURLWithPath: path, isDirectory: true)
+            if FileManager.default.fileExists(atPath: original.path) {
+                return original
+            }
+            if let rebased = rebaseSandboxPath(path), FileManager.default.fileExists(atPath: rebased.path) {
+                return rebased
+            }
         }
         return folderURL(for: record)
     }
 
     private func folders(for record: DownloadRecord, episode: DownloadEpisode) -> [URL] {
-        if episode.directoryPath?.isEmpty == false {
-            return [folderURL(for: record, episode: episode)]
+        var candidates: [URL] = []
+        if let path = episode.directoryPath, !path.isEmpty {
+            let exact = URL(fileURLWithPath: path, isDirectory: true)
+            candidates.append(exact)
+            if let rebased = rebaseSandboxPath(path) {
+                candidates.append(rebased)
+            }
         }
-        let folder = folderURL(for: record)
-        let legacy = legacyFolderURL(for: record)
-        return folder.path == legacy.path ? [folder] : [folder, legacy]
+        let currentFolder = folderURL(for: record)
+        let legacyFolder = legacyFolderURL(for: record)
+        candidates.append(currentFolder)
+        if currentFolder.path != legacyFolder.path {
+            candidates.append(legacyFolder)
+        }
+        let folderName = currentFolder.lastPathComponent
+        let legacyFolderName = legacyFolder.lastPathComponent
+        for root in AppEnvironment.legacyDownloadRoots {
+            candidates.append(root.appending(path: folderName, directoryHint: .isDirectory))
+            if folderName != legacyFolderName {
+                candidates.append(root.appending(path: legacyFolderName, directoryHint: .isDirectory))
+            }
+        }
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0.path).inserted }
     }
 
     private func recordFolders(for record: DownloadRecord) -> [URL] {
@@ -732,19 +789,56 @@ final class DownloadCenter {
             let record = records[recordIndex]
             for index in record.episodes.indices {
                 let episode = record.episodes[index]
-                guard episode.status == .completed,
-                      let fileName = episode.fileName
-                else { continue }
-                if let folder = folders(for: record, episode: episode).first(where: {
-                    FileManager.default.fileExists(atPath: $0.appending(path: fileName).path)
-                }) {
-                    if records[recordIndex].episodes[index].directoryPath != folder.path {
-                        records[recordIndex].episodes[index].directoryPath = folder.path
-                        adopted = true
+                guard episode.status == .completed else { continue }
+
+                // 1. 若带有文件名，先在候选文件夹中查找
+                if let fileName = episode.fileName {
+                    if let folder = folders(for: record, episode: episode).first(where: {
+                        FileManager.default.fileExists(atPath: $0.appending(path: fileName).path)
+                    }) {
+                        if records[recordIndex].episodes[index].directoryPath != folder.path {
+                            records[recordIndex].episodes[index].directoryPath = folder.path
+                            adopted = true
+                        }
+                        continue
                     }
+                }
+
+                // 2. 自动恢复（修复 3.0.8 升级后因绝对路径变动导致文件名被误清的问题）：
+                // 在候选文件夹内探查是否有符合该集前缀的已下完文件（.mp4 或 .m3u8）
+                let epPrefix = "ep-\(episode.number)"
+                var recoveredTarget: URL?
+                var recoveredFolder: URL?
+                for folder in folders(for: record, episode: episode) {
+                    let mp4 = folder.appending(path: "\(epPrefix).mp4")
+                    let m3u8 = folder.appending(path: "\(epPrefix).m3u8")
+                    if FileManager.default.fileExists(atPath: mp4.path) {
+                        recoveredTarget = mp4
+                        recoveredFolder = folder
+                        break
+                    } else if FileManager.default.fileExists(atPath: m3u8.path) {
+                        recoveredTarget = m3u8
+                        recoveredFolder = folder
+                        break
+                    }
+                }
+
+                if let target = recoveredTarget, let folder = recoveredFolder {
+                    let size = Self.episodeBytes(folder: folder, prefix: epPrefix, target: target)
+                    records[recordIndex].episodes[index].status = .completed
+                    records[recordIndex].episodes[index].progress = 1
+                    records[recordIndex].episodes[index].fileName = target.lastPathComponent
+                    records[recordIndex].episodes[index].directoryPath = folder.path
+                    records[recordIndex].episodes[index].downloadedBytes = size
+                    records[recordIndex].episodes[index].totalBytes = size
+                    records[recordIndex].episodes[index].updatedAt = Date()
+                    adopted = true
+                    KazumiLogBuffer.storage("下载记录：自动恢复第 \(episode.number) 集文件 \(target.lastPathComponent)")
                     continue
                 }
-                guard episode.directoryPath?.isEmpty == false else { continue }
+
+                // 3. 所有候选目录确实都找不到该集文件，才按未下载处理
+                guard episode.directoryPath?.isEmpty == false || episode.fileName != nil else { continue }
                 records[recordIndex].episodes[index].fileName = nil
                 records[recordIndex].episodes[index].directoryPath = nil
                 records[recordIndex].episodes[index].downloadedBytes = 0

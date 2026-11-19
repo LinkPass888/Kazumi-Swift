@@ -299,6 +299,7 @@ enum SettingsKey {
     static let syncPlayEndPoint = "syncPlayEndPoint"
     static let syncPlayRoom = "syncPlayRoom"
     static let syncPlayPassword = "syncPlayPassword"
+    static let syncPlayUsername = "syncPlayUsername"
     /// 上次成功连接的 DLNA 描述地址（IP 或 IP:端口），用于下次手动连接预填与设置备份。
     static let lastDLNAAddress = "lastDLNAAddress"
 }
@@ -856,6 +857,10 @@ final class SettingsStore {
         didSet { persist(syncPlayPassword, SettingsKey.syncPlayPassword) }
     }
 
+    var syncPlayUsername: String {
+        didSet { persist(syncPlayUsername, SettingsKey.syncPlayUsername) }
+    }
+
     /// 上次实际投屏成功的 DLNA 地址；不是凭据，会跟随设置备份迁移。
     var lastDLNAAddress: String {
         didSet { persist(lastDLNAAddress, SettingsKey.lastDLNAAddress) }
@@ -1006,10 +1011,11 @@ final class SettingsStore {
         proxyTestUrl = Self.read(defaults, SettingsKey.proxyTestUrl, "")
         // 规则仓库加速：新键优先；老用户按旧开关接（开着落 gh-proxy，关着落直连）；
         // 全新安装没有旧键，落 gh-proxy（上游默认）。
-        if let storedMirror = defaults.string(forKey: SettingsKey.rulesMirror),
+        if let storedMirror: String = Self.read(defaults, SettingsKey.rulesMirror, ""),
+           !storedMirror.isEmpty,
            RulesMirror(rawValue: storedMirror) != nil {
             rulesMirror = storedMirror
-        } else if let legacyFlag = defaults.object(forKey: SettingsKey.enableGitProxy) as? Bool {
+        } else if let legacyFlag: Bool = Self.read(defaults, SettingsKey.enableGitProxy, nil) {
             rulesMirror = (legacyFlag ? RulesMirror.ghProxy : RulesMirror.direct).rawValue
         } else {
             rulesMirror = RulesMirror.ghProxy.rawValue
@@ -1035,9 +1041,10 @@ final class SettingsStore {
         autoUpdateCheck = Self.read(defaults, SettingsKey.autoUpdate, true)
         skippedAppUpdateVersion = Self.read(defaults, SettingsKey.skippedAppUpdateVersion, "")
         checkPluginUpdateOnStartup = Self.read(defaults, SettingsKey.checkPluginUpdateOnStartup, true)
-        syncPlayEndPoint = Self.read(defaults, SettingsKey.syncPlayEndPoint, "")
+        syncPlayEndPoint = Self.read(defaults, SettingsKey.syncPlayEndPoint, "publicserver.syncplay.pl:8999")
         syncPlayRoom = Self.read(defaults, SettingsKey.syncPlayRoom, "")
         syncPlayPassword = Self.read(defaults, SettingsKey.syncPlayPassword, "")
+        syncPlayUsername = Self.read(defaults, SettingsKey.syncPlayUsername, "")
         lastDLNAAddress = Self.read(defaults, SettingsKey.lastDLNAAddress, "")
         // 加速方式在全部存储属性初始化完成后再同步到全局开关。
         BangumiAcceleration.mode = enableBangumiProxy ? .mirror : .direct
@@ -1141,6 +1148,13 @@ final class SettingsStore {
             // 改完就来一条通知：同步那边防抖 500ms 后上传（原版的时机）。
             NotificationCenter.default.post(name: .kazumiDanmakuRulesChanged, object: nil)
         }
+    }
+
+    var danmakuFilterRules: [String] {
+        danmakuFilterRulesText
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     /// 已落盘的设置快照：键名（去掉前缀）-> 值。

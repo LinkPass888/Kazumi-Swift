@@ -261,15 +261,17 @@ enum BangumiAPI {
         do {
             var components = URLComponents()
             components.path = BangumiEndpoints.mirrorPopularSubjects
-            var items: [URLQueryItem] = []
-            if !tag.isEmpty { items.append(URLQueryItem(name: "tag", value: tag)) }
-            items.append(URLQueryItem(name: "limit", value: "\(limit)"))
-            items.append(URLQueryItem(name: "offset", value: "\(offset)"))
-            components.queryItems = items
+            var queryItems: [URLQueryItem] = []
+            if !tag.isEmpty { queryItems.append(URLQueryItem(name: "tag", value: tag)) }
+            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+            queryItems.append(URLQueryItem(name: "offset", value: "\(offset)"))
+            components.queryItems = queryItems
             let path = components.string ?? BangumiEndpoints.mirrorPopularSubjects
             let json = try await get(BangumiEndpoints.mirrorDomain + path)
             let list = json.arrayValue ?? json["data"].arrayValue ?? []
-            return list.compactMap { BangumiItem.fromJSON($0) }
+            let items = list.compactMap { BangumiItem.fromJSON($0) }
+            await BangumiSubjectCache.shared.remember(items)
+            return items
         } catch {
             KazumiLog.network.error("Resolve bangumi mirror popular failed: \(error.localizedDescription, privacy: .public)")
             return nil
@@ -342,7 +344,9 @@ enum BangumiAPI {
                 [100, 0]
             )
             let json = try await post(url, body: params)
-            return (json["data"].arrayValue ?? []).compactMap { BangumiItem.fromJSON($0) }
+            let items = (json["data"].arrayValue ?? []).compactMap { BangumiItem.fromJSON($0) }
+            await BangumiSubjectCache.shared.remember(items)
+            return items
         } catch {
             KazumiLog.network.error("Resolve bangumi list failed: \(error.localizedDescription, privacy: .public)")
             return nil

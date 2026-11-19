@@ -7,6 +7,10 @@ on:
       - "*"
   workflow_dispatch:
     inputs:
+      tag:
+        description: 'Release tag (optional, e.g. v3.0.9)'
+        required: false
+        default: ''
       logLevel:
         description: 'Log level'
         required: true
@@ -35,7 +39,18 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Extract tag name
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_ENV
+          else
+            RAW_REF="${GITHUB_REF#refs/tags/}"
+            if [[ "$RAW_REF" == refs/* || -z "$RAW_REF" ]]; then
+              echo "tag=v$(date +'%Y.%m.%d')-dev" >> $GITHUB_ENV
+            else
+              echo "tag=${RAW_REF}" >> $GITHUB_ENV
+            fi
+          fi
+        shell: bash
 
       - name: Echo build progress
         run: echo "Kazumi_ios_${tag}.ipa build progress"
@@ -111,7 +126,18 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Extract tag name
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_ENV
+          else
+            RAW_REF="${GITHUB_REF#refs/tags/}"
+            if [[ "$RAW_REF" == refs/* || -z "$RAW_REF" ]]; then
+              echo "tag=v$(date +'%Y.%m.%d')-dev" >> $GITHUB_ENV
+            else
+              echo "tag=${RAW_REF}" >> $GITHUB_ENV
+            fi
+          fi
+        shell: bash
 
       - name: Show Xcode and SDK version
         run: |
@@ -129,6 +155,45 @@ jobs:
           set -o pipefail
           xcodebuild -project "$PROJECT" -scheme "$SCHEME" -resolvePackageDependencies \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm-catalyst" | xcbeautify
+
+      - name: Restructure Catalyst frameworks to deep bundles
+        run: |
+          set -euo pipefail
+          echo "Restructuring MPVKit Mac Catalyst frameworks to standard deep bundles..."
+          find "$RUNNER_TEMP/spm-catalyst" -type d -path '*maccatalyst*/*.framework' | while read -r fw; do
+            if [ ! -d "$fw/Versions" ] && [ -f "$fw/Info.plist" ]; then
+              fw_name="$(basename "$fw" .framework)"
+              echo "Converting shallow framework to deep bundle: $fw"
+              mkdir -p "$fw/Versions/A/Resources"
+              mv "$fw/Info.plist" "$fw/Versions/A/Resources/Info.plist"
+              if [ -f "$fw/$fw_name" ]; then
+                mv "$fw/$fw_name" "$fw/Versions/A/$fw_name"
+              fi
+              if [ -d "$fw/Headers" ]; then
+                mv "$fw/Headers" "$fw/Versions/A/Headers"
+              fi
+              if [ -d "$fw/Modules" ]; then
+                mv "$fw/Modules" "$fw/Versions/A/Modules"
+              fi
+              (
+                cd "$fw/Versions"
+                ln -sfn A Current
+              )
+              (
+                cd "$fw"
+                if [ -f "Versions/A/$fw_name" ]; then
+                  ln -sfn "Versions/Current/$fw_name" "$fw_name"
+                fi
+                ln -sfn Versions/Current/Resources Resources
+                if [ -d "Versions/A/Headers" ]; then
+                  ln -sfn Versions/Current/Headers Headers
+                fi
+                if [ -d "Versions/A/Modules" ]; then
+                  ln -sfn Versions/Current/Modules Modules
+                fi
+              )
+            fi
+          done
 
       - name: Build (no codesign)
         env:
@@ -152,7 +217,7 @@ jobs:
             SUPPORTS_MACCATALYST=YES \
             DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
             DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
-            2>&1 | tee "$RUNNER_TEMP/catalyst-build.log" | xcbeautify
+            2>&1 | tee "$RUNNER_TEMP/catalyst-build.log" | sed '/does not use shallow bundles/d' | xcbeautify
           status=${PIPESTATUS[0]}
           set -e
           if [ "$status" -ne 0 ]; then
@@ -228,7 +293,17 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Extract tag name
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_ENV
+          else
+            RAW_REF="${GITHUB_REF#refs/tags/}"
+            if [[ "$RAW_REF" == refs/* || -z "$RAW_REF" ]]; then
+              echo "tag=v$(date +'%Y.%m.%d')-dev" >> $GITHUB_ENV
+            else
+              echo "tag=${RAW_REF}" >> $GITHUB_ENV
+            fi
+          fi
         shell: bash
 
       - name: Extract release notes from CHANGELOG

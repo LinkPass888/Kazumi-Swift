@@ -78,7 +78,7 @@ final class DLNABrowser {
     /// 每次开始、手动连接或停止都换代；较早操作即使晚返回也不能覆盖新状态。
     private var operationGeneration = 0
 
-    func start() {
+    func start(preferredAddress: String? = nil) {
         guard state != .searching else { return }
         operationGeneration &+= 1
         let generation = operationGeneration
@@ -86,13 +86,13 @@ final class DLNABrowser {
         state = .searching
         progressText = nil
         searchTask = Task { [weak self] in
-            await self?.runSearch(generation: generation)
+            await self?.runSearch(preferredAddress: preferredAddress, generation: generation)
         }
     }
 
-    func restart() {
+    func restart(preferredAddress: String? = nil) {
         stop()
-        start()
+        start(preferredAddress: preferredAddress)
     }
 
     func stop() {
@@ -131,7 +131,7 @@ final class DLNABrowser {
         progressText = nil
     }
 
-    private func runSearch(generation: Int) async {
+    private func runSearch(preferredAddress: String?, generation: Int) async {
         // 仅当明确为策略拒绝（PolicyDenied）时才拦截，防止 Info.plist 漏配 Bonjour 导致误杀
         if await LocalNetworkPermission.isExplicitlyDenied() {
             guard generation == operationGeneration else { return }
@@ -141,8 +141,20 @@ final class DLNABrowser {
         }
         guard !Task.isCancelled, generation == operationGeneration else { return }
 
+        // 若有上次成功连接的地址，先快速单点探测，秒出设备
+        if let preferred = preferredAddress?.trimmingCharacters(in: .whitespacesAndNewlines), !preferred.isEmpty {
+            progressText = String(localized: "正在连接上次使用的设备…")
+            if let quickDevice = await prober.probeSingleInput(preferred) {
+                guard !Task.isCancelled, generation == operationGeneration else { return }
+                knownDevices = [quickDevice]
+                state = .found([quickDevice])
+            }
+        }
+
         guard let prefix = Self.wifiSubnetPrefix() else {
-            state = .failed(.notFound)
+            if knownDevices.isEmpty {
+                state = .failed(.notFound)
+            }
             progressText = nil
             return
         }
@@ -151,7 +163,11 @@ final class DLNABrowser {
         let found = await prober.scanSubnet(prefix: prefix)
         guard !Task.isCancelled, generation == operationGeneration else { return }
 
-        knownDevices = found.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+        var merged = knownDevices
+        for device in found where !merged.contains(where: { $0.id == device.id }) {
+            merged.append(device)
+        }
+        knownDevices = merged.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
         state = knownDevices.isEmpty ? .failed(.notFound) : .found(knownDevices)
         progressText = nil
     }

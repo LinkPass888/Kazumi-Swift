@@ -820,19 +820,30 @@ struct LibraryScreen: View {
             )
     }
 
-    /// 追番页的网络封面严格按当前网格顺序一张一张取；本地缓存仍由各卡片并行读取。
+    /// 追番页封面并发按可视区加载；加载完成后统一通知卡片刷新，避免逐张刷 revision 导致网格反复重绘（P2 优化）。
     private func loadLibraryCovers() async {
         guard libraryContainerSize.width > 0 else { return }
         let pixelSize = libraryCoverPixelSize
-        coverLoadRevision &+= 1
-        for url in filteredEntries.map(\.imageURL) {
-            guard !Task.isCancelled else { return }
-            if KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixelSize) == nil {
-                _ = await KazumiImageLoader.shared.loadSequentially(url, pixelSize: pixelSize)
-            }
-            guard !Task.isCancelled else { return }
-            coverLoadRevision &+= 1
+        let uncached = filteredEntries.map(\.imageURL).filter {
+            !$0.isEmpty && KazumiImageLoader.shared.cachedImage(for: $0, pixelSize: pixelSize) == nil
         }
+        guard !uncached.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            var active = 0
+            for url in uncached {
+                if active >= 6 {
+                    _ = await group.next()
+                    active -= 1
+                }
+                guard !Task.isCancelled else { break }
+                active += 1
+                group.addTask {
+                    _ = await KazumiImageLoader.shared.load(url, pixelSize: pixelSize)
+                }
+            }
+        }
+        guard !Task.isCancelled else { return }
+        coverLoadRevision &+= 1
     }
 
     private var coverLoadKey: [String] {

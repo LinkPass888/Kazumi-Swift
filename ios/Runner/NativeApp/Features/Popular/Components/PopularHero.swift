@@ -647,7 +647,9 @@ struct PopularHero: View {
         // 从播放页返回：把面板放回来。
         .onChange(of: navigationDepth) { _, newDepth in
             guard sourceNavigationRevision == router.externalNavigationRevision,
-                  returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
+                  newDepth <= depthBeforePlayer else { return }
+            let reopenSources = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
+            guard returnToSourcesAfterPlayer || reopenSources else { return }
             returnToSourcesAfterPlayer = false
             if let controller = sourceController { presentSources(controller) }
         }
@@ -1140,7 +1142,7 @@ struct PopularHero: View {
                 guard revision == router.externalNavigationRevision,
                       router.pendingExternalLink == nil else { return }
                 SourceSheetCoordinator.shared.dismiss()
-                returnToSourcesAfterPlayer = true
+                returnToSourcesAfterPlayer = false
                 depthBeforePlayer = navigationDepth
                 // 跟详情页「开始观看」一个口径：这部剧在这条规则上看到哪就从哪起。
                 let point = library.resumePoint(for: controller.item.id, pluginName: pluginName)
@@ -1181,7 +1183,7 @@ struct PopularHero: View {
         isToggling = true
         defer { isToggling = false }
 
-        let next: CollectType = collectType == .none ? .watching : .none
+        let next: CollectType = collectType == .watching ? .none : .watching
         let syncEnabled = settings.bangumiSyncEnable
         guard syncEnabled else {
             applyCollect(poster, next)
@@ -1230,7 +1232,7 @@ struct PopularHero: View {
                 rank: 0,
                 tags: [],
                 totalEpisodes: poster.totalEpisodes,
-                currentEpisode: 0,
+                currentEpisode: library.entry(for: poster.id)?.currentEpisode ?? 0,
                 addedAt: library.entry(for: poster.id)?.addedAt ?? Date(),
                 updatedAt: Date()
             )

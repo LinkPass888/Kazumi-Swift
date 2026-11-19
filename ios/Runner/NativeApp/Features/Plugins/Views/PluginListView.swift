@@ -97,6 +97,17 @@ struct PluginListView: View {
     /// 页面上列的规则（LP 2519：规则不多，不做搜索框，直接按状态筛选后的全量）。
     private var visiblePlugins: [Plugin] { statusFilteredPlugins }
 
+    private var moveAction: ((IndexSet, Int) -> Void)? {
+        guard ruleFilter == .all else { return nil }
+        return { source, destination in
+            move(from: source, to: destination)
+        }
+    }
+
+    private var editModeBinding: Binding<EditMode> {
+        isEditingSelection ? .constant(.active) : .constant(.inactive)
+    }
+
     var body: some View {
         List {
             // 操作组：规则仓库在上（真推一页，给箭头），添加规则在下（弹菜单，不给箭头）。
@@ -187,7 +198,7 @@ struct PluginListView: View {
                         row(plugin)
                             .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
                     }
-                    .onMove(perform: move)
+                    .onMove(perform: moveAction)
                 } footer: {
                     Text(footerText)
                 }
@@ -197,6 +208,7 @@ struct PluginListView: View {
         .listSectionSpacing(.custom(12))
         // 行高 48：List 自己有个最小行高，把内容改成多少都压不下来，只能改那个下限。
         .environment(\.defaultMinListRowHeight, 48)
+        .environment(\.editMode, editModeBinding)
         .scrollContentBackground(.hidden)
         .background(KazumiPalette.heroBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("规则管理")

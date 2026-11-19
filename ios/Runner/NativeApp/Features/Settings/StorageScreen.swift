@@ -128,6 +128,8 @@ struct StorageScreen: View {
                 }
             }
         }
+        .frame(maxWidth: 700)
+        .frame(maxWidth: .infinity)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("存储与日志")
         .navigationBarTitleDisplayMode(.large)
@@ -206,6 +208,9 @@ struct StorageScreen: View {
 
     private func formattedSize(_ raw: Int64) -> String {
         let bytes = Double(raw)
+        if bytes >= 1024 * 1024 * 1024 {
+            return String(format: "%.2f GB", bytes / (1024 * 1024 * 1024))
+        }
         if bytes >= 1024 * 1024 {
             return String(format: "%.1f MB", bytes / (1024 * 1024))
         }
@@ -220,6 +225,9 @@ struct StorageScreen: View {
     private var airTimeCacheDescription: String {
         guard airTimeCache.bytes > 0 else { return "—" }
         let bytes = Double(airTimeCache.bytes)
+        if bytes >= 1024 * 1024 * 1024 {
+            return String(format: "%.2f GB", bytes / (1024 * 1024 * 1024))
+        }
         if bytes >= 1024 * 1024 {
             return String(format: "%.1f MB", bytes / (1024 * 1024))
         }

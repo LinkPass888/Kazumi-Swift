@@ -255,7 +255,7 @@ struct BangumiInfoScreen: View {
                     guard router.pendingExternalLink == nil else { return }
                     sourceNavigationRevision = router.externalNavigationRevision
                     isShowingSources = false
-                    returnToSourcesAfterPlayer = true
+                    returnToSourcesAfterPlayer = false
                     depthBeforePlayer = navigationDepth
                     // 从哪一集接着看：按「这部剧 + 这条规则名」查历史，记着第几集、
                     // 哪条线路就从哪里起（LP 4822 / 4844，跟 main 的 _initOnlineMode 一致）。
@@ -293,7 +293,9 @@ struct BangumiInfoScreen: View {
         .onChange(of: navigationDepth) { _, newDepth in
             guard sourceNavigationRevision == router.externalNavigationRevision,
                   router.pendingExternalLink == nil,
-                  returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
+                  newDepth <= depthBeforePlayer else { return }
+            let reopenSources = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
+            guard returnToSourcesAfterPlayer || reopenSources else { return }
             returnToSourcesAfterPlayer = false
             isShowingSources = true
         }
@@ -1002,7 +1004,7 @@ extension BangumiInfoScreen {
                 rank: item.rank,
                 tags: item.tags.map(\.name),
                 totalEpisodes: controller.episodes.count,
-                currentEpisode: 0,
+                currentEpisode: library.entry(for: item.id)?.currentEpisode ?? 0,
                 addedAt: library.entry(for: item.id)?.addedAt ?? Date(),
                 updatedAt: Date()
             )
@@ -1102,7 +1104,7 @@ extension BangumiInfoScreen {
                 rank: item.rank,
                 tags: item.tags.map(\.name),
                 totalEpisodes: totalEpisodes,
-                currentEpisode: 0,
+                currentEpisode: library.entry(for: item.id)?.currentEpisode ?? 0,
                 addedAt: library.entry(for: item.id)?.addedAt ?? Date(),
                 updatedAt: Date()
             )

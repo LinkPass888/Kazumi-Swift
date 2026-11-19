@@ -20,10 +20,16 @@ enum KazumiLink: Equatable, Sendable {
     case downloads
     /// A local shortcut to details; source selection remains an explicit user action.
     case watch(Int)
+    /// 外部打开的规则分享链接（形如 kazumi://<base64>）。
+    case importRule(String)
 
     static func parse(_ url: URL) -> KazumiLink? {
-        guard url.scheme?.lowercased() == "kazumi",
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+        guard url.scheme?.lowercased() == "kazumi" else { return nil }
+        // 规则分享链接形如 kazumi://<base64>
+        if let decoded = try? KazumiRuleLink.decode(url.absoluteString), !decoded.isEmpty {
+            return .importRule(decoded)
+        }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.user == nil, components.password == nil, components.port == nil,
               let host = components.host else { return nil }
         // Validate UTF-8/percent decoding before Foundation's queryItems convenience API.
@@ -412,6 +418,8 @@ final class AppRouter {
         externalModalDismissalRevision &+= 1
     }
 
+    var pendingImportRule: String?
+
     /// Preserve unrelated tab stacks, but remove every player and everything above it.
     /// The target stack is cleared separately, then mounted before its new route is pushed.
     func prepareExternalNavigation() -> AppDestination? {
@@ -420,7 +428,7 @@ final class AppRouter {
         switch link {
         case .library: target = .collect
         case .history, .downloads: target = .my
-        case .bangumi, .search, .watch: target = selectedDestination
+        case .bangumi, .search, .watch, .importRule: target = selectedDestination
         }
         for destination in AppDestination.allCases {
             let routes = path(for: destination)
@@ -446,6 +454,7 @@ final class AppRouter {
         case .library: break
         case .history: push(.history)
         case .downloads: push(.download)
+        case .importRule(let rule): pendingImportRule = rule
         }
     }
 
@@ -475,6 +484,7 @@ final class AppRouter {
 
     /// 在当前 Tab 内推入页面。
     func push(_ route: AppRoute) {
+        _ = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
         setPath(path(for: selectedDestination) + [route], for: selectedDestination)
     }
 
