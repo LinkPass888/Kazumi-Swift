@@ -293,7 +293,9 @@ struct BangumiInfoScreen: View {
         .onChange(of: navigationDepth) { _, newDepth in
             guard sourceNavigationRevision == router.externalNavigationRevision,
                   router.pendingExternalLink == nil,
-                  returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
+                  newDepth <= depthBeforePlayer else { return }
+            let reopenSources = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
+            guard returnToSourcesAfterPlayer || reopenSources else { return }
             returnToSourcesAfterPlayer = false
             isShowingSources = true
         }

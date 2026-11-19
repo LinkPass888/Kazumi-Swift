@@ -484,6 +484,7 @@ final class AppRouter {
 
     /// 在当前 Tab 内推入页面。
     func push(_ route: AppRoute) {
+        _ = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
         setPath(path(for: selectedDestination) + [route], for: selectedDestination)
     }
 

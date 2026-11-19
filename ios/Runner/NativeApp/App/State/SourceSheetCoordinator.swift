@@ -26,6 +26,19 @@ final class SourceSheetCoordinator {
     /// 空规则时点「去规则仓库添加」。
     private(set) var onOpenRuleShop: (() -> Void)?
 
+    /// 记录是否因播放失败退出播放器需要重新弹出来源面板
+    var shouldReopenSourcesOnReturn = false
+
+    func markFailedReturnToSources() {
+        shouldReopenSourcesOnReturn = true
+    }
+
+    func consumeShouldReopenSourcesOnReturn() -> Bool {
+        let value = shouldReopenSourcesOnReturn
+        shouldReopenSourcesOnReturn = false
+        return value
+    }
+
     private init() {}
 
     /// 交出控制器，由根层弹面板。
@@ -37,6 +50,7 @@ final class SourceSheetCoordinator {
         self.controller = controller
         self.onPlay = onPlay
         self.onOpenRuleShop = onOpenRuleShop
+        shouldReopenSourcesOnReturn = false
         isPresented = true
     }
 

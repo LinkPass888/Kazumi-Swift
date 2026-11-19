@@ -647,7 +647,9 @@ struct PopularHero: View {
         // 从播放页返回：把面板放回来。
         .onChange(of: navigationDepth) { _, newDepth in
             guard sourceNavigationRevision == router.externalNavigationRevision,
-                  returnToSourcesAfterPlayer, newDepth <= depthBeforePlayer else { return }
+                  newDepth <= depthBeforePlayer else { return }
+            let reopenSources = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
+            guard returnToSourcesAfterPlayer || reopenSources else { return }
             returnToSourcesAfterPlayer = false
             if let controller = sourceController { presentSources(controller) }
         }

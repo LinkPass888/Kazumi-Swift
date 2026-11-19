@@ -382,6 +382,7 @@ struct PlayerScreen: View {
                 Color.clear
                     .onAppear {
                         logLifecycleSnapshot("onAppear")
+                        SourceSheetCoordinator.shared.shouldReopenSourcesOnReturn = false
                         recordSafeAreaGeometry(size: proxy.size, insets: proxy.safeAreaInsets)
                         updateIdleTimer()
                     }
@@ -538,6 +539,14 @@ struct PlayerScreen: View {
         .onChange(of: controller?.phase) { _, phase in
             if phase == .ready {
                 scheduleControlsHide()
+                SourceSheetCoordinator.shared.shouldReopenSourcesOnReturn = false
+            } else if case .failed = phase {
+                SourceSheetCoordinator.shared.markFailedReturnToSources()
+            }
+        }
+        .onChange(of: surface.errorMessage) { _, error in
+            if error != nil {
+                SourceSheetCoordinator.shared.markFailedReturnToSources()
             }
         }
         .onChange(of: surface.isPlaying) { _, playing in
@@ -742,6 +751,9 @@ struct PlayerScreen: View {
             }
         }
         .onDisappear {
+            if isPlaybackFailed {
+                SourceSheetCoordinator.shared.markFailedReturnToSources()
+            }
             // A view lifecycle callback is not evidence of a deliberate return action.
             logLifecycleSnapshot("onDisappear.beforeCardClear")
             // 保留现有清理顺序。
@@ -863,6 +875,7 @@ struct PlayerScreen: View {
     /// 逻辑一行没改。
     private func bootstrapPlaybackIfNeeded() async {
         guard controller == nil else { return }
+        SourceSheetCoordinator.shared.shouldReopenSourcesOnReturn = false
         // 先把两个 store 取成局部常量：闭包会长期挂在 surface 上，
         // 这样试不会把整个 View（含 @Environment 包装器）一起捕获。
         let settingsStore = settings
@@ -1510,6 +1523,12 @@ struct PlayerScreen: View {
 
     private var controllerPhase: PlayerController.Phase {
         controller?.phase ?? .idle
+    }
+
+    private var isPlaybackFailed: Bool {
+        if case .failed = controller?.phase { return true }
+        if surface.errorMessage != nil { return true }
+        return false
     }
 
     private var controlsShown: Bool {
@@ -2255,6 +2274,9 @@ struct PlayerScreen: View {
         HStack(spacing: 6) {
             PlayerIconButton(hitSize: 44) {
                 logLifecycleSnapshot("returnButton.tapped")
+                if isPlaybackFailed {
+                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                }
                 dismiss()
             } content: {
                 Image(systemName: "chevron.left")
@@ -2950,11 +2972,19 @@ struct PlayerScreen: View {
                 .foregroundStyle(.white.opacity(0.9))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
-            Button("重新加载") {
-                surface.errorMessage = nil
-                Task { await controller.retry() }
+            HStack(spacing: 12) {
+                Button("重新加载") {
+                    surface.errorMessage = nil
+                    Task { await controller.retry() }
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("返回选源") {
+                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
         }
     }
 
@@ -4634,7 +4664,10 @@ struct PlayerScreen: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                Button("返回选源") { dismiss() }
+                Button("返回选源") {
+                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                    dismiss()
+                }
                     .buttonStyle(.bordered)
             }
         }
