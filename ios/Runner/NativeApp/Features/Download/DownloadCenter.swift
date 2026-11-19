@@ -378,6 +378,8 @@ final class DownloadCenter {
                     // 分片一起删：本地播放列表指向它们，留下就是垃圾。
                     try? FileManager.default.removeItem(at: folder.appending(path: file))
                 }
+                let danmakuURL = folder.appending(path: "ep-\(episode.number).danmaku.json")
+                try? FileManager.default.removeItem(at: danmakuURL)
                 removeSegments(in: folder, prefix: "ep-\(episode.number)", items: items)
             }
         }
@@ -574,6 +576,22 @@ final class DownloadCenter {
         }
         persist()
         KazumiLogBuffer.network("下载完成：第 \(item.episodeNumber) 集 \(size / 1024 / 1024) MB")
+
+        // 离线下载弹幕：保存弹幕到同一集目录下，离线/飞行模式下可直接加载
+        if record.bangumiID > 0 {
+            let episodeNum = item.episodeNumber
+            let bangumiID = record.bangumiID
+            Task.detached(priority: .utility) {
+                let result = await DanmakuAPI.fetch(bangumiID: bangumiID, episode: episodeNum)
+                if case .success(let comments) = result, !comments.isEmpty {
+                    let fileURL = folder.appending(path: "ep-\(episodeNum).danmaku.json")
+                    if let data = try? JSONEncoder().encode(comments) {
+                        try? data.write(to: fileURL, options: .atomic)
+                        KazumiLogBuffer.storage("离线弹幕下载成功：第 \(episodeNum) 集保存 \(comments.count) 条弹幕")
+                    }
+                }
+            }
+        }
     }
 
     /// 一集真正占了多少地方：本地播放列表 + 它的全部分片。

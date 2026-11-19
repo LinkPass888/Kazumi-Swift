@@ -694,6 +694,21 @@ final class PlayerController {
 
         let episode = currentEpisode
         let road = selectedRoad
+
+        // 1. 若本地存在离线下载弹幕文件，优先读取离线弹幕（断网/飞行模式 0 延迟秒开）
+        if let localVideo = localFile?(episode) {
+            let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
+            if FileManager.default.fileExists(atPath: danmakuURL.path),
+               let data = try? Data(contentsOf: danmakuURL),
+               let comments = try? JSONDecoder().decode([DanmakuComment].self, from: data),
+               !comments.isEmpty {
+                danmakuComments = comments
+                danmakuStatus = .ready
+                KazumiLogBuffer.player("已加载离线本地弹幕：\(comments.count) 条")
+                return
+            }
+        }
+
         let result = await DanmakuAPI.fetch(bangumiID: bangumiID, episode: episode)
         guard currentEpisode == episode, selectedRoad == road else { return }
         switch result {
@@ -701,6 +716,14 @@ final class PlayerController {
             danmakuComments = comments
             danmakuStatus = .ready
             KazumiLogBuffer.player("弹幕已加载：\(comments.count) 条")
+            // 若为已下载的离线视频且本地尚未存有弹幕文件，顺带落盘
+            if let localVideo = localFile?(episode) {
+                let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
+                if !FileManager.default.fileExists(atPath: danmakuURL.path),
+                   let data = try? JSONEncoder().encode(comments) {
+                    try? data.write(to: danmakuURL, options: .atomic)
+                }
+            }
         case .empty:
             danmakuComments = []
             danmakuStatus = .empty
@@ -735,6 +758,12 @@ final class PlayerController {
             danmakuComments = comments
             danmakuStatus = .ready
             danmakuMessage = String(localized: "已切换弹幕源")
+            if let localVideo = localFile?(episode) {
+                let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
+                if let data = try? JSONEncoder().encode(comments) {
+                    try? data.write(to: danmakuURL, options: .atomic)
+                }
+            }
             return .loaded(comments.count)
         } catch {
             guard currentEpisode == episode, selectedRoad == road else {

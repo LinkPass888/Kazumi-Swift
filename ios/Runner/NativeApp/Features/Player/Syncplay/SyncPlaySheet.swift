@@ -30,7 +30,7 @@ struct SyncPlaySheet: View {
                     connectForm
                 }
             }
-            .navigationTitle(syncplay.isConnected ? "房间 · \(syncplay.currentRoom)" : "一起看 (Syncplay)")
+            .navigationTitle(syncplay.isConnected ? "房间 · \(syncplay.currentRoom)" : "一起看")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

@@ -27,7 +27,7 @@ import os
 /// * mode 1：滚动（从右往左）
 /// * mode 4：底部固定
 /// * mode 5：顶部固定
-struct DanmakuComment: Identifiable, Hashable, Sendable {
+struct DanmakuComment: Identifiable, Hashable, Sendable, Codable {
     let id: Int
     let time: Double
     let mode: Int

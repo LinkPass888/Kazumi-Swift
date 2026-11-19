@@ -515,6 +515,11 @@ struct PlayerScreen: View {
                 surface.hudToastMessage = toast
             }
         }
+        .onChange(of: activeSheet) { _, sheet in
+            if sheet == .danmakuSettings {
+                surface.pause()
+            }
+        }
         .onChange(of: controller?.danmakuStatus) { _, status in
             switch status {
             case .unavailable, .failed:
@@ -2099,6 +2104,9 @@ struct PlayerScreen: View {
 
     private func openSheet(_ sheet: PlayerSheet) {
         showControls()
+        if sheet == .danmakuSettings {
+            surface.pause()
+        }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
             activeSheet = sheet
@@ -2724,6 +2732,20 @@ struct PlayerScreen: View {
         .accessibilityLabel(danmakuEnabled ? "关闭弹幕" : "打开弹幕")
     }
 
+    /// 全屏弹幕设置按钮（位于弹幕开关右侧）。
+    private var danmakuSettingsButton: some View {
+        PlayerIconButton(hitSize: toolbarHitSize) {
+            noteInteraction()
+            openSheet(.danmakuSettings)
+        } content: {
+            Image(uiImage: danmakuSettingsIcon)
+                .renderingMode(.template)
+                .playerIcon(pointSize: l2SymbolSize, weight: .medium)
+                .foregroundStyle(.white)
+        }
+        .accessibilityLabel("弹幕设置")
+    }
+
     private func handleDanmakuButton() {
         if danmakuEnabled {
             danmakuEnabled = false
@@ -2869,7 +2891,7 @@ struct PlayerScreen: View {
             SystemMenuButton.Item(
                 title: SyncplayManager.shared.isConnected
                     ? String(localized: "一起看 · 已连接 (\(SyncplayManager.shared.rttMs)ms)")
-                    : String(localized: "一起看 (Syncplay)"),
+                    : String(localized: "一起看"),
                 symbol: "person.2.wave.2"
             ) {
                 closeMenu()
@@ -3073,6 +3095,9 @@ struct PlayerScreen: View {
                     desktopVolumeControl
                 }
                 danmakuButton
+                if isFullscreen {
+                    danmakuSettingsButton
+                }
                 danmakuField
                     .frame(maxWidth: .infinity)
                 if showsInlineSuperResolution {
