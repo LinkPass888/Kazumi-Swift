@@ -1683,7 +1683,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel(isSurfaceLocked ? "解锁画面" : "锁定画面")
+        .accessibilityLabel(isSurfaceLocked ? String(localized: "解锁画面") : String(localized: "锁定画面"))
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 
@@ -1696,7 +1696,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel("截图")
+        .accessibilityLabel(String(localized: "截图"))
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 
@@ -1817,7 +1817,7 @@ struct PlayerScreen: View {
                     )
             )
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("快进")
+            .accessibilityLabel(String(localized: "快进"))
             .accessibilityHint(String(localized: "快进\(String(describing: settings.buttonSkipTime))秒，长按修改时间"))
             .accessibilityAddTraits(.isButton)
     }
@@ -2283,7 +2283,7 @@ struct PlayerScreen: View {
                     .playerIcon(pointSize: l2SymbolSize, weight: .semibold)
                     .foregroundStyle(.white)
             }
-            .accessibilityLabel("返回")
+            .accessibilityLabel(String(localized: "返回"))
 
             if isFullscreen {
                 let meta = nowPlayingMeta(controller)
@@ -2379,7 +2379,7 @@ struct PlayerScreen: View {
                 items: collectMenuItems,
                 title: nil,
                 symbol: collectSymbolName,
-                accessibilityLabel: "追番状态",
+                accessibilityLabel: String(localized: "追番状态"),
                 tint: .white,
                 symbolSize: l2SymbolSize,
                 symbolWeight: .medium,
@@ -2765,7 +2765,7 @@ struct PlayerScreen: View {
                 )
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel(danmakuEnabled ? "关闭弹幕" : "打开弹幕")
+        .accessibilityLabel(danmakuEnabled ? String(localized: "关闭弹幕") : String(localized: "打开弹幕"))
     }
 
     /// 全屏弹幕设置按钮（位于弹幕开关右侧）。
@@ -2779,7 +2779,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel("弹幕设置")
+        .accessibilityLabel(String(localized: "弹幕设置"))
     }
 
     private func handleDanmakuButton() {
@@ -2853,7 +2853,7 @@ struct PlayerScreen: View {
                 items: moreMenuItems,
                 title: nil,
                 symbol: "ellipsis",
-                accessibilityLabel: "更多选项",
+                accessibilityLabel: String(localized: "更多选项"),
                 tint: .white,
                 symbolSize: l2SymbolSize,
                 symbolWeight: .medium,
@@ -3267,7 +3267,7 @@ struct PlayerScreen: View {
                 .foregroundStyle(.white)
                 .contentTransition(.symbolEffect(.replace))
         }
-        .accessibilityLabel(surface.isPlaying ? "暂停" : "播放")
+        .accessibilityLabel(surface.isPlaying ? String(localized: "暂停") : String(localized: "播放"))
     }
 
     private var fullscreenButton: some View {
@@ -3280,7 +3280,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium, optical: .detailed)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel(isFullscreen ? "退出全屏" : "全屏")
+        .accessibilityLabel(isFullscreen ? String(localized: "退出全屏") : String(localized: "全屏"))
     }
 
     /// 下一集（L2 常驻工具栏层级）。
@@ -3296,7 +3296,7 @@ struct PlayerScreen: View {
                 .foregroundStyle(.white.opacity(hasNext ? 1 : 0.35))
         }
         .disabled(!hasNext)
-        .accessibilityLabel("下一集")
+        .accessibilityLabel(String(localized: "下一集"))
     }
 
     /// 超分辨率（纯白单色渲染，避免分层模式把星点染灰）。
@@ -3357,7 +3357,7 @@ struct PlayerScreen: View {
                 .playerIcon(pointSize: l2SymbolSize, weight: .medium)
                 .foregroundStyle(.white)
         }
-        .accessibilityLabel("选集")
+        .accessibilityLabel(String(localized: "选集"))
     }
 
     /// 全屏右侧选集抽屉（§7 G3）：
@@ -3553,7 +3553,7 @@ struct PlayerScreen: View {
         }
         .frame(height: height)
         .accessibilityElement()
-        .accessibilityLabel("播放进度")
+        .accessibilityLabel(String(localized: "播放进度"))
         .accessibilityValue(timeText(current))
     }
 
@@ -4945,7 +4945,7 @@ struct PlayerScreen: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(PlayerPressStyle())
-        .accessibilityLabel("下载剧集")
+        .accessibilityLabel(String(localized: "下载剧集"))
     }
 
     /// 选择态的三颗按钮：取消 / 全选（取消全选）/ 下载 N 集。
@@ -5103,7 +5103,7 @@ struct PlayerScreen: View {
                         .contentShape(Rectangle())
                 }
                 .disabled(isLoadingComments)
-                .accessibilityLabel("刷新评论")
+                .accessibilityLabel(String(localized: "刷新评论"))
             }
             .padding(.horizontal, 16)
             .frame(height: 44)
