@@ -2904,7 +2904,7 @@ struct PlayerScreen: View {
             },
             SystemMenuButton.Item(
                 title: SyncplayManager.shared.isConnected
-                    ? String(localized: "一起看 · 已连接 (\(SyncplayManager.shared.rttMs)ms)")
+                    ? String(localized: "一起看 · 已连接（\(SyncplayManager.shared.rttMs)ms）")
                     : String(localized: "一起看"),
                 symbol: "person.2.wave.2"
             ) {

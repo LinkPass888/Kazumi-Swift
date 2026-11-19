@@ -14764,7 +14764,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "暫無評論"
+            "value": "尚無留言"
           }
         }
       }
@@ -14784,7 +14784,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "支援標準 Syncplay 協定伺服端。可使用官方免註冊公共伺服器或自建節點。"
+            "value": "支援標準 Syncplay 協定伺服器。可使用官方免註冊公共伺服器或自建節點。"
           }
         }
       }
@@ -15055,6 +15055,106 @@
           "stringUnit": {
             "state": "translated",
             "value": "房間成員（%lld 人）"
+          }
+        }
+      }
+    },
+    "%@ 开始了播放": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 開始了播放"
+          }
+        }
+      }
+    },
+    "%@ 暂停了播放": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 暫停了播放"
+          }
+        }
+      }
+    },
+    "%@ 跳转到了 %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 跳轉到了 %@"
+          }
+        }
+      }
+    },
+    "服务器地址（如 publicserver.syncplay.pl:8999）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器位址（如 publicserver.syncplay.pl:8999）"
+          }
+        }
+      }
+    },
+    "我的昵称": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "我的暱稱"
+          }
+        }
+      }
+    },
+    "房间口令（可选）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "房間口令（可選）"
+          }
+        }
+      }
+    },
+    "一起看 · 已连接（%lldms）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一起看 · 已連接（%lldms）"
+          }
+        }
+      }
+    },
+    "一起看 · 已连接（%@ms）": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一起看 · 已連接（%@ms）"
+          }
+        }
+      }
+    },
+    "一起看 · 已连接 (%lldms)": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一起看 · 已連接 (%lldms)"
+          }
+        }
+      }
+    },
+    "确定清空「%@」分类的日志？": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確定清空「%@」分類的日誌？"
           }
         }
       }
