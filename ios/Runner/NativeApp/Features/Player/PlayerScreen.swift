@@ -241,6 +241,8 @@ struct PlayerScreen: View {
     @State private var activeSheet: PlayerSheet?
     /// 从「更多 → 弹幕检索」进来时先暂停；换完或取消，只要离开检索页就续播。
     @State private var resumesAfterDanmakuSearch = false
+    /// 从「弹幕设置」进来时若正在播放先暂停；关掉弹幕设置后自动续播。
+    @State private var resumesAfterDanmakuSettings = false
     /// 「播放信息」里点了媒体地址后的「已复制」提示，1.2 秒后自动收回。
     @State private var mediaURLCopied = false
     @State private var mediaURLCopiedTask: Task<Void, Never>?
@@ -441,9 +443,14 @@ struct PlayerScreen: View {
         .overlay { skipSecondsDialog }
         .sheet(item: $activeSheet, onDismiss: {
             scheduleControlsHide()
-            guard resumesAfterDanmakuSearch else { return }
-            resumesAfterDanmakuSearch = false
-            surface.play()
+            if resumesAfterDanmakuSearch {
+                resumesAfterDanmakuSearch = false
+                surface.play()
+            }
+            if resumesAfterDanmakuSettings {
+                resumesAfterDanmakuSettings = false
+                surface.play()
+            }
         }) { sheet in
             sheetContent(sheet)
         }
@@ -519,7 +526,10 @@ struct PlayerScreen: View {
         }
         .onChange(of: activeSheet) { _, sheet in
             if sheet == .danmakuSettings {
-                surface.pause()
+                if surface.isPlaying {
+                    resumesAfterDanmakuSettings = true
+                    surface.pause()
+                }
             }
         }
         .onChange(of: controller?.danmakuStatus) { _, status in
@@ -2122,7 +2132,12 @@ struct PlayerScreen: View {
     private func openSheet(_ sheet: PlayerSheet) {
         showControls()
         if sheet == .danmakuSettings {
-            surface.pause()
+            if surface.isPlaying {
+                resumesAfterDanmakuSettings = true
+                surface.pause()
+            } else {
+                resumesAfterDanmakuSettings = false
+            }
         }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
