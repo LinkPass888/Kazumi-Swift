@@ -383,6 +383,7 @@ struct PlayerScreen: View {
                     .onAppear {
                         logLifecycleSnapshot("onAppear")
                         recordSafeAreaGeometry(size: proxy.size, insets: proxy.safeAreaInsets)
+                        updateIdleTimer()
                     }
                     .onChange(of: proxy.safeAreaInsets) { _, insets in
                         recordSafeAreaGeometry(size: proxy.size, insets: insets)
@@ -551,7 +552,7 @@ struct PlayerScreen: View {
                 // 切后台那一拍我们刚 pause()，内核还会有一两个快照报「还在走」，
                 // 那不是用户的意思：只有在前台真的播起来，才算「用户亲手按的暂停」
                 // 作废。不然这一拍会把 pausedByBackground 洗掉，回前台就不续播了。
-                if surface.engine?.playerScene?.activationState == .foregroundActive { pausedByBackground = false }
+                if isForegroundActive { pausedByBackground = false }
                 // 起播那一刻立即写一次：不然要等到下一个 2 秒节拍，
                 // 万一这期间出事，控制中心一次都没写出去过。
                 syncNowPlaying()
@@ -602,6 +603,9 @@ struct PlayerScreen: View {
                 if nowPlayingTick % 8 == 0 {
                     syncNowPlaying()
                 }
+                if nowPlayingTick % 4 == 0 {
+                    updateIdleTimer()
+                }
                 if let target = skipPill.consumeSeekTarget() {
                     surface.seek(to: target)
                 }
@@ -617,9 +621,7 @@ struct PlayerScreen: View {
         // 保留现有 UIScene 通知订阅和处理顺序。
         // 回调标记仅表示收到通知，不表明其触发来源。
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didEnterBackgroundNotification)) { notification in
-            guard let scene = notification.object as? UIScene,
-                  let playerScene = surface.engine?.playerScene,
-                  scene === playerScene else { return }
+            guard sceneMatchesPlayer(notification.object as? UIScene) else { return }
             sceneIsActive = false
             logLifecycleSnapshot("UIScene.didEnterBackgroundNotification.received", scene: notification.object as? UIScene)
             // 进后台 / 锁屏一律放弃常亮；回前台且还在播再重新判断。
@@ -629,9 +631,7 @@ struct PlayerScreen: View {
             handleBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { notification in
-            guard let scene = notification.object as? UIScene,
-                  let playerScene = surface.engine?.playerScene,
-                  scene === playerScene else { return }
+            guard sceneMatchesPlayer(notification.object as? UIScene) else { return }
             sceneIsActive = true
             logLifecycleSnapshot("UIScene.didActivateNotification.received", scene: notification.object as? UIScene)
             updateIdleTimer()
@@ -932,12 +932,13 @@ struct PlayerScreen: View {
             // （真机日志里 `模式=AVAudioSessionModeMoviePlayback` 就是它盖的，LP 4993）。
             // 所以起播一稳定就立刻掰回 `.default`，不等 2 秒那一次轮询。
             PlayerAudioSession.shared.reapplyIfNeeded()
+            updateIdleTimer()
             if let ep = created?.currentEpisode, surface.duration > 0 {
                 SyncplayManager.shared.onLocalEpisode(title: "EP\(ep)", duration: surface.duration)
             }
             if settingsStore.backgroundAutoPiP,
                pictureInPicture?.hasOngoingPictureInPicture != true,
-               surface.engine?.playerScene?.activationState == .foregroundActive {
+               isForegroundActive {
                 makePictureInPictureController(settingsStore: settingsStore)
             }
         }
@@ -1061,12 +1062,9 @@ struct PlayerScreen: View {
                     backgroundPaused.wrappedValue = false
                     if !surface.isPlaying { surface.play() }
                 }
-                let active = surface.engine?.playerScene?.activationState == .foregroundActive
+                let active = isForegroundActive
                 playerSceneActive.wrappedValue = active
-                let keepAwake = surface.isPlaying && active
-                if UIApplication.shared.isIdleTimerDisabled != keepAwake {
-                    UIApplication.shared.isIdleTimerDisabled = keepAwake
-                }
+                updateIdleTimer()
             }
         }
         pip.onActiveChanged = { [weak surface] active in
@@ -2131,13 +2129,29 @@ struct PlayerScreen: View {
         PlayerAudioSession.shared.restore()
     }
 
+    private func sceneMatchesPlayer(_ scene: UIScene?) -> Bool {
+        guard let scene else { return false }
+        if let playerScene = surface.engine?.playerScene {
+            return scene === playerScene
+        }
+        return true
+    }
+
+    private var isForegroundActive: Bool {
+        if let scene = surface.engine?.playerScene {
+            return scene.activationState == .foregroundActive
+        }
+        return sceneIsActive && UIApplication.shared.applicationState != .background
+    }
+
     /// 屏幕常亮：只在「真的在播」且 App 在前台时开；暂停、缓冲、播完、退后台、离开播放器全部恢复默认，
     /// 免得暂停一晚上屏幕还亮着。锁手势不影响——那时内核照样在播，就照样常亮。
     private func updateIdleTimer() {
-        let active = surface.engine?.playerScene?.activationState == .foregroundActive
+        let active = isForegroundActive
         let keepAwake = surface.isPlaying && active
         if UIApplication.shared.isIdleTimerDisabled != keepAwake {
             UIApplication.shared.isIdleTimerDisabled = keepAwake
+            KazumiLogBuffer.player("屏幕常亮: keepAwake=\(keepAwake) (isPlaying=\(surface.isPlaying), active=\(active))")
         }
     }
 
