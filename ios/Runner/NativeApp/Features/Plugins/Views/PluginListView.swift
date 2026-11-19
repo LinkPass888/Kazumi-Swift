@@ -187,7 +187,7 @@ struct PluginListView: View {
                         row(plugin)
                             .listRowBackground(KazumiPalette.groupedRow(for: colorScheme))
                     }
-                    .onMove(perform: filter == .all ? move : nil)
+                    .onMove(perform: ruleFilter == .all ? move : nil)
                 } footer: {
                     Text(footerText)
                 }

@@ -26,6 +26,8 @@ final class PlayerSurfaceModel {
     private(set) var wantsPlaying = false
     /// 内核最后一次报的 pause。系统中断、退后台这些外部暂停走它，不是用户按的。
     private(set) var corePaused = false
+    /// 当前是否处于暂停状态（内核暂停或未在播放）。
+    var isPaused: Bool { corePaused || !isPlaying }
     /// 内核最后一次报的 idle：没暂停却没在走，就是缓冲被打空（underrun）。
     private(set) var coreIdle = false
     /// 正在缓冲 / 卡住：想播、没在播、内核也没被暂停。界面用它显示加载符号，

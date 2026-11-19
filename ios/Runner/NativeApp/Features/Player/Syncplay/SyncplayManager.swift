@@ -61,7 +61,7 @@ final class SyncplayManager {
         // 解析 host 和 port
         let host: String
         let port: Int
-        var raw = trimmedEndpoint
+        let raw = trimmedEndpoint
         if raw.contains("://") {
             if let u = URL(string: raw), let h = u.host {
                 host = h

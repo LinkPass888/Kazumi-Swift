@@ -116,9 +116,7 @@ struct AppRoot: View {
         )) {
             if let rule = environment.router.pendingImportRule {
                 PluginImportSheet(initialText: rule) { summary in
-                    for plugin in summary.plugins {
-                        _ = environment.plugins.save(plugin)
-                    }
+                    try? await environment.plugins.updatePlugins(summary.plugins)
                     environment.router.pendingImportRule = nil
                 }
             }

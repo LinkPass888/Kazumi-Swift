@@ -261,11 +261,11 @@ enum BangumiAPI {
         do {
             var components = URLComponents()
             components.path = BangumiEndpoints.mirrorPopularSubjects
-            var items: [URLQueryItem] = []
-            if !tag.isEmpty { items.append(URLQueryItem(name: "tag", value: tag)) }
-            items.append(URLQueryItem(name: "limit", value: "\(limit)"))
-            items.append(URLQueryItem(name: "offset", value: "\(offset)"))
-            components.queryItems = items
+            var queryItems: [URLQueryItem] = []
+            if !tag.isEmpty { queryItems.append(URLQueryItem(name: "tag", value: tag)) }
+            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+            queryItems.append(URLQueryItem(name: "offset", value: "\(offset)"))
+            components.queryItems = queryItems
             let path = components.string ?? BangumiEndpoints.mirrorPopularSubjects
             let json = try await get(BangumiEndpoints.mirrorDomain + path)
             let list = json.arrayValue ?? json["data"].arrayValue ?? []

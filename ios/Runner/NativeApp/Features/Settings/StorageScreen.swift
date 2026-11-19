@@ -237,16 +237,10 @@ struct StorageScreen: View {
     private func refreshSize() async {
         cacheBytes = await KazumiImageLoader.shared.diskSizeInBytes()
         airTimeCache = BangumiAirTimeService.shared.cacheDiagnostics()
-        let downloads = environment.downloads
-        let (bytes, episodes) = await Task.detached(priority: .utility) {
-            let total = downloads.totalBytes()
-            let count = downloads.records.reduce(0) {
-                $0 + $1.episodes.filter(\.isPlayableOffline).count
-            }
-            return (total, count)
-        }.value
-        offlineBytes = bytes
-        offlineEpisodes = episodes
+        offlineBytes = environment.downloads.totalBytes()
+        offlineEpisodes = environment.downloads.records.reduce(0) {
+            $0 + $1.episodes.filter(\.isPlayableOffline).count
+        }
         // 旧目录可能几百 MB，别在主线程上扫。
         legacyBytes = await Task.detached(priority: .utility) {
             AppEnvironment.legacyDownloadUsage()
