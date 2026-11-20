@@ -50,6 +50,10 @@ final class DownloadCenter {
     private var cancelledBeforeStart = Set<String>()
     /// 后台任务保活标识：有活跃下载时向系统申请后台时间窗，配合后台 URLSession 保障 HLS 分片调度与落盘。
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    /// 下载进度节流落盘时间戳：防止只存内存导致强杀 App 后重启显示旧进度。
+    private var lastProgressPersistUptime: TimeInterval = 0
+    /// 监听切出前台（如呼出多任务准备划掉 App），立即把最新下载进度刷入磁盘。
+    @ObservationIgnored private var resignActiveObserver: NSObjectProtocol?
 
     private struct QueueItem: Equatable, Sendable, Identifiable {
         var recordKey: String
@@ -63,6 +67,15 @@ final class DownloadCenter {
         self.plugins = plugins
         self.settings = settings
         load()
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.flushPersistIfDownloading()
+            }
+        }
     }
 
     // MARK: - 查询
@@ -652,6 +665,12 @@ final class DownloadCenter {
                 episode.progress = min(1, progress.fraction)
             }
         }
+        // 每 2 秒节流落盘一次进度，避免强杀 App 后重启回退到上次暂停/继续前的旧进度。
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastProgressPersistUptime >= 2.0 {
+            lastProgressPersistUptime = now
+            persist()
+        }
     }
 
     private func upsert(_ record: DownloadRecord) {
@@ -886,6 +905,24 @@ final class DownloadCenter {
 
     private var saveTask: Task<Void, Never>?
 
+    /// 切出前台 / 进入多任务视图时立即同步刷盘，确保强杀 App 前最新下载进度已写入 `downloads.json`。
+    private func flushPersistIfDownloading() {
+        guard activeEpisodeCount > 0 || saveTask != nil else { return }
+        saveTask?.cancel()
+        saveTask = nil
+        lastProgressPersistUptime = ProcessInfo.processInfo.systemUptime
+        writeSnapshot(records)
+    }
+
+    private func writeSnapshot(_ snapshot: [DownloadRecord]) {
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? FileManager.default.createDirectory(
+            at: Self.storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: Self.storeURL, options: .atomic)
+    }
+
     /// 落盘。进度回调很密，攒一下再写，别把主线程拖住。
     private func persist() {
         saveTask?.cancel()
@@ -893,12 +930,7 @@ final class DownloadCenter {
         saveTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? FileManager.default.createDirectory(
-                at: Self.storeURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? data.write(to: Self.storeURL, options: .atomic)
+            self.writeSnapshot(snapshot)
         }
     }
 }
