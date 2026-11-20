@@ -66,6 +66,7 @@ struct WebDAVScreen: View {
                 KazumiBanner(
                     title: banner.title,
                     detail: banner.detail,
+                    variant: banner.variant,
                     mode: banner.mode,
                     onDismiss: { withAnimation(.snappy) { self.banner = nil } }
                 )
