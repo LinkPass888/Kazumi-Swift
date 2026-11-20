@@ -160,10 +160,19 @@ struct WatchHistoryScreen: View {
     }
 
     private func openPlayer(for record: WatchRecord) {
+        let cachedSource: PlaybackSource? = {
+            guard let url = record.detailURL, !url.isEmpty, !record.sourceRuleName.isEmpty else { return nil }
+            return PlaybackSource(
+                pluginName: record.sourceRuleName,
+                itemName: record.bangumiName,
+                detailURL: url,
+                directMediaURL: MediaUtility.isMediaURL(url) ? url : nil
+            )
+        }()
         router.push(.player(
             bangumiID: record.bangumiID,
             episode: record.episodeNumber,
-            source: nil,
+            source: cachedSource,
             // 跟详情页「开始观看」一个口径：线路也接，越界整条作废（Ato 4849）。
             resumeRoad: record.roadIndex,
             resumeFromHistory: true,

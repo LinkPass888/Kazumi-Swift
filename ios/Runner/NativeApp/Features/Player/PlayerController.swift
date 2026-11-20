@@ -62,6 +62,8 @@ final class PlayerController {
     /// 当前播放会话内用户手动匹配过的弹弹play 番剧 ID 与分集列表，切集自动复用（U5）。
     private(set) var manualDanDanAnimeID: Int?
     private var manualDanDanEpisodes: [DanmakuEpisode] = []
+    /// 防止 U1 缓存直链失效回退后死循环重试。
+    private var didFallbackFromCachedSource = false
 
     let bangumiID: Int
     private(set) var source: PlaybackSource?
@@ -198,27 +200,62 @@ final class PlayerController {
         if episodes.isEmpty {
             phase = .resolvingChapters
             cancelToken = RuleCancelToken()
+            var activeSource = source
+            var activePlugin = plugin
+            var chapterError: Error?
+
             do {
                 let trace = try await engine.queryChapters(
-                    RuleExecutionConfig(plugin: plugin),
-                    source: source.detailURL,
+                    RuleExecutionConfig(plugin: activePlugin),
+                    source: activeSource.detailURL,
                     cancelToken: cancelToken
                 )
                 guard generation == startGeneration else { return }
                 roads = trace.roads
                 applyStartPoint(roads: trace.roads)
-                if episodes.isEmpty {
-                    isEpisodeIncomplete = false
-                    failed(String(localized: "该播放源没有解析到剧集"))
-                    return
-                }
             } catch {
+                chapterError = error
+            }
+
+            // U1 缓存直链失效（如站点换域名或旧链接 404）时，自动回退一次规则检索重建播放源。
+            if episodes.isEmpty, resumeFromHistory, !didFallbackFromCachedSource {
+                didFallbackFromCachedSource = true
+                let failedURL = activeSource.detailURL
+                self.source = nil
+                await resolveSourceFromHistory()
+                guard generation == startGeneration else { return }
+                if let refreshed = self.source,
+                   refreshed.detailURL != failedURL,
+                   let refreshedPlugin = plugins.plugin(named: refreshed.pluginName) {
+                    activeSource = refreshed
+                    activePlugin = refreshedPlugin
+                    chapterError = nil
+                    phase = .resolvingChapters
+                    cancelToken = RuleCancelToken()
+                    do {
+                        let trace = try await engine.queryChapters(
+                            RuleExecutionConfig(plugin: activePlugin),
+                            source: activeSource.detailURL,
+                            cancelToken: cancelToken
+                        )
+                        guard generation == startGeneration else { return }
+                        roads = trace.roads
+                        applyStartPoint(roads: trace.roads)
+                    } catch {
+                        chapterError = error
+                    }
+                } else {
+                    self.source = activeSource
+                }
+            }
+
+            if let error = chapterError, episodes.isEmpty {
                 guard generation == startGeneration else { return }
                 // 抓不到章节（片源挂了、地址变了）时，只要本地有这一集的文件，
                 // 照样能放——离线播放不能因为在线那头坏了就跟着废掉。
                 if let local = localFile?(currentEpisode) {
                     appendLog(String(localized: "解析剧集失败，改用本地文件：\(String(describing: error.localizedDescription))"))
-                    applyHeaders(plugin: plugin)
+                    applyHeaders(plugin: activePlugin)
                     playbackURL = local.absoluteString
                     // 在线列表拿不到：选集退回这份下载记录（Colo v3 第 9 条）。
                     applyOfflineEpisodeListIfNeeded()
@@ -230,6 +267,12 @@ final class PlayerController {
                 // 界面上说人话，原始原因写进运行日志。
                 appendLog(String(localized: "解析剧集失败：\(String(describing: error.localizedDescription))"))
                 failed(String(localized: "解析剧集失败，换条线路或换个源试试"))
+                return
+            }
+
+            if episodes.isEmpty {
+                isEpisodeIncomplete = false
+                failed(String(localized: "该播放源没有解析到剧集"))
                 return
             }
         }

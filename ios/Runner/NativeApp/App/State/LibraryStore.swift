@@ -142,6 +142,9 @@ struct WatchRecord: Identifiable, Codable, Hashable, Sendable {
     /// 集号 → 那一集的进度。键是 `String(episode)`，跟 main 的快照里
     /// `progresses` 的键一致，这样同一份 JSON 两边都能读。
     var progresses: [String: EpisodeProgress]
+    /// 仅「我的」页观看历史下方最近 3 部番剧的最新来源记录保留详情页地址，
+    /// 供续播跳过全源搜索秒进章节解析；其余记录自动裁剪为 nil（U1）。
+    var detailURL: String?
 
     init(
         bangumiID: Int,
@@ -152,7 +155,8 @@ struct WatchRecord: Identifiable, Codable, Hashable, Sendable {
         episodeNumber: Int,
         durationSeconds: Double,
         updatedAt: Date,
-        progresses: [String: EpisodeProgress] = [:]
+        progresses: [String: EpisodeProgress] = [:],
+        detailURL: String? = nil
     ) {
         self.bangumiID = bangumiID
         self.bangumiName = bangumiName
@@ -163,6 +167,7 @@ struct WatchRecord: Identifiable, Codable, Hashable, Sendable {
         self.durationSeconds = durationSeconds
         self.updatedAt = updatedAt
         self.progresses = progresses
+        self.detailURL = detailURL
     }
 
     /// 上次看的那一集走的是第几条线路；老数据没记就是第一条。
@@ -227,17 +232,20 @@ struct WatchRecord: Identifiable, Codable, Hashable, Sendable {
             )
         }
         progresses = map
+        detailURL = try container.decodeIfPresent(String.self, forKey: .detailURL)
     }
 
     private enum CodingKeys: String, CodingKey {
         case bangumiID, bangumiName, imageURL, sourceRuleName
         case episodeTitle, episodeNumber, durationSeconds, updatedAt, progresses
+        case detailURL
         /// 老格式平铺的两个字段，只为读；写出去的键里没有它们。
         case legacyProgressSeconds = "progressSeconds"
         case legacyRoadIndex = "roadIndex"
     }
 
-    /// 写出去的键跟合成实现完全一样（多出来的两个老格式键只进读、不进写）。
+    /// 写出去的键跟合成实现完全一样（多出来的两个老格式键只进读、不进写）；
+    /// `detailURL` 仅在非空时写出，保持旧格式兼容与体积精简。
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(bangumiID, forKey: .bangumiID)
@@ -249,6 +257,7 @@ struct WatchRecord: Identifiable, Codable, Hashable, Sendable {
         try container.encode(durationSeconds, forKey: .durationSeconds)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encode(progresses, forKey: .progresses)
+        try container.encodeIfPresent(detailURL, forKey: .detailURL)
     }
 }
 
@@ -350,12 +359,24 @@ final class LibraryStore {
         return picked
     }
 
+    /// 严格约束（U1）：只保留「我的」页观看历史下方最近 3 部番剧各自最新观看来源的 `detailURL`，
+    /// 其余记录（含前 3 部番剧的旧来源记录与第 4 部及以后记录）全部清空为 `nil`。
+    private func pruneRecentDetailURLs(limit: Int = 3) {
+        let keepIDs = Set(recentTopRecords(limit: limit).map(\.id))
+        for idx in history.indices {
+            if !keepIDs.contains(history[idx].id), history[idx].detailURL != nil {
+                history[idx].detailURL = nil
+            }
+        }
+    }
+
     /// 写一次播放进度（播放器唯一该用的入口）。
     ///
     /// 找到（或新建）「这条规则 + 这部番」那一份记录：
     /// * 这一集的进度按 `updatedAt` 比，新的才盖（换集重播时写回来的旧事件不盖掉新进度）；
     /// * 最后看的那一集、集数、集标题、时间、时长跟着这次写；
-    /// * 番剧名 / 封面只在还空着的时候填（Colo 3554：不拿空的把已有值冲掉）。
+    /// * 番剧名 / 封面只在还空着的时候填（Colo 3554：不拿空的把已有值冲掉）；
+    /// * `detailURL` 仅对「我的」页最近 3 部番剧的最新来源保留，其余自动裁剪。
     /// 老格式那部番在别的规则上留下的记录不受影响，也不删。
     func recordWatch(
         bangumiID: Int,
@@ -367,6 +388,7 @@ final class LibraryStore {
         road: Int,
         position: Double,
         duration: Double,
+        detailURL: String? = nil,
         at date: Date = Date()
     ) {
         let slot = String(episodeNumber)
@@ -414,6 +436,9 @@ final class LibraryStore {
         if record.imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !imageURL.isEmpty {
             record.imageURL = imageURL
         }
+        if let trimmedURL = detailURL?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmedURL.isEmpty {
+            record.detailURL = trimmedURL
+        }
         if let storedIndex {
             history[storedIndex] = record
         } else if let index = history.firstIndex(where: { $0.id == record.id }) {
@@ -421,6 +446,7 @@ final class LibraryStore {
         } else {
             history.insert(record, at: 0)
         }
+        pruneRecentDetailURLs(limit: 3)
         save(debounce: true)
     }
 
@@ -440,6 +466,7 @@ final class LibraryStore {
             // 展示层拿到的必须是一份干净的、ID 唯一的数据。
             entries = Self.deduplicated(snapshot.entries)
             history = Self.deduplicated(snapshot.history)
+            pruneRecentDetailURLs(limit: 3)
             removedEntries = snapshot.removedEntries ?? []
             KazumiLog.storage.info(
                 "Library: 载入 \(self.entries.count, privacy: .public) 条追番 / \(self.history.count, privacy: .public) 条历史"
@@ -520,6 +547,7 @@ final class LibraryStore {
         let previousWatching = watchingSignature
         self.entries = Self.deduplicated(entries)
         self.history = Self.deduplicated(history)
+        pruneRecentDetailURLs(limit: 3)
         if let removals {
             let collected = Set(self.entries.map(\.id))
             self.removedEntries = removals.filter { !collected.contains($0.id) }
@@ -613,6 +641,7 @@ final class LibraryStore {
         } else {
             history.insert(record, at: 0)
         }
+        pruneRecentDetailURLs(limit: 3)
         save()
     }
 
@@ -646,17 +675,20 @@ final class LibraryStore {
     /// 同一部番在别的规则下那份不该跟着走：用户删的是这一条来源的记录。
     func removeHistory(recordID: String) {
         history.removeAll { $0.id == recordID }
+        pruneRecentDetailURLs(limit: 3)
         save()
     }
 
     func removeHistory(recordIDs: Set<String>) {
         history.removeAll { recordIDs.contains($0.id) }
+        pruneRecentDetailURLs(limit: 3)
         save()
     }
 
     /// 删掉这部剧的全部记录（不分规则）。
     func removeHistory(bangumiID: Int) {
         history.removeAll { $0.bangumiID == bangumiID }
+        pruneRecentDetailURLs(limit: 3)
         save()
     }
 
@@ -709,6 +741,9 @@ final class LibraryStore {
     static func merged(_ lhs: WatchRecord, _ rhs: WatchRecord) -> WatchRecord {
         let (base, other) = lhs.updatedAt > rhs.updatedAt ? (lhs, rhs) : (rhs, lhs)
         var record = base
+        if (record.detailURL ?? "").isEmpty, let otherURL = other.detailURL, !otherURL.isEmpty {
+            record.detailURL = otherURL
+        }
         for (slot, progress) in other.progresses {
             guard let kept = record.progresses[slot] else {
                 record.progresses[slot] = progress
