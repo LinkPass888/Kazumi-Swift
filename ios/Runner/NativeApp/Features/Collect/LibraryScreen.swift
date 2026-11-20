@@ -39,6 +39,7 @@ struct LibraryScreen: View {
     @State private var pendingID: Int?
     /// 同步失败这类一句提示。样式与详情页那颗一致。
     @State private var toastMessage: String?
+    @State private var isSyncingBangumi = false
 
     /// 「更新时间」排序用的时刻表：进页先算好，比较器只查表。
     @State private var updateTimes: [Int: Date] = [:]
@@ -429,18 +430,47 @@ struct LibraryScreen: View {
     /// 进「账号与备份」。LP 2026-10-24：放在搜索按钮左边、和搜索一起靠右，
     /// 并且**不要主题色**——所以字和图标都用 `Color.primary`／`.secondary`，
     /// 不用 tint（层级写法会跟着 App 的 tint 上色，那是同一个坑）。
+    private var hasBangumiToken: Bool {
+        !settings.bangumiAccessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func performQuickSync() async {
+        guard hasBangumiToken else {
+            router.push(.syncBackup)
+            return
+        }
+        guard !isSyncingBangumi else { return }
+        isSyncingBangumi = true
+        defer { isSyncingBangumi = false }
+        do {
+            try await environment.bangumiSync.syncCollectibles(allowWhenAutoSyncDisabled: true) { _, _, _ in }
+            toastMessage = String(localized: "追番已同步")
+        } catch {
+            toastMessage = String(localized: "同步失败：\(error.localizedDescription)")
+        }
+    }
+
     private var syncButton: some View {
         Button {
-            router.push(.syncBackup)
+            if hasBangumiToken {
+                Task { await performQuickSync() }
+            } else {
+                router.push(.syncBackup)
+            }
         } label: {
             // 尺寸和搜索那颗同一套（Colo 2026-10-24）：图标 16 regular、和放大镜同号，
             // 字 subheadline semibold，图标与字间距 6，横内边距 12。
             // 颜色：不用主题色，图标和字都是默认标签色——两颗都靠右时靠字区分。
             HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(Color.primary)
-                Text("同步")
+                if isSyncingBangumi {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(Color.primary)
+                }
+                Text(isSyncingBangumi ? "同步中" : "同步")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
@@ -452,6 +482,14 @@ struct LibraryScreen: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isSyncingBangumi)
+        .contextMenu {
+            Button {
+                router.push(.syncBackup)
+            } label: {
+                Label("同步设置", systemImage: "icloud")
+            }
+        }
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel(Text("同步"))
     }
@@ -685,6 +723,10 @@ struct LibraryScreen: View {
                     .padding(.top, 16)
                     .padding(.bottom, 24)
                 }
+            }
+            .refreshable {
+                guard hasBangumiToken else { return }
+                await performQuickSync()
             }
             // 点空白处取消搜索的手势挪到 content 外层了（三个分支一起接）。
             .scrollIndicators(.hidden)

@@ -421,6 +421,16 @@ struct WebDAVScreen: View {
         }
         do {
             try await WebDAVClient(settings: settings).ping()
+            // U8：首次测试通过且总开关与三个内容开关仍全关时，自动开启同步与默认内容项。
+            if !settings.webDavEnable
+                && !settings.webDavEnableHistory
+                && !settings.webDavEnableCollect
+                && !settings.webDavEnableDanmakuShield {
+                settings.webDavEnable = true
+                settings.webDavEnableHistory = true
+                settings.webDavEnableCollect = true
+                settings.webDavEnableDanmakuShield = true
+            }
             withAnimation(.snappy) {
                 banner = KazumiBannerState(title: "连接正常", variant: .success, mode: .automatic)
             }

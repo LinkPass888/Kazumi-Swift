@@ -179,10 +179,14 @@ final class BangumiSyncEngine {
     // MARK: - 立即同步
 
     /// 全量同步：拉远端 → 比差异 → 按偏好双向写。进度用 (文案, 当前, 总数) 报出去。
+    /// `allowWhenAutoSyncDisabled` 为真时允许已绑定令牌的用户手动触发单次同步（U8）。
     func syncCollectibles(
+        allowWhenAutoSyncDisabled: Bool = false,
         onProgress: @escaping @Sendable @MainActor (String, Int, Int) -> Void
     ) async throws {
-        guard settings.bangumiSyncEnable else { throw BangumiSyncError.syncDisabled }
+        if !allowWhenAutoSyncDisabled {
+            guard settings.bangumiSyncEnable else { throw BangumiSyncError.syncDisabled }
+        }
         if !initialized { await ping() }
         if let lastError { throw BangumiSyncError.failed(lastError) }
 

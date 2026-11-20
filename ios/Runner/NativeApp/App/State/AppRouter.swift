@@ -377,6 +377,8 @@ final class AppRouter {
     private(set) var externalNavigationRevision: UInt = 0
     private(set) var externalModalDismissalRevision: UInt = 0
     private(set) var pendingExternalLink: KazumiLink?
+    /// U7：从搜索历史页选中关键词后回填至当前 SearchScreen 并 pop，避免多层套娃栈。
+    var pendingSearchKeyword: String?
     private(set) var externalRequestRevision: UInt = 0
     var isRootMounted = false
     /// Screenshot export can defer navigation without stopping or replacing the player.

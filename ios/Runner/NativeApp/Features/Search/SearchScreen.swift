@@ -163,10 +163,29 @@ struct SearchScreen: View {
                 submit(keyword)
             }
         }
+        .onAppear {
+            if let picked = router.pendingSearchKeyword {
+                router.pendingSearchKeyword = nil
+                input = picked
+                submit(picked)
+            }
+        }
+        .onChange(of: router.pendingSearchKeyword) { _, picked in
+            guard let picked else { return }
+            router.pendingSearchKeyword = nil
+            input = picked
+            submit(picked)
+        }
         .task {
             if !initialKeyword.isEmpty, input.isEmpty {
                 input = initialKeyword
                 submit(initialKeyword)
+            } else if initialKeyword.isEmpty, input.isEmpty, !hasSearched {
+                // U7：空搜索页进入时自动聚焦输入框拉起键盘。
+                try? await Task.sleep(for: .milliseconds(120))
+                if input.isEmpty, !hasSearched {
+                    isInputFocused = true
+                }
             }
         }
     }

@@ -36,31 +36,67 @@ final class RulesRepositoryStore {
     static let builtInURL = "https://raw.githubusercontent.com/Predidit/KazumiRules/main/index.json"
 
     private static let storageKey = "customRulesRepositories"
+    private static let activeURLKey = "activeCustomRulesRepositoryURL"
+    private static let builtInSentinel = "__builtin__"
 
     private(set) var custom: [RulesRepository]
+    /// 当前选中的自定义仓库 URL；nil 表示使用内置官方仓库（U8：支持不删自定义仓切回内置仓）。
+    private(set) var activeCustomURL: String?
 
     init() {
         // 只读 UserDefaults；@State 会在 MainActor 上建这个实例。
-        custom = Self.load()
+        let loaded = Self.load()
+        custom = loaded
+        if let stored = UserDefaults.standard.string(forKey: Self.activeURLKey) {
+            if stored == Self.builtInSentinel {
+                activeCustomURL = nil
+            } else if loaded.contains(where: { $0.url == stored }) {
+                activeCustomURL = stored
+            } else {
+                activeCustomURL = loaded.first?.url
+            }
+        } else {
+            activeCustomURL = loaded.first?.url
+        }
     }
 
-    /// 首次进面板时把列表第一条同步给规则目录那条链路。
+    /// 首次进面板时把当前生效仓库同步给规则目录那条链路。
     func activate() {
         syncActive()
     }
 
     /// 当前生效的自定义仓库；nil 就是走官方仓库。
-    var active: RulesRepository? { custom.first }
+    var active: RulesRepository? {
+        guard let activeCustomURL else { return nil }
+        return custom.first { $0.url == activeCustomURL }
+    }
+
+    /// 切换为内置官方仓库（保留所有自定义仓库配置不删除，U8）。
+    func selectBuiltIn() {
+        activeCustomURL = nil
+        persist()
+    }
+
+    /// 切换指定自定义仓库为当前生效仓库（U8）。
+    func select(_ repository: RulesRepository) {
+        guard custom.contains(where: { $0.url == repository.url }) else { return }
+        activeCustomURL = repository.url
+        persist()
+    }
 
     func add(_ repository: RulesRepository) {
-        // 新加的排最前：加完立刻生效，列表第一行也就是「正在用」的那条。
+        // 新加的排最前并设为当前生效仓。
         custom.removeAll { $0.url == repository.url }
         custom.insert(repository, at: 0)
+        activeCustomURL = repository.url
         persist()
     }
 
     func remove(_ repository: RulesRepository) {
         custom.removeAll { $0.id == repository.id }
+        if activeCustomURL == repository.url {
+            activeCustomURL = custom.first?.url
+        }
         persist()
     }
 
@@ -106,13 +142,14 @@ final class RulesRepositoryStore {
 
     private func persist() {
         syncActive()
+        UserDefaults.standard.set(activeCustomURL ?? Self.builtInSentinel, forKey: Self.activeURLKey)
         guard let data = try? JSONEncoder().encode(custom) else { return }
         UserDefaults.standard.set(data, forKey: Self.storageKey)
     }
 
-    /// 列表第一条写回 `customPluginShop`：规则目录那条链路读的是它。
+    /// 当前选中的仓库写回 `customPluginShop`：规则目录那条链路读的是它。
     private func syncActive() {
-        KazumiEndpoints.setCustomPluginShop(custom.first?.url)
+        KazumiEndpoints.setCustomPluginShop(active?.url)
     }
 
     private static func load() -> [RulesRepository] {

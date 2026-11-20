@@ -33,8 +33,10 @@ struct BangumiInfoScreen: View {
     @State private var toastMessage: String?
     /// 添加到时间表但番剧还没标成在看时，先弹确认。
     @State private var pendingTimelineItem: BangumiItem?
-    /// 刚才是从选源面板点进播放页的：返回时要记得把面板放回来。
+    /// 刚才是从选源面板去规则商店的：返回时要把面板放回来。
     @State private var returnToSourcesAfterPlayer = false
+    /// 本页刚刚推入过播放页：仅在此状态为真时才响应失败页的「返回选源」标记（U2 防跨页误弹）。
+    @State private var didPushPlayerFromHere = false
     /// 推播放页之前的栈深，用来判断已经退回详情页了。
     @State private var depthBeforePlayer = 0
     @State private var sourceNavigationRevision: UInt = 0
@@ -111,6 +113,7 @@ struct BangumiInfoScreen: View {
         }
         .onChange(of: router.externalNavigationRevision) { _, _ in
             returnToSourcesAfterPlayer = false
+            didPushPlayerFromHere = false
             pendingTimelineItem = nil
             controller?.closeSourceSearch()
         }
@@ -253,9 +256,11 @@ struct BangumiInfoScreen: View {
                 controller: current,
                 onPlay: { pluginName, result in
                     guard router.pendingExternalLink == nil else { return }
+                    SourceSheetCoordinator.shared.cacheController(current)
                     sourceNavigationRevision = router.externalNavigationRevision
                     isShowingSources = false
                     returnToSourcesAfterPlayer = false
+                    didPushPlayerFromHere = true
                     depthBeforePlayer = navigationDepth
                     // 从哪一集接着看：按「这部剧 + 这条规则名」查历史，记着第几集、
                     // 哪条线路就从哪里起（LP 4822 / 4844，跟 main 的 _initOnlineMode 一致）。
@@ -289,14 +294,17 @@ struct BangumiInfoScreen: View {
                 }
             )
         }
-        // 从播放页返回：把面板放回来。栈深回到推播放页之前就说明回来了。
+        // 从播放页或规则商店返回：仅在从规则商店返回，或播放失败页显式点「返回选源」时重弹面板。
         .onChange(of: navigationDepth) { _, newDepth in
             guard sourceNavigationRevision == router.externalNavigationRevision,
                   router.pendingExternalLink == nil,
                   newDepth <= depthBeforePlayer else { return }
-            let reopenSources = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
-            guard returnToSourcesAfterPlayer || reopenSources else { return }
+            let reopenSources = didPushPlayerFromHere
+                && SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn(for: bangumiID)
+            let shouldOpen = returnToSourcesAfterPlayer || reopenSources
             returnToSourcesAfterPlayer = false
+            didPushPlayerFromHere = false
+            guard shouldOpen else { return }
             isShowingSources = true
         }
         .confirmationDialog(
@@ -825,22 +833,66 @@ extension BangumiInfoScreen {
     }
 
     private var startPlayingButton: some View {
-        Button {
-            isShowingSources = true
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("开始观看")
-                    .font(.subheadline.weight(.semibold))
+        let latestRecord = library.record(for: bangumiID)
+        return HStack(spacing: 10) {
+            if let latestRecord, latestRecord.episodeNumber > 0 {
+                // 已有观看记录时主按钮升级为 1 键续播，旁留紧凑「换源」入口（U1）。
+                Button {
+                    isShowingSources = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("换源")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Capsule(style: .continuous).fill(.regularMaterial))
+                }
+                .buttonStyle(KazumiPressButtonStyle())
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                .accessibilityLabel("换源")
+
+                Button {
+                    continueWatching(latestRecord)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text(String(localized: "继续观看 · 第 \(latestRecord.episodeNumber) 集"))
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(KazumiPalette.onAccent(for: colorScheme))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(Capsule(style: .continuous).fill(KazumiPalette.accent(for: colorScheme)))
+                }
+                .buttonStyle(KazumiPressButtonStyle())
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+                .accessibilityLabel(String(localized: "继续观看第 \(latestRecord.episodeNumber) 集"))
+            } else {
+                Button {
+                    isShowingSources = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("开始观看")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(KazumiPalette.onAccent(for: colorScheme))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(Capsule(style: .continuous).fill(KazumiPalette.accent(for: colorScheme)))
+                }
+                .buttonStyle(KazumiPressButtonStyle())
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+                .accessibilityLabel("开始观看")
             }
-            .foregroundStyle(KazumiPalette.onAccent(for: colorScheme))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(Capsule(style: .continuous).fill(KazumiPalette.accent(for: colorScheme)))
         }
-        .buttonStyle(KazumiPressButtonStyle())
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { height in
@@ -849,7 +901,37 @@ extension BangumiInfoScreen {
         // 右下角：右 18、下 22，宽档窄档同一个位置（Colo 7725 §3.2）。
         .padding(.trailing, 18)
         .padding(.bottom, 22)
-        .accessibilityLabel("开始观看")
+    }
+
+    private func continueWatching(_ record: WatchRecord) {
+        guard router.pendingExternalLink == nil else { return }
+        if let current = controller {
+            SourceSheetCoordinator.shared.cacheController(current)
+        }
+        sourceNavigationRevision = router.externalNavigationRevision
+        returnToSourcesAfterPlayer = false
+        didPushPlayerFromHere = true
+        depthBeforePlayer = navigationDepth
+
+        let cachedSource: PlaybackSource? = {
+            guard let url = record.detailURL, !url.isEmpty, !record.sourceRuleName.isEmpty else { return nil }
+            return PlaybackSource(
+                pluginName: record.sourceRuleName,
+                itemName: record.bangumiName.isEmpty ? (controller?.item.displayName ?? "") : record.bangumiName,
+                detailURL: url,
+                directMediaURL: MediaUtility.isMediaURL(url) ? url : nil
+            )
+        }()
+        router.push(
+            .player(
+                bangumiID: bangumiID,
+                episode: record.episodeNumber,
+                source: cachedSource,
+                resumeRoad: record.roadIndex,
+                resumeFromHistory: true,
+                resumeRule: record.sourceRuleName
+            )
+        )
     }
 }
 

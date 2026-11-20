@@ -51,6 +51,7 @@ struct PluginShopView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var isLoading = false
+    @State private var isUpdatingAll = false
     @State private var busyItems: Set<String> = []
     @State private var errorMessage: String?
     @State private var toast: String?
@@ -181,6 +182,22 @@ struct PluginShopView: View {
         .navigationTitle("规则仓库")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
+            if selectedFilter == .update, plugins.updatablePluginCount > 0 {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await updateAllUpdatable() }
+                    } label: {
+                        if isUpdatingAll {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("更新全部")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                    .disabled(isUpdatingAll)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
                     RulesRepositoryScreen()
@@ -308,6 +325,25 @@ struct PluginShopView: View {
         }
         .frame(minHeight: 44)
         .animation(.smooth(duration: 0.32), value: isSearching)
+    }
+
+    /// U4：「可更新」筛选下直接一键更新全部已安装的可更新规则。
+    private func updateAllUpdatable() async {
+        guard !isUpdatingAll else { return }
+        isUpdatingAll = true
+        defer { isUpdatingAll = false }
+        do {
+            let result = try await plugins.tryUpdateAllPlugins()
+            if result.hasNoCandidates {
+                showToast(String(localized: "所有规则均已是最新版本"))
+            } else if result.failed == 0 {
+                showToast(String(localized: "已更新 \(result.updated) 条规则"))
+            } else {
+                showToast(String(localized: "已更新 \(result.updated) 条，失败 \(result.failed) 条"))
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func refresh(force: Bool) async {

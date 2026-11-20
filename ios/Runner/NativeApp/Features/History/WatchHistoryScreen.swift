@@ -13,6 +13,10 @@ struct WatchHistoryScreen: View {
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
     @State private var isConfirmingClear = false
+    @State private var isConfirmingBatchDelete = false
+    @State private var isSelecting = false
+    @State private var selectedIDs: Set<String> = []
+    @State private var searchText = ""
 
     private var records: [WatchRecord] {
         library.history
@@ -20,6 +24,15 @@ struct WatchHistoryScreen: View {
             // 已经写进本机存储的老记录在这里也被挡掉，不必等它自然过期。
             .filter { $0.progressSeconds > 0 || $0.durationSeconds > 0 }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var filteredRecords: [WatchRecord] {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return records }
+        return records.filter {
+            $0.bangumiName.localizedStandardContains(q)
+                || $0.sourceRuleName.localizedStandardContains(q)
+        }
     }
 
     var body: some View {
@@ -37,15 +50,18 @@ struct WatchHistoryScreen: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filteredRecords.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(records) { record in
+                        ForEach(filteredRecords) { record in
                             card(record)
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, isSelecting ? 84 : 24)
                     // 跟设置二级页同一套外壳（Ato 7332/7334）：限宽 700 居中，行内缩 16，行宽 668。
                     .frame(maxWidth: 700)
                     .frame(maxWidth: .infinity)
@@ -53,22 +69,67 @@ struct WatchHistoryScreen: View {
                 .scrollIndicators(.hidden)
                 // 顶部滚动边缘：渐进模糊（.soft）。
                 .scrollEdgeEffectStyle(.soft, for: .top)
+                .safeAreaInset(edge: .bottom) {
+                    if isSelecting {
+                        HStack(spacing: 12) {
+                            Button(selectedIDs.count == filteredRecords.count ? "取消全选" : "全选") {
+                                if selectedIDs.count == filteredRecords.count {
+                                    selectedIDs.removeAll()
+                                } else {
+                                    selectedIDs = Set(filteredRecords.map(\.id))
+                                }
+                            }
+                            .buttonStyle(.bordered)
+
+                            Spacer(minLength: 0)
+
+                            Button(role: .destructive) {
+                                isConfirmingBatchDelete = true
+                            } label: {
+                                Text(selectedIDs.isEmpty
+                                    ? String(localized: "删除所选")
+                                    : String(localized: "删除所选（\(selectedIDs.count)）"))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(selectedIDs.isEmpty)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: 700)
+                        .frame(maxWidth: .infinity)
+                        .background(.bar)
+                    }
+                }
             }
         }
         // Colo 3532：二级页统一用分组页底。
         .background(KazumiPalette.groupedBackground(for: colorScheme).ignoresSafeArea())
         .navigationTitle("观看历史")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "搜索番名或规则")
         .toolbar {
             if !records.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    // 删全部有二次确认兜着，这一颗不用删除红：跟返回按钮一样用系统的
-                    // 黑/白（Color.primary），也不跟主题色走。
                     Button {
-                        isConfirmingClear = true
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            isSelecting.toggle()
+                            selectedIDs.removeAll()
+                        }
                     } label: {
-                        Text("清空")
+                        Text(isSelecting ? "完成" : "选择")
                             .foregroundStyle(Color.primary)
+                    }
+                }
+                if !isSelecting {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        // 删全部有二次确认兜着，这一颗不用删除红：跟返回按钮一样用系统的
+                        // 黑/白（Color.primary），也不跟主题色走。
+                        Button {
+                            isConfirmingClear = true
+                        } label: {
+                            Text("清空")
+                                .foregroundStyle(Color.primary)
+                        }
                     }
                 }
             }
@@ -79,6 +140,18 @@ struct WatchHistoryScreen: View {
             }
             Button("取消", role: .cancel) {}
         }
+        .confirmationDialog(
+            String(localized: "确定删除选中的 \(selectedIDs.count) 条观看历史？"),
+            isPresented: $isConfirmingBatchDelete,
+            titleVisibility: .visible
+        ) {
+            Button("删除所选", role: .destructive) {
+                library.removeHistory(recordIDs: selectedIDs)
+                selectedIDs.removeAll()
+                isSelecting = false
+            }
+            Button("取消", role: .cancel) {}
+        }
         .task {
             KazumiImageLoader.shared.prefetch(library.history.map(\.imageURL))
             // 老记录的名字和封面是空的，读到就补一次（Colo 3566）。
@@ -86,20 +159,47 @@ struct WatchHistoryScreen: View {
         }
     }
 
+    private func openPlayer(for record: WatchRecord) {
+        let cachedSource: PlaybackSource? = {
+            guard let url = record.detailURL, !url.isEmpty, !record.sourceRuleName.isEmpty else { return nil }
+            return PlaybackSource(
+                pluginName: record.sourceRuleName,
+                itemName: record.bangumiName,
+                detailURL: url,
+                directMediaURL: MediaUtility.isMediaURL(url) ? url : nil
+            )
+        }()
+        router.push(.player(
+            bangumiID: record.bangumiID,
+            episode: record.episodeNumber,
+            source: cachedSource,
+            // 跟详情页「开始观看」一个口径：线路也接，越界整条作废（Ato 4849）。
+            resumeRoad: record.roadIndex,
+            resumeFromHistory: true,
+            // 按这张卡片这条规则的记录重建播放源，别按番剧号取最新那份（Fuck 4875）。
+            resumeRule: record.sourceRuleName
+        ))
+    }
+
     private func card(_ record: WatchRecord) -> some View {
-        Button {
-            router.push(.player(
-                bangumiID: record.bangumiID,
-                episode: record.episodeNumber,
-                source: nil,
-                // 跟详情页「开始观看」一个口径：线路也接，越界整条作废（Ato 4849）。
-                resumeRoad: record.roadIndex,
-                resumeFromHistory: true,
-                // 按这张卡片这条规则的记录重建播放源，别按番剧号取最新那份（Fuck 4875）。
-                resumeRule: record.sourceRuleName
-            ))
+        let isSelected = selectedIDs.contains(record.id)
+        return Button {
+            if isSelecting {
+                if isSelected {
+                    selectedIDs.remove(record.id)
+                } else {
+                    selectedIDs.insert(record.id)
+                }
+            } else {
+                openPlayer(for: record)
+            }
         } label: {
             HStack(spacing: 12) {
+                if isSelecting {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 20))
+                        .foregroundStyle(isSelected ? KazumiPalette.accent(for: colorScheme) : .secondary)
+                }
                 poster(record)
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -157,19 +257,13 @@ struct WatchHistoryScreen: View {
         .buttonStyle(.plain)
         .contextMenu {
             // 已看完的从头播，就不能再叫「继续观看」——名字要跟代码做的事一致。
-            Button(record.isFinished ? "重新观看" : "继续观看") {
-                router.push(.player(
-                bangumiID: record.bangumiID,
-                episode: record.episodeNumber,
-                source: nil,
-                // 跟详情页「开始观看」一个口径：线路也接，越界整条作废（Ato 4849）。
-                resumeRoad: record.roadIndex,
-                resumeFromHistory: true,
-                // 按这张卡片这条规则的记录重建播放源，别按番剧号取最新那份（Fuck 4875）。
-                resumeRule: record.sourceRuleName
-            ))
+            Button(record.isFinished ? "重新观看" : "继续观看", systemImage: "play.fill") {
+                openPlayer(for: record)
             }
-            Button("删除记录", role: .destructive) {
+            Button("查看番剧详情", systemImage: "info.circle") {
+                router.push(.bangumiInfo(bangumiID: record.bangumiID))
+            }
+            Button("删除记录", systemImage: "trash", role: .destructive) {
                 library.removeHistory(recordID: record.id)
             }
         }

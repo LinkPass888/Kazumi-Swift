@@ -91,8 +91,9 @@ struct ImageSearchScreen: View {
             photoSelection = nil
         }
         .onDisappear {
+            // U7：跳转搜索页返回时保留识别结果列表，不再在 onDisappear 清空；
+            // 页面真正销毁时 @State controller 会随视图生命周期自动释放。
             debounceTask?.cancel()
-            controller.clear()
         }
     }
 
@@ -591,7 +592,7 @@ struct ImageSearchScreen: View {
         }
     }
 
-    /// 采用新图片：清空上一次的识别结果，回到本地截图模式。
+    /// 采用新图片：清空上一次的识别结果，回到本地截图模式，并自动发起识别（U7）。
     private func adopt(_ picked: PickedImage) {
         debounceTask?.cancel()
         useURL = false
@@ -599,6 +600,9 @@ struct ImageSearchScreen: View {
         inputError = nil
         imageFile = picked
         controller.clear()
+        Task {
+            await controller.search(imageData: picked.jpegData)
+        }
     }
 
     /// 对应 _changeSource。
