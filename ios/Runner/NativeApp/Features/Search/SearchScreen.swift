@@ -16,6 +16,9 @@ struct SearchScreen: View {
     var zoomNamespace: Namespace.ID?
 
     @State private var controller = SearchController()
+    /// 绑定搜索页生命周期：只要还在搜索页会话内（进出以图搜番、看番剧详情）就保留识图结果；
+    /// 真正退出搜索页销毁时才自动清空 `ImageSearchSession`。
+    @State private var imageSearchLifetime = SearchSessionImageLifetime()
     @State private var input = ""
     @State private var submittedQuery: String?
     /// 点进搜索框时的原文；右上角取消只撤销这一轮编辑，不清结果、不退出页面。
@@ -181,8 +184,10 @@ struct SearchScreen: View {
                 input = initialKeyword
                 submit(initialKeyword)
             } else if initialKeyword.isEmpty, input.isEmpty, !hasSearched {
-                // U7：空搜索页进入时自动聚焦输入框拉起键盘。
-                try? await Task.sleep(for: .milliseconds(120))
+                // U7：等 NavigationStack 的 0.35s 横向推入转场彻底结束后再聚焦，
+                // 避免键盘被卷进推入转场从右侧拖入，改由系统正常从底部弹出。
+                try? await Task.sleep(for: .milliseconds(380))
+                guard !Task.isCancelled else { return }
                 if input.isEmpty, !hasSearched {
                     isInputFocused = true
                 }
@@ -576,3 +581,13 @@ struct SearchScreen: View {
     }
 }
 
+
+
+/// 搜索页退出导航栈被释放时自动清空以图搜番会话缓存（退以图搜番不清，退搜索页才清）。
+private final class SearchSessionImageLifetime {
+    deinit {
+        Task { @MainActor in
+            ImageSearchSession.shared.reset()
+        }
+    }
+}

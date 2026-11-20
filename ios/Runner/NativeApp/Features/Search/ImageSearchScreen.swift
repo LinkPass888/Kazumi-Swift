@@ -16,7 +16,7 @@ import UniformTypeIdentifiers
 /// 跨导航栈保留最近一次以图搜番的输入与识别结果：点选某条结果跳回搜索页后，
 /// 再次进入以图搜番（或返回）无需重新选图与二次识别（U7）。
 @MainActor
-private final class ImageSearchSession {
+final class ImageSearchSession {
     static let shared = ImageSearchSession()
 
     let controller = ImageSearchController()
@@ -24,6 +24,14 @@ private final class ImageSearchSession {
     var urlText = ""
     var previewURL = ""
     var imageFile: PickedImage?
+
+    func reset() {
+        controller.clear()
+        useURL = false
+        urlText = ""
+        previewURL = ""
+        imageFile = nil
+    }
 
     private init() {}
 }
@@ -628,6 +636,10 @@ struct ImageSearchScreen: View {
         previewURL = ""
         inputError = nil
         imageFile = picked
+        let session = ImageSearchSession.shared
+        session.useURL = false
+        session.previewURL = ""
+        session.imageFile = picked
         controller.clear()
         Task {
             await controller.search(imageData: picked.jpegData)
