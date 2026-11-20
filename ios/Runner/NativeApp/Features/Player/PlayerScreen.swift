@@ -549,14 +549,14 @@ struct PlayerScreen: View {
         .onChange(of: controller?.phase) { _, phase in
             if phase == .ready {
                 scheduleControlsHide()
-                SourceSheetCoordinator.shared.shouldReopenSourcesOnReturn = false
+                SourceSheetCoordinator.shared.clearFailedReturnToSources()
             } else if case .failed = phase {
-                SourceSheetCoordinator.shared.markFailedReturnToSources()
+                SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
             }
         }
         .onChange(of: surface.errorMessage) { _, error in
             if error != nil {
-                SourceSheetCoordinator.shared.markFailedReturnToSources()
+                SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
             }
         }
         .onChange(of: surface.isPlaying) { _, playing in
@@ -762,7 +762,7 @@ struct PlayerScreen: View {
         }
         .onDisappear {
             if isPlaybackFailed {
-                SourceSheetCoordinator.shared.markFailedReturnToSources()
+                SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
             }
             // A view lifecycle callback is not evidence of a deliberate return action.
             logLifecycleSnapshot("onDisappear.beforeCardClear")
@@ -857,6 +857,7 @@ struct PlayerScreen: View {
             NavigationStack {
                 DanmakuSourceSheet(
                     initialKeyword: danmakuInitialKeyword,
+                    currentEpisode: controller?.currentEpisode ?? episode,
                     onSelectEpisode: applyManualDanmaku
                 )
             }
@@ -2290,7 +2291,7 @@ struct PlayerScreen: View {
             PlayerIconButton(hitSize: 44) {
                 logLifecycleSnapshot("returnButton.tapped")
                 if isPlaybackFailed {
-                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                    SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
                 }
                 dismiss()
             } content: {
@@ -2824,11 +2825,19 @@ struct PlayerScreen: View {
         return source?.itemName ?? ""
     }
 
-    private func applyManualDanmaku(_ episode: DanmakuEpisode) async -> String? {
+    private func applyManualDanmaku(
+        _ episode: DanmakuEpisode,
+        animeID: Int,
+        animeEpisodes: [DanmakuEpisode]
+    ) async -> String? {
         guard let controller else {
             return String(localized: "播放器已关闭")
         }
-        switch await controller.loadDanmaku(episodeID: episode.episodeID) {
+        switch await controller.loadDanmaku(
+            episodeID: episode.episodeID,
+            animeID: animeID,
+            animeEpisodes: animeEpisodes
+        ) {
         case .loaded:
             danmakuEnabled = true
             return nil
@@ -2995,7 +3004,7 @@ struct PlayerScreen: View {
                 .buttonStyle(.borderedProminent)
 
                 Button("返回选源") {
-                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                    SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
                     dismiss()
                 }
                 .buttonStyle(.bordered)
@@ -4372,37 +4381,70 @@ struct PlayerScreen: View {
 
     private func wideDownloadButton(_ controller: PlayerController, accent: Color) -> some View {
         let hasEpisodes = !controller.episodes.isEmpty
-        return Button {
-            guard hasEpisodes else { return }
-            if detailTab != .episodes {
-                detailTab = .episodes
+        return Group {
+            if isChoosingDownloads {
+                Button {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isChoosingDownloads = false
+                        downloadSelection.removeAll()
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(String(localized: "结束多选"))
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(accent)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(Capsule(style: .continuous).fill(Color(.secondarySystemBackground)))
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlayerPressStyle())
+                .accessibilityLabel(String(localized: "结束多选"))
+            } else {
+                Menu {
+                    Button {
+                        guard hasEpisodes else { return }
+                        if detailTab != .episodes {
+                            detailTab = .episodes
+                        }
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            isChoosingDownloads = true
+                            downloadSelection.removeAll()
+                        }
+                    } label: {
+                        Label("选择剧集缓存", systemImage: "checklist")
+                    }
+                    .disabled(!hasEpisodes)
+
+                    Button {
+                        persistProgress(controller)
+                        environment.router.push(.download)
+                    } label: {
+                        Label("下载管理", systemImage: "arrow.down.circle")
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(String(localized: "缓存剧集"))
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(accent)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(Capsule(style: .continuous).fill(Color(.secondarySystemBackground)))
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel(String(localized: "下载剧集"))
             }
-            withAnimation(.easeOut(duration: 0.18)) {
-                isChoosingDownloads.toggle()
-                downloadSelection.removeAll()
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: isChoosingDownloads ? "arrow.down.circle.fill" : "arrow.down.circle")
-                    .font(.system(size: 13, weight: .semibold))
-                Text(isChoosingDownloads ? String(localized: "结束多选") : String(localized: "缓存剧集"))
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(accent)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-            )
-            .frame(height: 36)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
-        .disabled(!hasEpisodes)
-        .opacity(hasEpisodes ? 1 : 0.4)
-        .accessibilityLabel(String(localized: "下载剧集"))
     }
 
     /// 选集区（`episodeArea`）：
@@ -4637,31 +4679,58 @@ struct PlayerScreen: View {
     /// 选集区顶部下载切换按钮（胶囊高 `32pt`，触控高 `40pt ≥ 36pt`）。
     private func episodeDownloadHeaderButton(_ controller: PlayerController, accent: Color) -> some View {
         let hasEpisodes = !controller.episodes.isEmpty
-        return Button {
-            guard hasEpisodes else { return }
-            if detailTab != .episodes {
-                detailTab = .episodes
+        return Group {
+            if isChoosingDownloads {
+                Button {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isChoosingDownloads = false
+                        downloadSelection.removeAll()
+                    }
+                } label: {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(accent)
+                        .frame(width: 36, height: 32)
+                        .background(Capsule(style: .continuous).fill(Color(.secondarySystemBackground)))
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlayerPressStyle())
+                .accessibilityLabel(String(localized: "结束多选"))
+            } else {
+                Menu {
+                    Button {
+                        guard hasEpisodes else { return }
+                        if detailTab != .episodes {
+                            detailTab = .episodes
+                        }
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            isChoosingDownloads = true
+                            downloadSelection.removeAll()
+                        }
+                    } label: {
+                        Label("选择剧集缓存", systemImage: "checklist")
+                    }
+                    .disabled(!hasEpisodes)
+
+                    Button {
+                        persistProgress(controller)
+                        environment.router.push(.download)
+                    } label: {
+                        Label("下载管理", systemImage: "arrow.down.circle")
+                    }
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(accent)
+                        .frame(width: 36, height: 32)
+                        .background(Capsule(style: .continuous).fill(Color(.secondarySystemBackground)))
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel(String(localized: "下载剧集"))
             }
-            withAnimation(.easeOut(duration: 0.18)) {
-                isChoosingDownloads.toggle()
-                downloadSelection.removeAll()
-            }
-        } label: {
-            Image(systemName: isChoosingDownloads ? "arrow.down.circle.fill" : "arrow.down.circle")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(accent)
-                .frame(width: 36, height: 32)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color(.secondarySystemBackground))
-                )
-                .frame(width: 40, height: 40)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(PlayerPressStyle())
-        .disabled(!hasEpisodes)
-        .opacity(hasEpisodes ? 1 : 0.4)
-        .accessibilityLabel(String(localized: "下载剧集"))
     }
 
     /// 剧集没能加载时，这句话和「重试」就放在平时列剧集的位置（LP 3286 / Colo 3287）。
@@ -4680,7 +4749,7 @@ struct PlayerScreen: View {
                 .buttonStyle(.borderedProminent)
 
                 Button("返回选源") {
-                    SourceSheetCoordinator.shared.markFailedReturnToSources()
+                    SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
                     dismiss()
                 }
                     .buttonStyle(.bordered)
@@ -5042,9 +5111,18 @@ struct PlayerScreen: View {
         }
         guard !items.isEmpty else { return }
 
+        let cachedSubject = BangumiSubjectCache.shared.item(for: controller.bangumiID)
+        let libraryEntry = environment.library.entry(for: controller.bangumiID)
+        let historyRecord = environment.library.record(for: controller.bangumiID)
+        let resolvedTitle = [
+            cachedSubject?.displayName,
+            libraryEntry?.displayName,
+            historyRecord?.bangumiName,
+            controller.source?.itemName,
+        ].compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? ""
         environment.downloads.enqueue(
             bangumiID: controller.bangumiID,
-            title: controller.source?.itemName ?? "",
+            title: resolvedTitle,
             coverURL: "",
             pluginName: controller.effectivePluginName,
             road: roadIndex,
@@ -5052,6 +5130,7 @@ struct PlayerScreen: View {
             itemSource: controller.source?.detailURL ?? "",
             episodes: items
         )
+        surface.hudToastMessage = String(localized: "已加入下载队列（\(items.count) 集）")
         withAnimation(.easeOut(duration: 0.18)) {
             isChoosingDownloads = false
             downloadSelection.removeAll()
@@ -5373,9 +5452,12 @@ struct PlayerScreen: View {
         let infoController: InfoController
         if let existing = playerSourceController, existing.item.id == bangumiID {
             infoController = existing
+        } else if let shared = SourceSheetCoordinator.shared.cachedController(for: bangumiID) {
+            playerSourceController = shared
+            infoController = shared
         } else {
             let entry = environment.library.entry(for: bangumiID)
-            let item = BangumiSubjectCache.shared.memoryItem(for: bangumiID)
+            let item = BangumiSubjectCache.shared.item(for: bangumiID)
                 ?? BangumiItem(
                     id: bangumiID,
                     name: entry?.name ?? fallbackTitle,
@@ -5386,6 +5468,7 @@ struct PlayerScreen: View {
                created.episodes.isEmpty {
                 created.replaceEpisodes(cachedEpisodes)
             }
+            SourceSheetCoordinator.shared.cacheController(created)
             playerSourceController = created
             infoController = created
         }

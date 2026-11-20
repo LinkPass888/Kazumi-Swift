@@ -26,17 +26,58 @@ final class SourceSheetCoordinator {
     /// 空规则时点「去规则仓库添加」。
     private(set) var onOpenRuleShop: (() -> Void)?
 
-    /// 记录是否因播放失败退出播放器需要重新弹出来源面板
-    var shouldReopenSourcesOnReturn = false
+    /// 记录因播放失败主动点「返回选源」时需要重弹面板的番剧 ID（按 bangumiID 隔离，避免跨 Tab 误弹）。
+    private(set) var reopenSourcesBangumiID: Int?
 
-    func markFailedReturnToSources() {
-        shouldReopenSourcesOnReturn = true
+    /// 兼容属性：是否存在待重弹选源的标记。
+    var shouldReopenSourcesOnReturn: Bool {
+        get { reopenSourcesBangumiID != nil }
+        set { if !newValue { reopenSourcesBangumiID = nil } }
     }
 
+    /// 按 `bangumiID` 缓存最近使用过的 `InfoController`（含已搜结果与别名，U3）。
+    private var cachedControllers: [Int: InfoController] = [:]
+    private var cacheOrder: [Int] = []
+    private let maxCachedControllers = 5
+
+    func markFailedReturnToSources(bangumiID: Int) {
+        reopenSourcesBangumiID = bangumiID
+    }
+
+    func clearFailedReturnToSources() {
+        reopenSourcesBangumiID = nil
+    }
+
+    /// 仅当目标番剧 ID 匹配时消费重弹标记，防止非来源页或隐藏 Tab 误消费。
+    func consumeShouldReopenSourcesOnReturn(for bangumiID: Int) -> Bool {
+        guard reopenSourcesBangumiID == bangumiID else { return false }
+        reopenSourcesBangumiID = nil
+        return true
+    }
+
+    /// 外部跳转等场景统一清空重弹标记。
     func consumeShouldReopenSourcesOnReturn() -> Bool {
-        let value = shouldReopenSourcesOnReturn
-        shouldReopenSourcesOnReturn = false
+        let value = reopenSourcesBangumiID != nil
+        reopenSourcesBangumiID = nil
         return value
+    }
+
+    func cacheController(_ controller: InfoController) {
+        let id = controller.item.id
+        cachedControllers[id] = controller
+        cacheOrder.removeAll { $0 == id }
+        cacheOrder.append(id)
+        while cacheOrder.count > maxCachedControllers {
+            let evicted = cacheOrder.removeFirst()
+            cachedControllers.removeValue(forKey: evicted)
+        }
+    }
+
+    func cachedController(for bangumiID: Int) -> InfoController? {
+        guard let hit = cachedControllers[bangumiID] else { return nil }
+        cacheOrder.removeAll { $0 == bangumiID }
+        cacheOrder.append(bangumiID)
+        return hit
     }
 
     private init() {}
@@ -47,10 +88,11 @@ final class SourceSheetCoordinator {
         onPlay: @escaping (String, SearchItem) -> Void,
         onOpenRuleShop: @escaping () -> Void
     ) {
+        cacheController(controller)
         self.controller = controller
         self.onPlay = onPlay
         self.onOpenRuleShop = onOpenRuleShop
-        shouldReopenSourcesOnReturn = false
+        reopenSourcesBangumiID = nil
         isPresented = true
     }
 

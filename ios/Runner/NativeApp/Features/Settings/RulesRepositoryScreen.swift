@@ -254,28 +254,43 @@ struct RulesRepositoryScreen: View {
     // MARK: ② 内置仓库
 
     private var builtInSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let isActive = repositories.active == nil
+        return VStack(alignment: .leading, spacing: 8) {
             sectionHeader("内置仓库")
             VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    iconTile("shippingbox")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(RulesRepositoryStore.builtInName)
-                            .font(.body)
-                            .foregroundStyle(Color.primary)
-                            .lineLimit(2)
-                        Text("随 Kazumi 提供")
-                            .font(.caption)
-                            .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                Button {
+                    guard !isActive else { return }
+                    repositories.selectBuiltIn()
+                    Task { _ = try? await plugins.refreshPluginCatalog() }
+                } label: {
+                    HStack(spacing: 12) {
+                        iconTile("shippingbox")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(RulesRepositoryStore.builtInName)
+                                .font(.body)
+                                .foregroundStyle(Color.primary)
+                                .lineLimit(2)
+                            Text(isActive ? "当前生效 · 随 Kazumi 提供" : "随 Kazumi 提供（点按切换）")
+                                .font(.caption)
+                                .foregroundStyle(isActive ? accent : KazumiPalette.secondaryText(for: colorScheme))
+                        }
+                        Spacer(minLength: 0)
+                        if isActive {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(accent)
+                        } else {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                        }
                     }
-                    Spacer(minLength: 0)
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                    .frame(minHeight: 48)
+                    .padding(.horizontal, 16)
+                    .contentShape(Rectangle())
                 }
-                .frame(minHeight: 48)
-                .padding(.horizontal, 16)
-                .accessibilityHint("内置仓库不能删除")
+                .buttonStyle(.plain)
+                .accessibilityHint("内置仓库不能删除，点按可切换为当前生效仓库")
             }
             .background(groupBackground)
         }
@@ -319,22 +334,52 @@ struct RulesRepositoryScreen: View {
     }
 
     private func customRow(_ repository: RulesRepository) -> some View {
-        HStack(spacing: 12) {
-            iconTile("shippingbox")
-            VStack(alignment: .leading, spacing: 2) {
-                Text(repository.displayName)
-                    .font(.body)
-                    .foregroundStyle(Color.primary)
-                    .lineLimit(2)
-                Text(repository.url)
-                    .font(.caption)
-                    .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
-                    .lineLimit(1)
-                    // 长 URL 中间省略：保留域名与尾部文件名，不截掉协议头。
-                    .truncationMode(.middle)
+        let isActive = repositories.active?.url == repository.url
+        return HStack(spacing: 12) {
+            Button {
+                guard !isActive else { return }
+                repositories.select(repository)
+                Task { _ = try? await plugins.refreshPluginCatalog() }
+            } label: {
+                HStack(spacing: 12) {
+                    iconTile("shippingbox")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(repository.displayName)
+                                .font(.body)
+                                .foregroundStyle(Color.primary)
+                                .lineLimit(2)
+                            if isActive {
+                                Text("当前生效")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(accent)
+                            }
+                        }
+                        Text(repository.url)
+                            .font(.caption)
+                            .foregroundStyle(KazumiPalette.secondaryText(for: colorScheme))
+                            .lineLimit(1)
+                            // 长 URL 中间省略：保留域名与尾部文件名，不截掉协议头。
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 0)
+                    if isActive {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(accent)
+                    }
+                }
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 0)
+            .buttonStyle(.plain)
+
             Menu {
+                if !isActive {
+                    Button("设为当前仓库", systemImage: "checkmark.circle") {
+                        repositories.select(repository)
+                        Task { _ = try? await plugins.refreshPluginCatalog() }
+                    }
+                }
                 Button("移除", role: .destructive) {
                     pendingRemoval = repository
                 }
@@ -377,6 +422,10 @@ struct RulesRepositoryScreen: View {
             .font(.system(size: 18))
             .foregroundStyle(KazumiPalette.accent(for: colorScheme))
             .frame(width: 26, height: 26)
+    }
+
+    private var accent: Color {
+        KazumiPalette.accent(for: colorScheme)
     }
 
     private var groupBackground: some View {

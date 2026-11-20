@@ -16,6 +16,9 @@ struct SearchScreen: View {
     var zoomNamespace: Namespace.ID?
 
     @State private var controller = SearchController()
+    /// 绑定搜索页生命周期：只要还在搜索页会话内（进出以图搜番、看番剧详情）就保留识图结果；
+    /// 真正退出搜索页销毁时才自动清空 `ImageSearchSession`。
+    @State private var imageSearchLifetime = SearchSessionImageLifetime()
     @State private var input = ""
     @State private var submittedQuery: String?
     /// 点进搜索框时的原文；右上角取消只撤销这一轮编辑，不清结果、不退出页面。
@@ -26,6 +29,7 @@ struct SearchScreen: View {
     @State private var notShowWatched = UserDefaults.standard.bool(forKey: "kazumi.settings.searchNotShowWatched")
     @State private var notShowAbandoned = UserDefaults.standard.bool(forKey: "kazumi.settings.searchNotShowAbandoned")
     @FocusState private var isInputFocused: Bool
+    @State private var didAutoFocusOnAppear = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(AppRouter.self) private var router
@@ -114,7 +118,15 @@ struct SearchScreen: View {
             proxy.size
         } action: { size in
             // 量到 0 不覆盖上一帧（N4）。
-            if size.width > 0 { containerSize = size }
+            if size.width > 0 {
+                let firstLayout = containerSize.width == 0
+                containerSize = size
+                // 首帧布局刚挂出 searchField 立刻聚焦（0ms 延迟），让键盘与页面推入转场完全同步滑入。
+                if firstLayout, !didAutoFocusOnAppear, initialKeyword.isEmpty, input.isEmpty, !hasSearched {
+                    didAutoFocusOnAppear = true
+                    isInputFocused = true
+                }
+            }
         }
         // 顶部滚动边缘：渐进模糊（.soft）。
         .scrollEdgeEffectStyle(.soft, for: .top)
@@ -162,6 +174,22 @@ struct SearchScreen: View {
                 input = keyword
                 submit(keyword)
             }
+        }
+        .onAppear {
+            if let picked = router.pendingSearchKeyword {
+                router.pendingSearchKeyword = nil
+                input = picked
+                submit(picked)
+            } else if !didAutoFocusOnAppear, containerSize.width > 0, initialKeyword.isEmpty, input.isEmpty, !hasSearched {
+                didAutoFocusOnAppear = true
+                isInputFocused = true
+            }
+        }
+        .onChange(of: router.pendingSearchKeyword) { _, picked in
+            guard let picked else { return }
+            router.pendingSearchKeyword = nil
+            input = picked
+            submit(picked)
         }
         .task {
             if !initialKeyword.isEmpty, input.isEmpty {
@@ -557,3 +585,13 @@ struct SearchScreen: View {
     }
 }
 
+
+
+/// 搜索页退出导航栈被释放时自动清空以图搜番会话缓存（退以图搜番不清，退搜索页才清）。
+private final class SearchSessionImageLifetime {
+    deinit {
+        Task { @MainActor in
+            ImageSearchSession.shared.reset()
+        }
+    }
+}

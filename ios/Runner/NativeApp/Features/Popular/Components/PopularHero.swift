@@ -185,8 +185,9 @@ struct PopularHero: View {
     @State private var toastMessage: String?
     /// 选源面板的载体：与番剧详情页同一套（LP 2903 / Colo 2907）。
     @State private var sourceController: InfoController?
-    /// 刚才是从选源面板点进播放页的：返回时把面板放回来（Colo 3275）。
+    /// 刚才是从选源面板点进播放页的：仅在失败页显式点「返回选源」时放回来。
     @State private var returnToSourcesAfterPlayer = false
+    @State private var didPushPlayerFromHere = false
     @State private var depthBeforePlayer = 0
     /// 从空规则的空状态点「去规则仓库添加」：关面板、等关完再推页（LP 2026-10-28）。
     @State private var goToRuleShopAfterDismiss = false
@@ -629,6 +630,7 @@ struct PopularHero: View {
         // 这一页只负责交出控制器和两个回调。
         .onChange(of: router.externalNavigationRevision) { _, _ in
             returnToSourcesAfterPlayer = false
+            didPushPlayerFromHere = false
             returnFromRuleShop = false
             goToRuleShopAfterDismiss = false
             sourceController?.closeSourceSearch()
@@ -644,13 +646,17 @@ struct PopularHero: View {
                 router.push(.pluginShop)
             }
         }
-        // 从播放页返回：把面板放回来。
+        // 从播放页返回：仅当本页推入播放器且失败页显式点了「返回选源」时重弹面板。
         .onChange(of: navigationDepth) { _, newDepth in
             guard sourceNavigationRevision == router.externalNavigationRevision,
                   newDepth <= depthBeforePlayer else { return }
-            let reopenSources = SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn()
-            guard returnToSourcesAfterPlayer || reopenSources else { return }
+            let targetID = sourceController?.item.id
+            let reopenSources = didPushPlayerFromHere
+                && targetID.map { SourceSheetCoordinator.shared.consumeShouldReopenSourcesOnReturn(for: $0) } ?? false
+            let shouldOpen = returnToSourcesAfterPlayer || reopenSources
             returnToSourcesAfterPlayer = false
+            didPushPlayerFromHere = false
+            guard shouldOpen else { return }
             if let controller = sourceController { presentSources(controller) }
         }
         // 从规则仓库回来：规则装上了就把面板重开一次；还是空的就留在原地。
@@ -1143,6 +1149,7 @@ struct PopularHero: View {
                       router.pendingExternalLink == nil else { return }
                 SourceSheetCoordinator.shared.dismiss()
                 returnToSourcesAfterPlayer = false
+                didPushPlayerFromHere = true
                 depthBeforePlayer = navigationDepth
                 // 跟详情页「开始观看」一个口径：这部剧在这条规则上看到哪就从哪起。
                 let point = library.resumePoint(for: controller.item.id, pluginName: pluginName)

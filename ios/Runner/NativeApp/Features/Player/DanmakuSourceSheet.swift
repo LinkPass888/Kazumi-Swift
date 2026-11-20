@@ -7,7 +7,8 @@ import SwiftUI
 
 struct DanmakuSourceSheet: View {
     let initialKeyword: String
-    let onSelectEpisode: (DanmakuEpisode) async -> String?
+    let currentEpisode: Int
+    let onSelectEpisode: (DanmakuEpisode, Int, [DanmakuEpisode]) async -> String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var keyword: String
@@ -16,12 +17,15 @@ struct DanmakuSourceSheet: View {
     @State private var episodes: [DanmakuEpisode] = []
     @State private var loading = false
     @State private var errorMessage: String?
+    @State private var didAutoSearch = false
 
     init(
         initialKeyword: String,
-        onSelectEpisode: @escaping (DanmakuEpisode) async -> String?
+        currentEpisode: Int = 1,
+        onSelectEpisode: @escaping (DanmakuEpisode, Int, [DanmakuEpisode]) async -> String?
     ) {
         self.initialKeyword = initialKeyword
+        self.currentEpisode = max(1, currentEpisode)
         self.onSelectEpisode = onSelectEpisode
         _keyword = State(initialValue: initialKeyword)
     }
@@ -49,6 +53,13 @@ struct DanmakuSourceSheet: View {
             }
         }
         .disabled(loading)
+        .task {
+            // U5：弹窗打开时有预填词即自动发起检索，省去一次手动点「搜索」。
+            guard !didAutoSearch else { return }
+            didAutoSearch = true
+            guard !keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            await search()
+        }
     }
 
     private var searchContent: some View {
@@ -119,22 +130,45 @@ struct DanmakuSourceSheet: View {
                 errorLabel(errorMessage)
             }
 
-            List(episodes) { episode in
-                Button {
-                    Task { await select(episode) }
-                } label: {
-                    HStack {
-                        Text(episode.episodeTitle)
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "captions.bubble")
-                            .foregroundStyle(.secondary)
+            ScrollViewReader { proxy in
+                List(Array(episodes.enumerated()), id: \.element.id) { index, episode in
+                    let isCurrent = isCurrentEpisode(episode, index: index, animeID: anime.animeID)
+                    Button {
+                        Task { await select(episode, animeID: anime.animeID) }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(episode.episodeTitle)
+                                .foregroundStyle(isCurrent ? Color.accentColor : .primary)
+                                .fontWeight(isCurrent ? .semibold : .regular)
+                            if isCurrent {
+                                Text("当前集")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(Color.accentColor.opacity(0.14))
+                                    )
+                            }
+                            Spacer()
+                            Image(systemName: "captions.bubble")
+                                .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .id(episode.episodeID)
                 }
-                .buttonStyle(.plain)
+                .listStyle(.plain)
+                .task(id: episodes.count) {
+                    guard let targetID = matchedEpisodeID(for: anime.animeID) else { return }
+                    try? await Task.sleep(for: .milliseconds(60))
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(targetID, anchor: .center)
+                    }
+                }
             }
-            .listStyle(.plain)
         }
     }
 
@@ -184,10 +218,26 @@ struct DanmakuSourceSheet: View {
         }
     }
 
-    private func select(_ episode: DanmakuEpisode) async {
+    private func isCurrentEpisode(_ episode: DanmakuEpisode, index: Int, animeID: Int) -> Bool {
+        if let matched = matchedEpisodeID(for: animeID) {
+            return episode.episodeID == matched
+        }
+        return index + 1 == currentEpisode
+    }
+
+    private func matchedEpisodeID(for animeID: Int) -> Int? {
+        let standardID = animeID * 10_000 + currentEpisode
+        if episodes.contains(where: { $0.episodeID == standardID }) {
+            return standardID
+        }
+        let idx = currentEpisode - 1
+        return episodes.indices.contains(idx) ? episodes[idx].episodeID : nil
+    }
+
+    private func select(_ episode: DanmakuEpisode, animeID: Int) async {
         loading = true
         errorMessage = nil
-        if let failure = await onSelectEpisode(episode) {
+        if let failure = await onSelectEpisode(episode, animeID, episodes) {
             errorMessage = String(localized: "弹幕源切换失败：\(failure)")
             loading = false
         } else {

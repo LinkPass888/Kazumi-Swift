@@ -19,6 +19,7 @@
 
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -47,6 +48,12 @@ final class DownloadCenter {
     private var cancellationFlags: [String: CancellationFlag] = [:]
     /// 用户按过取消、还没轮到的那几集。
     private var cancelledBeforeStart = Set<String>()
+    /// 后台任务保活标识：有活跃下载时向系统申请后台时间窗，配合后台 URLSession 保障 HLS 分片调度与落盘。
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    /// 下载进度节流落盘时间戳：防止只存内存导致强杀 App 后重启显示旧进度。
+    private var lastProgressPersistUptime: TimeInterval = 0
+    /// 监听切出前台（如呼出多任务准备划掉 App），立即把最新下载进度刷入磁盘。
+    @ObservationIgnored private var resignActiveObserver: NSObjectProtocol?
 
     private struct QueueItem: Equatable, Sendable, Identifiable {
         var recordKey: String
@@ -60,6 +67,15 @@ final class DownloadCenter {
         self.plugins = plugins
         self.settings = settings
         load()
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.flushPersistIfDownloading()
+            }
+        }
     }
 
     // MARK: - 查询
@@ -457,14 +473,37 @@ final class DownloadCenter {
             cancellationFlags[item.id] = flag
             activeNumbers[item.recordKey, default: []].insert(item.episodeNumber)
             activeEpisodeCount += 1
+            beginBackgroundTaskIfNeeded()
 
             Task { [weak self] in
                 guard let self else { return }
                 await self.run(item: item, record: record, episode: episode, cancellation: flag)
                 self.activeEpisodeCount -= 1
                 self.pump()
+                if self.activeEpisodeCount == 0, self.queue.isEmpty {
+                    self.endBackgroundTaskIfNeeded()
+                }
             }
         }
+        if activeEpisodeCount == 0, queue.isEmpty {
+            endBackgroundTaskIfNeeded()
+        }
+    }
+
+    private func beginBackgroundTaskIfNeeded() {
+        guard backgroundTaskID == .invalid else { return }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "KazumiDownload") { [weak self] in
+            Task { @MainActor in
+                self?.endBackgroundTaskIfNeeded()
+            }
+        }
+    }
+
+    private func endBackgroundTaskIfNeeded() {
+        guard backgroundTaskID != .invalid else { return }
+        let id = backgroundTaskID
+        backgroundTaskID = .invalid
+        UIApplication.shared.endBackgroundTask(id)
     }
 
     private func run(
@@ -618,9 +657,19 @@ final class DownloadCenter {
         update(item, persistNow: false) { episode in
             guard episode.status == .downloading || episode.status == .resolving else { return }
             episode.status = .downloading
-            episode.downloadedBytes = progress.receivedBytes
+            if progress.receivedBytes > 0 || episode.downloadedBytes == 0 {
+                episode.downloadedBytes = progress.receivedBytes
+            }
             if progress.totalBytes > 0 { episode.totalBytes = progress.totalBytes }
-            episode.progress = progress.fraction < 0 ? 0 : min(1, progress.fraction)
+            if progress.fraction >= 0 {
+                episode.progress = min(1, progress.fraction)
+            }
+        }
+        // 每 2 秒节流落盘一次进度，避免强杀 App 后重启回退到上次暂停/继续前的旧进度。
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastProgressPersistUptime >= 2.0 {
+            lastProgressPersistUptime = now
+            persist()
         }
     }
 
@@ -762,12 +811,11 @@ final class DownloadCenter {
         guard let data = try? Data(contentsOf: Self.storeURL),
               let decoded = try? JSONDecoder().decode([DownloadRecord].self, from: data)
         else { return }
-        // 上次没跑完的：队列在内存里，重启就没了，一律退回暂停。
+        // 上次没跑完的：队列在内存里，重启就没了，一律退回暂停，但保留已下进度与已下字节。
         records = decoded.map { record in
             var mutable = record
             for index in mutable.episodes.indices where mutable.episodes[index].status.isActive {
                 mutable.episodes[index].status = .paused
-                mutable.episodes[index].progress = 0
             }
             return mutable
         }
@@ -857,6 +905,24 @@ final class DownloadCenter {
 
     private var saveTask: Task<Void, Never>?
 
+    /// 切出前台 / 进入多任务视图时立即同步刷盘，确保强杀 App 前最新下载进度已写入 `downloads.json`。
+    private func flushPersistIfDownloading() {
+        guard activeEpisodeCount > 0 || saveTask != nil else { return }
+        saveTask?.cancel()
+        saveTask = nil
+        lastProgressPersistUptime = ProcessInfo.processInfo.systemUptime
+        writeSnapshot(records)
+    }
+
+    private func writeSnapshot(_ snapshot: [DownloadRecord]) {
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? FileManager.default.createDirectory(
+            at: Self.storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: Self.storeURL, options: .atomic)
+    }
+
     /// 落盘。进度回调很密，攒一下再写，别把主线程拖住。
     private func persist() {
         saveTask?.cancel()
@@ -864,12 +930,7 @@ final class DownloadCenter {
         saveTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? FileManager.default.createDirectory(
-                at: Self.storeURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? data.write(to: Self.storeURL, options: .atomic)
+            self.writeSnapshot(snapshot)
         }
     }
 }

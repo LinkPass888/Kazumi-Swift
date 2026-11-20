@@ -79,6 +79,7 @@ struct BangumiSyncScreen: View {
                 KazumiBanner(
                     title: banner.title,
                     detail: banner.detail,
+                    variant: banner.variant,
                     mode: banner.mode,
                     onDismiss: { withAnimation(.snappy) { self.banner = nil } }
                 )
@@ -266,7 +267,7 @@ struct BangumiSyncScreen: View {
                     Text(action == .sync ? "正在同步…" : "立即同步追番")
                         .frame(maxWidth: .infinity)
                 }
-                .disabled(busy || !settings.bangumiSyncEnable || needsVerify)
+                .disabled(busy || !configured || needsVerify)
             }
             .disabled(!configured)
             .opacity(configured ? 1 : 0.45)
@@ -444,7 +445,7 @@ struct BangumiSyncScreen: View {
         Task {
             defer { action = nil }
             do {
-                try await engine.syncCollectibles { text, current, total in
+                try await engine.syncCollectibles(allowWhenAutoSyncDisabled: true) { text, current, total in
                     message = total > 0 ? "\(text) · \(current) / \(total)" : text
                     progress = total > 0 ? min(max(Double(current) / Double(total), 0), 1) : nil
                 }

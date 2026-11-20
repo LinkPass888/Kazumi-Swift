@@ -16,14 +16,45 @@
 
 import Foundation
 
-/// 线程安全的取消标记。下载循环在后台线程，用户在界面点取消，靠它传话。
+/// 线程安全的取消标记。下载循环在后台线程，用户在界面点取消，靠它立即传话并触发正在进行的任务取消。
 final class CancellationFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
+    private var handlers: [UUID: @Sendable () -> Void] = [:]
 
     func cancel() {
+        let callbacks: [@Sendable () -> Void]
         lock.lock()
         value = true
+        callbacks = Array(handlers.values)
+        handlers.removeAll()
+        lock.unlock()
+        for callback in callbacks {
+            callback()
+        }
+    }
+
+    /// 注册取消回调；若已取消则立刻触发。返回 token 供任务结束后注销。
+    @discardableResult
+    func addCancelHandler(_ handler: @escaping @Sendable () -> Void) -> UUID {
+        let token = UUID()
+        var fireImmediately = false
+        lock.lock()
+        if value {
+            fireImmediately = true
+        } else {
+            handlers[token] = handler
+        }
+        lock.unlock()
+        if fireImmediately {
+            handler()
+        }
+        return token
+    }
+
+    func removeCancelHandler(_ token: UUID) {
+        lock.lock()
+        handlers.removeValue(forKey: token)
         lock.unlock()
     }
 
@@ -235,16 +266,29 @@ final class DownloadEngine: @unchecked Sendable {
 
         // 分片并发下载。已经存在的分片直接跳过——断点续传靠这个。
         let total = plan.segmentURLs.count
-        // 盘上已有的分片（上次下到一半 / 续传）：先算进进度，但不让它们再被计一次。
-        // 之前两处都算，续传时同一个分片数了两遍，进度能到 198%（LP 5129）。
-        let existingNames = Set(plan.segmentFileNames.filter { name in
-            FileManager.default.fileExists(atPath: directory.appending(path: name).path)
-        })
+        // 盘上已有的分片（上次下到一半 / 续传）：既计入已完成片数，也累加真实已落盘字节数，
+        // 避免暂停再继续时已下载大小被清零重算。
+        var existingNames = Set<String>()
+        var receivedBytes: Int64 = 0
+        if let initName {
+            let initPath = directory.appending(path: initName).path
+            if let initSize = (try? FileManager.default.attributesOfItem(atPath: initPath)[.size] as? Int64), initSize > 0 {
+                receivedBytes += initSize
+            }
+        }
+        for name in plan.segmentFileNames {
+            let path = directory.appending(path: name).path
+            if FileManager.default.fileExists(atPath: path) {
+                existingNames.insert(name)
+                if let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64), size > 0 {
+                    receivedBytes += size
+                }
+            }
+        }
         var completed = existingNames.count
-        var receivedBytes = Int64(0)
         if !existingNames.isEmpty, total > 0 {
             onProgress(DownloadProgress(
-                receivedBytes: 0,
+                receivedBytes: receivedBytes,
                 totalBytes: 0,
                 fraction: Double(completed) / Double(total)
             ))
@@ -400,9 +444,8 @@ final class DownloadEngine: @unchecked Sendable {
         }
     }
 
-    /// 直接使用不带 completionHandler 的 `URLSessionDownloadTask` 并挂载 `task.delegate`：
-    /// Swift 标准库的 `session.download(for:delegate:)` 内部自建了完成回调包装器，只会转发 `URLSessionTaskDelegate`
-    /// 而不会转发 `URLSessionDownloadDelegate.didWriteData`，会导致直链 MP4 下载全程停在 0% 直至下完跳 100%。
+    /// 交给系统级后台 `URLSession`（`BackgroundDownloadSession.shared`）执行下载：
+    /// App 退后台或锁屏后由系统 `nsurlsessiond` 接管续传，并在会话级 delegate 里实时回传字节进度与保存续传数据。
     private func runDownloadTask(
         request: URLRequest,
         resumeData: Data?,
@@ -412,27 +455,15 @@ final class DownloadEngine: @unchecked Sendable {
         cancellation: CancellationFlag,
         onProgress: (@Sendable (DownloadProgress) -> Void)?
     ) async throws -> Int64 {
-        let currentSession = session
-        let task: URLSessionDownloadTask
-        if let resumeData, !resumeData.isEmpty {
-            task = currentSession.downloadTask(withResumeData: resumeData)
-        } else {
-            task = currentSession.downloadTask(with: request)
-        }
-        let sink = DownloadTaskSink(
-            targetURL: target,
+        try await BackgroundDownloadSession.shared.download(
+            request: request,
+            resumeData: resumeData,
             resumeSaveURL: resumeSaveURL,
+            targetURL: target,
             expectedBytes: expectedBytes,
-            onProgress: onProgress,
-            cancellation: cancellation
+            cancellation: cancellation,
+            onProgress: onProgress
         )
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                sink.start(task: task, continuation: continuation)
-            }
-        } onCancel: {
-            sink.cancelTask(task)
-        }
     }
 
     /// 分片下来直接写盘，不报进度（一集的总进度按片数算，由调用方汇总）。
@@ -498,65 +529,196 @@ final class DownloadEngine: @unchecked Sendable {
     private var session: URLSession { sessionProvider.session }
 }
 
-/// 接管单个 `URLSessionDownloadTask` 的实时字节进度、临时文件搬运与完成/续传回执。
-private final class DownloadTaskSink: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    private let targetURL: URL
-    private let resumeSaveURL: URL?
-    private let expectedBytes: Int64
-    private let onProgress: (@Sendable (DownloadProgress) -> Void)?
-    private let cancellation: CancellationFlag
+/// 全局后台下载会话：使用 `URLSessionConfiguration.background(withIdentifier:)` 与会话级 delegate，
+/// 让 iOS 在 App 退后台/锁屏后继续由 `nsurlsessiond` 持续拉取视频与分片，并在暂停时等续传数据落盘后再结束任务。
+final class BackgroundDownloadSession: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    static let identifier = "com.linkpass.kazumi.download.background"
+    static let shared = BackgroundDownloadSession()
+
+    private final class TaskEntry: @unchecked Sendable {
+        let task: URLSessionDownloadTask
+        let targetURL: URL
+        let resumeSaveURL: URL?
+        let expectedBytes: Int64
+        let onProgress: (@Sendable (DownloadProgress) -> Void)?
+        let cancellation: CancellationFlag
+        var cancelToken: UUID?
+        var continuation: CheckedContinuation<Int64, Error>?
+        var finishOutcome: Result<Int64, Error>?
+        var didRequestCancel = false
+        var waitingForResumeDataFlush = false
+        var didComplete = false
+        var pendingCompletionError: Error?
+        var lastReportedBytes: Int64 = 0
+        var lastReportedUptime: TimeInterval = 0
+
+        init(
+            task: URLSessionDownloadTask,
+            targetURL: URL,
+            resumeSaveURL: URL?,
+            expectedBytes: Int64,
+            onProgress: (@Sendable (DownloadProgress) -> Void)?,
+            cancellation: CancellationFlag
+        ) {
+            self.task = task
+            self.targetURL = targetURL
+            self.resumeSaveURL = resumeSaveURL
+            self.expectedBytes = expectedBytes
+            self.onProgress = onProgress
+            self.cancellation = cancellation
+        }
+    }
 
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Int64, Error>?
-    private var finishOutcome: Result<Int64, Error>?
-    private var didRequestCancel = false
-    private var lastReportedBytes: Int64 = 0
-    private var lastReportedUptime: TimeInterval = 0
+    private var entries: [Int: TaskEntry] = [:]
+    private var backgroundCompletionHandler: (() -> Void)?
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.background(withIdentifier: Self.identifier)
+        config.isDiscretionary = false
+        config.sessionSendsLaunchEvents = true
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 60 * 60
+        config.httpMaximumConnectionsPerHost = 10
+        KazumiNetworkPolicy.applyProxy(to: config)
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
 
-    init(
-        targetURL: URL,
-        resumeSaveURL: URL?,
-        expectedBytes: Int64,
-        onProgress: (@Sendable (DownloadProgress) -> Void)?,
-        cancellation: CancellationFlag
-    ) {
-        self.targetURL = targetURL
-        self.resumeSaveURL = resumeSaveURL
-        self.expectedBytes = expectedBytes
-        self.onProgress = onProgress
-        self.cancellation = cancellation
+    private override init() {
+        super.init()
     }
 
-    func start(task: URLSessionDownloadTask, continuation: CheckedContinuation<Int64, Error>) {
-        lock.lock()
-        self.continuation = continuation
-        lock.unlock()
-        task.delegate = self
-        if cancellation.isCancelled || Task.isCancelled {
-            cancelTask(task)
+    /// 供 `KazumiAppDelegate.application(_:handleEventsForBackgroundURLSession:completionHandler:)` 接入。
+    func handleBackgroundEvents(identifier: String, completionHandler: @escaping () -> Void) {
+        guard identifier == Self.identifier else {
+            completionHandler()
+            return
         }
-        task.resume()
+        lock.lock()
+        backgroundCompletionHandler = completionHandler
+        lock.unlock()
+        // 确保后台 session 已初始化并重新绑定代理以接收待投递事件。
+        _ = session
     }
 
-    func cancelTask(_ task: URLSessionDownloadTask) {
+    func download(
+        request: URLRequest,
+        resumeData: Data?,
+        resumeSaveURL: URL?,
+        targetURL: URL,
+        expectedBytes: Int64,
+        cancellation: CancellationFlag,
+        onProgress: (@Sendable (DownloadProgress) -> Void)?
+    ) async throws -> Int64 {
+        if cancellation.isCancelled || Task.isCancelled {
+            throw DownloadEngineError.cancelled
+        }
+
+        let task: URLSessionDownloadTask
+        if let resumeData, !resumeData.isEmpty {
+            task = session.downloadTask(withResumeData: resumeData)
+        } else {
+            task = session.downloadTask(with: request)
+        }
+
+        let entry = TaskEntry(
+            task: task,
+            targetURL: targetURL,
+            resumeSaveURL: resumeSaveURL,
+            expectedBytes: expectedBytes,
+            onProgress: onProgress,
+            cancellation: cancellation
+        )
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                entry.continuation = continuation
+                entries[task.taskIdentifier] = entry
+                lock.unlock()
+
+                let token = cancellation.addCancelHandler { [weak self] in
+                    self?.cancelEntry(taskID: task.taskIdentifier)
+                }
+                lock.lock()
+                entry.cancelToken = token
+                lock.unlock()
+
+                if cancellation.isCancelled || Task.isCancelled {
+                    cancelEntry(taskID: task.taskIdentifier)
+                } else {
+                    task.resume()
+                }
+            }
+        } onCancel: { [weak self] in
+            self?.cancelEntry(taskID: task.taskIdentifier)
+        }
+    }
+
+    private func cancelEntry(taskID: Int) {
+        let entry: TaskEntry?
+        var shouldSaveResume = false
         lock.lock()
-        let alreadyCancelling = didRequestCancel
-        didRequestCancel = true
+        entry = entries[taskID]
+        if let entry, !entry.didRequestCancel {
+            entry.didRequestCancel = true
+            shouldSaveResume = entry.resumeSaveURL != nil
+            if shouldSaveResume {
+                entry.waitingForResumeDataFlush = true
+            }
+        } else {
+            lock.unlock()
+            return
+        }
         lock.unlock()
-        guard !alreadyCancelling else { return }
-        if let saveURL = resumeSaveURL {
-            task.cancel { data in
+
+        guard let entry else { return }
+        if let saveURL = entry.resumeSaveURL, shouldSaveResume {
+            entry.task.cancel { [weak self] data in
                 if let data, !data.isEmpty {
                     try? data.write(to: saveURL, options: .atomic)
                 }
+                self?.markResumeDataFlushed(taskID: taskID)
             }
         } else {
-            task.cancel()
+            entry.task.cancel()
+        }
+    }
+
+    private func markResumeDataFlushed(taskID: Int) {
+        var toResume: CheckedContinuation<Int64, Error>?
+        var completionError: Error?
+        var finishOutcome: Result<Int64, Error>?
+        var wasCancelled = false
+        var cancelToken: UUID?
+        var cancellation: CancellationFlag?
+
+        lock.lock()
+        if let entry = entries[taskID] {
+            entry.waitingForResumeDataFlush = false
+            if entry.didComplete {
+                toResume = entry.continuation
+                entry.continuation = nil
+                completionError = entry.pendingCompletionError
+                finishOutcome = entry.finishOutcome
+                wasCancelled = entry.cancellation.isCancelled || entry.didRequestCancel
+                cancelToken = entry.cancelToken
+                cancellation = entry.cancellation
+                entries.removeValue(forKey: taskID)
+            }
+        }
+        lock.unlock()
+
+        if let cancelToken, let cancellation {
+            cancellation.removeCancelHandler(cancelToken)
+        }
+        if let toResume {
+            resumeContinuation(toResume, error: completionError, outcome: finishOutcome, wasCancelled: wasCancelled)
         }
     }
 
     private func resolveTotalBytes(
         task: URLSessionDownloadTask,
+        expectedBytes: Int64,
         expectedToWrite: Int64
     ) -> Int64 {
         if expectedToWrite > 0 { return expectedToWrite }
@@ -568,26 +730,30 @@ private final class DownloadTaskSink: NSObject, URLSessionDownloadDelegate, @unc
     }
 
     private func emitProgress(
-        task: URLSessionDownloadTask,
+        for entry: TaskEntry,
         written: Int64,
         expectedToWrite: Int64,
         force: Bool = false
     ) {
-        guard let onProgress else { return }
+        guard let onProgress = entry.onProgress else { return }
         let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
         let shouldReport = force
-            || lastReportedUptime == 0
-            || written - lastReportedBytes >= 256 * 1024
-            || now - lastReportedUptime >= 0.25
+            || entry.lastReportedUptime == 0
+            || written - entry.lastReportedBytes >= 256 * 1024
+            || now - entry.lastReportedUptime >= 0.25
         if shouldReport {
-            lastReportedBytes = written
-            lastReportedUptime = now
+            entry.lastReportedBytes = written
+            entry.lastReportedUptime = now
         }
         lock.unlock()
         guard shouldReport else { return }
 
-        let total = resolveTotalBytes(task: task, expectedToWrite: expectedToWrite)
+        let total = resolveTotalBytes(
+            task: entry.task,
+            expectedBytes: entry.expectedBytes,
+            expectedToWrite: expectedToWrite
+        )
         onProgress(DownloadProgress(
             receivedBytes: written,
             totalBytes: total,
@@ -595,84 +761,14 @@ private final class DownloadTaskSink: NSObject, URLSessionDownloadDelegate, @unc
         ))
     }
 
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didResumeAtOffset fileOffset: Int64,
-        expectedTotalBytes: Int64
+    private func resumeContinuation(
+        _ pending: CheckedContinuation<Int64, Error>,
+        error: Error?,
+        outcome: Result<Int64, Error>?,
+        wasCancelled: Bool
     ) {
-        if cancellation.isCancelled {
-            cancelTask(downloadTask)
-            return
-        }
-        emitProgress(
-            task: downloadTask,
-            written: fileOffset,
-            expectedToWrite: expectedTotalBytes,
-            force: true
-        )
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        if cancellation.isCancelled {
-            cancelTask(downloadTask)
-            return
-        }
-        emitProgress(
-            task: downloadTask,
-            written: totalBytesWritten,
-            expectedToWrite: totalBytesExpectedToWrite
-        )
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        if let http = downloadTask.response as? HTTPURLResponse,
-           !(200..<300).contains(http.statusCode) {
-            try? FileManager.default.removeItem(at: location)
-            lock.withLock { finishOutcome = .failure(DownloadEngineError.badStatus(http.statusCode)) }
-            return
-        }
-        if cancellation.isCancelled {
-            try? FileManager.default.removeItem(at: location)
-            lock.withLock { finishOutcome = .failure(DownloadEngineError.cancelled) }
-            return
-        }
-        let size = (try? FileManager.default.attributesOfItem(atPath: location.path)[.size] as? Int64) ?? 0
-        do {
-            try? FileManager.default.removeItem(at: targetURL)
-            try FileManager.default.moveItem(at: location, to: targetURL)
-            lock.withLock { finishOutcome = .success(size) }
-        } catch {
-            lock.withLock { finishOutcome = .failure(error) }
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: Error?
-    ) {
-        let pending: CheckedContinuation<Int64, Error>?
-        let outcome: Result<Int64, Error>?
-        lock.lock()
-        pending = continuation
-        continuation = nil
-        outcome = finishOutcome
-        lock.unlock()
-
-        guard let pending else { return }
         if let error {
-            if cancellation.isCancelled || (error as? URLError)?.code == .cancelled {
+            if wasCancelled || (error as? URLError)?.code == .cancelled {
                 pending.resume(throwing: DownloadEngineError.cancelled)
             } else {
                 pending.resume(throwing: error)
@@ -686,6 +782,133 @@ private final class DownloadTaskSink: NSObject, URLSessionDownloadDelegate, @unc
             pending.resume(throwing: moveError)
         case .none:
             pending.resume(throwing: URLError(.cannotWriteToFile))
+        }
+    }
+
+    // MARK: - URLSessionDownloadDelegate
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didResumeAtOffset fileOffset: Int64,
+        expectedTotalBytes: Int64
+    ) {
+        let entry = lock.withLock { entries[downloadTask.taskIdentifier] }
+        guard let entry else { return }
+        if entry.cancellation.isCancelled {
+            cancelEntry(taskID: downloadTask.taskIdentifier)
+            return
+        }
+        emitProgress(
+            for: entry,
+            written: fileOffset,
+            expectedToWrite: expectedTotalBytes,
+            force: true
+        )
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        let entry = lock.withLock { entries[downloadTask.taskIdentifier] }
+        guard let entry else { return }
+        if entry.cancellation.isCancelled {
+            cancelEntry(taskID: downloadTask.taskIdentifier)
+            return
+        }
+        emitProgress(
+            for: entry,
+            written: totalBytesWritten,
+            expectedToWrite: totalBytesExpectedToWrite
+        )
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        let entry = lock.withLock { entries[downloadTask.taskIdentifier] }
+        guard let entry else {
+            try? FileManager.default.removeItem(at: location)
+            return
+        }
+        if let http = downloadTask.response as? HTTPURLResponse,
+           !(200..<300).contains(http.statusCode) {
+            try? FileManager.default.removeItem(at: location)
+            lock.withLock { entry.finishOutcome = .failure(DownloadEngineError.badStatus(http.statusCode)) }
+            return
+        }
+        if entry.cancellation.isCancelled {
+            try? FileManager.default.removeItem(at: location)
+            lock.withLock { entry.finishOutcome = .failure(DownloadEngineError.cancelled) }
+            return
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: location.path)[.size] as? Int64) ?? 0
+        do {
+            try? FileManager.default.removeItem(at: entry.targetURL)
+            try FileManager.default.moveItem(at: location, to: entry.targetURL)
+            lock.withLock { entry.finishOutcome = .success(size) }
+        } catch {
+            lock.withLock { entry.finishOutcome = .failure(error) }
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        var toResume: CheckedContinuation<Int64, Error>?
+        var outcome: Result<Int64, Error>?
+        var wasCancelled = false
+        var cancelToken: UUID?
+        var cancellation: CancellationFlag?
+
+        lock.lock()
+        if let entry = entries[task.taskIdentifier] {
+            // 若因系统中断或网络错误附带了续传数据，顺手落盘避免丢进度。
+            if let saveURL = entry.resumeSaveURL,
+               let nsError = error as NSError?,
+               let extracted = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data,
+               !extracted.isEmpty {
+                try? extracted.write(to: saveURL, options: .atomic)
+            }
+            entry.didComplete = true
+            entry.pendingCompletionError = error
+            if !entry.waitingForResumeDataFlush {
+                toResume = entry.continuation
+                entry.continuation = nil
+                outcome = entry.finishOutcome
+                wasCancelled = entry.cancellation.isCancelled || entry.didRequestCancel
+                cancelToken = entry.cancelToken
+                cancellation = entry.cancellation
+                entries.removeValue(forKey: task.taskIdentifier)
+            }
+        }
+        lock.unlock()
+
+        if let cancelToken, let cancellation {
+            cancellation.removeCancelHandler(cancelToken)
+        }
+        if let toResume {
+            resumeContinuation(toResume, error: error, outcome: outcome, wasCancelled: wasCancelled)
+        }
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        let handler: (() -> Void)? = lock.withLock {
+            let current = backgroundCompletionHandler
+            backgroundCompletionHandler = nil
+            return current
+        }
+        guard let handler else { return }
+        DispatchQueue.main.async {
+            handler()
         }
     }
 }

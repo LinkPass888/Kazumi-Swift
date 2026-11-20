@@ -59,6 +59,11 @@ final class PlayerController {
     private(set) var danmakuComments: [DanmakuComment] = []
     private(set) var danmakuStatus: DanmakuStatus = .idle
     private(set) var danmakuMessage: String?
+    /// 当前播放会话内用户手动匹配过的弹弹play 番剧 ID 与分集列表，切集自动复用（U5）。
+    private(set) var manualDanDanAnimeID: Int?
+    private var manualDanDanEpisodes: [DanmakuEpisode] = []
+    /// 防止 U1 缓存直链失效回退后死循环重试。
+    private var didFallbackFromCachedSource = false
 
     let bangumiID: Int
     private(set) var source: PlaybackSource?
@@ -160,9 +165,6 @@ final class PlayerController {
             refreshEpisodeListInBackground()
             return
         }
-        // 提前并发拉取弹幕：集数已定，无须等待耗时数秒的网页嗅探与章节解析结束（P1 优化）
-        Task { await loadDanmaku() }
-
         // 先按历史里的规则名把播放源重建出来，再走正常的起播流程。
         if source == nil {
             await resolveSourceFromHistory()
@@ -195,27 +197,62 @@ final class PlayerController {
         if episodes.isEmpty {
             phase = .resolvingChapters
             cancelToken = RuleCancelToken()
+            var activeSource = source
+            var activePlugin = plugin
+            var chapterError: Error?
+
             do {
                 let trace = try await engine.queryChapters(
-                    RuleExecutionConfig(plugin: plugin),
-                    source: source.detailURL,
+                    RuleExecutionConfig(plugin: activePlugin),
+                    source: activeSource.detailURL,
                     cancelToken: cancelToken
                 )
                 guard generation == startGeneration else { return }
                 roads = trace.roads
                 applyStartPoint(roads: trace.roads)
-                if episodes.isEmpty {
-                    isEpisodeIncomplete = false
-                    failed(String(localized: "该播放源没有解析到剧集"))
-                    return
-                }
             } catch {
+                chapterError = error
+            }
+
+            // U1 缓存直链失效（如站点换域名或旧链接 404）时，自动回退一次规则检索重建播放源。
+            if episodes.isEmpty, resumeFromHistory, !didFallbackFromCachedSource {
+                didFallbackFromCachedSource = true
+                let failedURL = activeSource.detailURL
+                self.source = nil
+                await resolveSourceFromHistory()
+                guard generation == startGeneration else { return }
+                if let refreshed = self.source,
+                   refreshed.detailURL != failedURL,
+                   let refreshedPlugin = plugins.plugin(named: refreshed.pluginName) {
+                    activeSource = refreshed
+                    activePlugin = refreshedPlugin
+                    chapterError = nil
+                    phase = .resolvingChapters
+                    cancelToken = RuleCancelToken()
+                    do {
+                        let trace = try await engine.queryChapters(
+                            RuleExecutionConfig(plugin: activePlugin),
+                            source: activeSource.detailURL,
+                            cancelToken: cancelToken
+                        )
+                        guard generation == startGeneration else { return }
+                        roads = trace.roads
+                        applyStartPoint(roads: trace.roads)
+                    } catch {
+                        chapterError = error
+                    }
+                } else {
+                    self.source = activeSource
+                }
+            }
+
+            if let error = chapterError, episodes.isEmpty {
                 guard generation == startGeneration else { return }
                 // 抓不到章节（片源挂了、地址变了）时，只要本地有这一集的文件，
                 // 照样能放——离线播放不能因为在线那头坏了就跟着废掉。
                 if let local = localFile?(currentEpisode) {
                     appendLog(String(localized: "解析剧集失败，改用本地文件：\(String(describing: error.localizedDescription))"))
-                    applyHeaders(plugin: plugin)
+                    applyHeaders(plugin: activePlugin)
                     playbackURL = local.absoluteString
                     // 在线列表拿不到：选集退回这份下载记录（Colo v3 第 9 条）。
                     applyOfflineEpisodeListIfNeeded()
@@ -227,6 +264,12 @@ final class PlayerController {
                 // 界面上说人话，原始原因写进运行日志。
                 appendLog(String(localized: "解析剧集失败：\(String(describing: error.localizedDescription))"))
                 failed(String(localized: "解析剧集失败，换条线路或换个源试试"))
+                return
+            }
+
+            if episodes.isEmpty {
+                isEpisodeIncomplete = false
+                failed(String(localized: "该播放源没有解析到剧集"))
                 return
             }
         }
@@ -252,6 +295,8 @@ final class PlayerController {
             return
         }
         phase = .parsingMedia
+        // 章节与目标集均已确认有效，与网页嗅探并行拉取弹幕（既不拖首帧，也不在无源/章节失败时浪费配额）。
+        Task { await loadDanmaku() }
         startParseWatchdog()
         // 登录态交给解析页（LP 5450）：页面里那一步拿地址要登录，
         // 这个 WebView 原先是一次性会话，Cookie 到不了，就一直卡在解析。
@@ -686,7 +731,8 @@ final class PlayerController {
 
     /// 对应 PlayerDanmakuController.fetchDanmaku：按 Bangumi id + 集数取弹幕。
     func loadDanmaku() async {
-        guard danmakuStatus != .loading else { return }
+        // 同一集已加载完成或正在加载时直接跳过，避免 start() 与 handleParsedMedia 重复请求消耗双倍配额。
+        guard danmakuStatus == .idle || danmakuStatus == .failed else { return }
         danmakuStatus = .loading
         danmakuMessage = nil
 
@@ -703,6 +749,38 @@ final class PlayerController {
                 danmakuComments = comments
                 danmakuStatus = .ready
                 KazumiLogBuffer.player("已加载离线本地弹幕：\(comments.count) 条")
+                return
+            }
+        }
+
+        // U5：若本场会话内已手动匹配过弹弹play 番剧，切集时直接复用该 `manualDanDanAnimeID`。
+        if let manualAnimeID = manualDanDanAnimeID {
+            let resolvedEpisodeID = resolveManualDanmakuEpisodeID(animeID: manualAnimeID, episode: episode)
+            do {
+                let comments = try await DanmakuAPI.comments(episodeID: String(resolvedEpisodeID))
+                guard currentEpisode == episode, selectedRoad == road else { return }
+                if comments.isEmpty {
+                    danmakuComments = []
+                    danmakuStatus = .empty
+                    danmakuMessage = String(localized: "本集暂无弹幕；需要时可手动检索")
+                } else {
+                    danmakuComments = comments
+                    danmakuStatus = .ready
+                    KazumiLogBuffer.player("已复用手动匹配的弹幕源：\(comments.count) 条")
+                    if let localVideo = localFile?(episode) {
+                        let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
+                        if !FileManager.default.fileExists(atPath: danmakuURL.path),
+                           let data = try? JSONEncoder().encode(comments) {
+                            try? data.write(to: danmakuURL, options: .atomic)
+                        }
+                    }
+                }
+                return
+            } catch {
+                guard currentEpisode == episode, selectedRoad == road else { return }
+                danmakuComments = []
+                danmakuStatus = .failed
+                danmakuMessage = String(localized: "弹幕加载失败：\(error.localizedDescription)，已关闭弹幕；再次打开可手动检索")
                 return
             }
         }
@@ -737,7 +815,15 @@ final class PlayerController {
         }
     }
 
-    func loadDanmaku(episodeID: Int) async -> DanmakuManualResult {
+    func loadDanmaku(
+        episodeID: Int,
+        animeID: Int? = nil,
+        animeEpisodes: [DanmakuEpisode] = []
+    ) async -> DanmakuManualResult {
+        if let animeID, animeID > 0 {
+            manualDanDanAnimeID = animeID
+            manualDanDanEpisodes = animeEpisodes
+        }
         let episode = currentEpisode
         let road = selectedRoad
         danmakuStatus = .loading
@@ -778,6 +864,18 @@ final class PlayerController {
     private func resetSkipSegments() {
         skipSegments = .empty
         skipSegmentsURL = nil
+    }
+
+    private func resolveManualDanmakuEpisodeID(animeID: Int, episode: Int) -> Int {
+        let standardID = animeID * 10_000 + episode
+        if manualDanDanEpisodes.contains(where: { $0.episodeID == standardID }) {
+            return standardID
+        }
+        let index = episode - 1
+        if manualDanDanEpisodes.indices.contains(index) {
+            return manualDanDanEpisodes[index].episodeID
+        }
+        return standardID
     }
 
     private func resetDanmaku() {

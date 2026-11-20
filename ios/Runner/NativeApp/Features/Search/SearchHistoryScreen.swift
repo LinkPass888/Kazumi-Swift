@@ -64,7 +64,8 @@ struct SearchHistoryScreen: View {
 
     private func row(_ keyword: String) -> some View {
         Button {
-            router.push(.search(keyword: keyword))
+            router.pendingSearchKeyword = keyword
+            dismiss()
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "clock")

@@ -216,6 +216,10 @@ struct PluginListView: View {
         // Colo 7611：这一屏原来只有一层自绘实色，没有 .soft。撤掉实色要补上 .soft，
         // 否则滚起来「規則倉庫」「新增規則」又从大标题底下透上来。
         .scrollEdgeEffectStyle(.soft, for: .top)
+        .task {
+            // U4：进入规则管理页自动静默刷新目录，避免「更新全部」因未进过仓库而一直置灰。
+            _ = try? await plugins.ensurePluginCatalog()
+        }
         .toolbar { toolbarContent }
         .navigationDestination(isPresented: Binding(
             get: { selectedRule != nil },
