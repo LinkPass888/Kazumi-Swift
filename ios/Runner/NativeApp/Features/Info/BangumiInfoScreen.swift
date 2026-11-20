@@ -913,20 +913,11 @@ extension BangumiInfoScreen {
         didPushPlayerFromHere = true
         depthBeforePlayer = navigationDepth
 
-        let cachedSource: PlaybackSource? = {
-            guard let url = record.detailURL, !url.isEmpty, !record.sourceRuleName.isEmpty else { return nil }
-            return PlaybackSource(
-                pluginName: record.sourceRuleName,
-                itemName: record.bangumiName.isEmpty ? (controller?.item.displayName ?? "") : record.bangumiName,
-                detailURL: url,
-                directMediaURL: MediaUtility.isMediaURL(url) ? url : nil
-            )
-        }()
         router.push(
             .player(
                 bangumiID: bangumiID,
                 episode: record.episodeNumber,
-                source: cachedSource,
+                source: nil,
                 resumeRoad: record.roadIndex,
                 resumeFromHistory: true,
                 resumeRule: record.sourceRuleName

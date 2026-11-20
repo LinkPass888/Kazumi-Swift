@@ -724,10 +724,6 @@ struct LibraryScreen: View {
                     .padding(.bottom, 24)
                 }
             }
-            .refreshable {
-                guard hasBangumiToken else { return }
-                await performQuickSync()
-            }
             // 点空白处取消搜索的手势挪到 content 外层了（三个分支一起接）。
             .scrollIndicators(.hidden)
             // 顶部滚动边缘：内容从吸附的头部下方滚过，模糊盖住那一行。

@@ -231,21 +231,13 @@ struct ProfileScreen: View {
     /// 「规则名 · 时间」；右边这一列至少撑满封面高度，进度条和时间落在这一条底部。
     private func recentRow(_ record: WatchRecord) -> some View {
         Button {
-            // U1：最近 3 部番剧的最新来源已缓存 `detailURL`，直带 `PlaybackSource` 秒进章节解析；
-            // 同时仍保留 `resumeRule`，保证离线本地文件与失效回退都能按原规则定位。
-            let cachedSource: PlaybackSource? = {
-                guard let url = record.detailURL, !url.isEmpty, !record.sourceRuleName.isEmpty else { return nil }
-                return PlaybackSource(
-                    pluginName: record.sourceRuleName,
-                    itemName: record.bangumiName,
-                    detailURL: url,
-                    directMediaURL: MediaUtility.isMediaURL(url) ? url : nil
-                )
-            }()
+            // 跟「观看历史」页同一份路由参数：带线路、带「接着看」标记、带卡片上
+            // 那条规则名。少了 `resumeRule`，离线时本地文件就查不到——播放器的
+            // `localFile` 是按「番剧 + 规则名」取的，下载好的集照样要联网（#27）。
             router.push(.player(
                 bangumiID: record.bangumiID,
                 episode: record.episodeNumber,
-                source: cachedSource,
+                source: nil,
                 resumeRoad: record.roadIndex,
                 resumeFromHistory: true,
                 resumeRule: record.sourceRuleName

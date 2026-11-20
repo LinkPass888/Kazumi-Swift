@@ -35,6 +35,7 @@ struct WebDAVScreen: View {
     @AppStorage("webDavLastSyncAt") private var lastSyncAt: Double = 0
     @AppStorage("webDavLastSyncSummary") private var lastSyncSummary = ""
     @AppStorage("webDavLastSyncError") private var lastSyncError = ""
+    @AppStorage("webDavDidAutoEnableOnce") private var didAutoEnableOnce = false
 
     /// 同步中那一条进度：没有总数就不画进度条。
     private struct SyncProgress {
@@ -421,11 +422,14 @@ struct WebDAVScreen: View {
         }
         do {
             try await WebDAVClient(settings: settings).ping()
-            // U8：首次测试通过且总开关与三个内容开关仍全关时，自动开启同步与默认内容项。
-            if !settings.webDavEnable
+            // U8：仅在首次测试通过且总开关与三个内容开关仍全关时自动开启一次，
+            // 后续用户若手动全部关闭再测连接不再强行重开。
+            if !didAutoEnableOnce
+                && !settings.webDavEnable
                 && !settings.webDavEnableHistory
                 && !settings.webDavEnableCollect
                 && !settings.webDavEnableDanmakuShield {
+                didAutoEnableOnce = true
                 settings.webDavEnable = true
                 settings.webDavEnableHistory = true
                 settings.webDavEnableCollect = true

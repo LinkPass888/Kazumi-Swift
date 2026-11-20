@@ -550,6 +550,13 @@ struct PlayerScreen: View {
             if phase == .ready {
                 scheduleControlsHide()
                 SourceSheetCoordinator.shared.clearFailedReturnToSources()
+            } else if case .failed = phase {
+                SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
+            }
+        }
+        .onChange(of: surface.errorMessage) { _, error in
+            if error != nil {
+                SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
             }
         }
         .onChange(of: surface.isPlaying) { _, playing in
@@ -754,7 +761,9 @@ struct PlayerScreen: View {
             }
         }
         .onDisappear {
-            // 仅在失败页主动点「返回选源」时才回弹选源面板，普通返回不自动置位（U2）。
+            if isPlaybackFailed {
+                SourceSheetCoordinator.shared.markFailedReturnToSources(bangumiID: bangumiID)
+            }
             // A view lifecycle callback is not evidence of a deliberate return action.
             logLifecycleSnapshot("onDisappear.beforeCardClear")
             // 保留现有清理顺序。
@@ -5111,16 +5120,10 @@ struct PlayerScreen: View {
             historyRecord?.bangumiName,
             controller.source?.itemName,
         ].compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? ""
-        let resolvedCoverURL = [
-            cachedSubject?.largeImage,
-            libraryEntry?.imageURL,
-            historyRecord?.imageURL,
-        ].compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? ""
-
         environment.downloads.enqueue(
             bangumiID: controller.bangumiID,
             title: resolvedTitle,
-            coverURL: resolvedCoverURL,
+            coverURL: "",
             pluginName: controller.effectivePluginName,
             road: roadIndex,
             // 条目身份一起存：回放时它才是接口模式要的 vod_id（LP 5508/5512）。
@@ -5675,8 +5678,7 @@ private func persistWatchProgress(
         // 下次从详情页「开始观看」时按这条线路接上（main 记线路的原因）。
         road: controller.selectedRoad,
         position: progress,
-        duration: duration.isFinite && duration > 0 ? duration : 0,
-        detailURL: controller.source?.detailURL
+        duration: duration.isFinite && duration > 0 ? duration : 0
     )
 
     // 没追过番的条目，名字和封面在上面都是空串，记录就成了空壳。

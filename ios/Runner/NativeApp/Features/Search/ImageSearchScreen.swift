@@ -13,15 +13,40 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// 跨导航栈保留最近一次以图搜番的输入与识别结果：点选某条结果跳回搜索页后，
+/// 再次进入以图搜番（或返回）无需重新选图与二次识别（U7）。
+@MainActor
+private final class ImageSearchSession {
+    static let shared = ImageSearchSession()
+
+    let controller = ImageSearchController()
+    var useURL = false
+    var urlText = ""
+    var previewURL = ""
+    var imageFile: PickedImage?
+
+    private init() {}
+}
+
 struct ImageSearchScreen: View {
     /// 搜索页拿到识别结果后的回调：把番名填进搜索框并立即搜索。
     var onPickKeyword: (String) -> Void
 
-    @State private var controller = ImageSearchController()
-    @State private var useURL = false
-    @State private var urlText = ""
-    @State private var previewURL = ""
+    @State private var controller: ImageSearchController
+    @State private var useURL: Bool
+    @State private var urlText: String
+    @State private var previewURL: String
     @State private var imageFile: PickedImage?
+
+    init(onPickKeyword: @escaping (String) -> Void) {
+        self.onPickKeyword = onPickKeyword
+        let session = ImageSearchSession.shared
+        _controller = State(initialValue: session.controller)
+        _useURL = State(initialValue: session.useURL)
+        _urlText = State(initialValue: session.urlText)
+        _previewURL = State(initialValue: session.previewURL)
+        _imageFile = State(initialValue: session.imageFile)
+    }
     @State private var inputError: String?
     @State private var isPicking = false
     @State private var debounceTask: Task<Void, Never>?
@@ -91,9 +116,13 @@ struct ImageSearchScreen: View {
             photoSelection = nil
         }
         .onDisappear {
-            // U7：跳转搜索页返回时保留识别结果列表，不再在 onDisappear 清空；
-            // 页面真正销毁时 @State controller 会随视图生命周期自动释放。
+            // U7：把当前图片来源与输入同步回会话缓存，点选结果返回搜索页后再进来仍保留全部识别结果。
             debounceTask?.cancel()
+            let session = ImageSearchSession.shared
+            session.useURL = useURL
+            session.urlText = urlText
+            session.previewURL = previewURL
+            session.imageFile = imageFile
         }
     }
 
