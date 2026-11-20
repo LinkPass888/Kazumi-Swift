@@ -165,9 +165,6 @@ final class PlayerController {
             refreshEpisodeListInBackground()
             return
         }
-        // 提前并发拉取弹幕：集数已定，无须等待耗时数秒的网页嗅探与章节解析结束（P1 优化）
-        Task { await loadDanmaku() }
-
         // 先按历史里的规则名把播放源重建出来，再走正常的起播流程。
         if source == nil {
             await resolveSourceFromHistory()
@@ -298,6 +295,8 @@ final class PlayerController {
             return
         }
         phase = .parsingMedia
+        // 章节与目标集均已确认有效，与网页嗅探并行拉取弹幕（既不拖首帧，也不在无源/章节失败时浪费配额）。
+        Task { await loadDanmaku() }
         startParseWatchdog()
         // 登录态交给解析页（LP 5450）：页面里那一步拿地址要登录，
         // 这个 WebView 原先是一次性会话，Cookie 到不了，就一直卡在解析。
@@ -732,7 +731,8 @@ final class PlayerController {
 
     /// 对应 PlayerDanmakuController.fetchDanmaku：按 Bangumi id + 集数取弹幕。
     func loadDanmaku() async {
-        guard danmakuStatus != .loading else { return }
+        // 同一集已加载完成或正在加载时直接跳过，避免 start() 与 handleParsedMedia 重复请求消耗双倍配额。
+        guard danmakuStatus == .idle || danmakuStatus == .failed else { return }
         danmakuStatus = .loading
         danmakuMessage = nil
 
