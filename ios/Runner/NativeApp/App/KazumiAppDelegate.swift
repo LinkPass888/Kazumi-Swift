@@ -67,8 +67,11 @@ final class KazumiAppDelegate: UIResponder, UIApplicationDelegate {
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
-        // WebDAV / 下载任务使用的后台 URLSession：尽快回调，避免系统终止任务。
-        completionHandler()
+        // 将后台下载会话事件交给 BackgroundDownloadSession，在其 urlSessionDidFinishEvents 中完成回调。
+        BackgroundDownloadSession.shared.handleBackgroundEvents(
+            identifier: identifier,
+            completionHandler: completionHandler
+        )
     }
 }
 

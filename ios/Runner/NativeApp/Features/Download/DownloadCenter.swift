@@ -19,6 +19,7 @@
 
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -47,6 +48,8 @@ final class DownloadCenter {
     private var cancellationFlags: [String: CancellationFlag] = [:]
     /// 用户按过取消、还没轮到的那几集。
     private var cancelledBeforeStart = Set<String>()
+    /// 后台任务保活标识：有活跃下载时向系统申请后台时间窗，配合后台 URLSession 保障 HLS 分片调度与落盘。
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     private struct QueueItem: Equatable, Sendable, Identifiable {
         var recordKey: String
@@ -457,14 +460,37 @@ final class DownloadCenter {
             cancellationFlags[item.id] = flag
             activeNumbers[item.recordKey, default: []].insert(item.episodeNumber)
             activeEpisodeCount += 1
+            beginBackgroundTaskIfNeeded()
 
             Task { [weak self] in
                 guard let self else { return }
                 await self.run(item: item, record: record, episode: episode, cancellation: flag)
                 self.activeEpisodeCount -= 1
                 self.pump()
+                if self.activeEpisodeCount == 0, self.queue.isEmpty {
+                    self.endBackgroundTaskIfNeeded()
+                }
             }
         }
+        if activeEpisodeCount == 0, queue.isEmpty {
+            endBackgroundTaskIfNeeded()
+        }
+    }
+
+    private func beginBackgroundTaskIfNeeded() {
+        guard backgroundTaskID == .invalid else { return }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "KazumiDownload") { [weak self] in
+            Task { @MainActor in
+                self?.endBackgroundTaskIfNeeded()
+            }
+        }
+    }
+
+    private func endBackgroundTaskIfNeeded() {
+        guard backgroundTaskID != .invalid else { return }
+        let id = backgroundTaskID
+        backgroundTaskID = .invalid
+        UIApplication.shared.endBackgroundTask(id)
     }
 
     private func run(
@@ -618,9 +644,13 @@ final class DownloadCenter {
         update(item, persistNow: false) { episode in
             guard episode.status == .downloading || episode.status == .resolving else { return }
             episode.status = .downloading
-            episode.downloadedBytes = progress.receivedBytes
+            if progress.receivedBytes > 0 || episode.downloadedBytes == 0 {
+                episode.downloadedBytes = progress.receivedBytes
+            }
             if progress.totalBytes > 0 { episode.totalBytes = progress.totalBytes }
-            episode.progress = progress.fraction < 0 ? 0 : min(1, progress.fraction)
+            if progress.fraction >= 0 {
+                episode.progress = min(1, progress.fraction)
+            }
         }
     }
 
@@ -762,12 +792,11 @@ final class DownloadCenter {
         guard let data = try? Data(contentsOf: Self.storeURL),
               let decoded = try? JSONDecoder().decode([DownloadRecord].self, from: data)
         else { return }
-        // 上次没跑完的：队列在内存里，重启就没了，一律退回暂停。
+        // 上次没跑完的：队列在内存里，重启就没了，一律退回暂停，但保留已下进度与已下字节。
         records = decoded.map { record in
             var mutable = record
             for index in mutable.episodes.indices where mutable.episodes[index].status.isActive {
                 mutable.episodes[index].status = .paused
-                mutable.episodes[index].progress = 0
             }
             return mutable
         }
