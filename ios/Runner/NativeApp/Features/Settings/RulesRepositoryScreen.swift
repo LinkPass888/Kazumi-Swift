@@ -424,6 +424,10 @@ struct RulesRepositoryScreen: View {
             .frame(width: 26, height: 26)
     }
 
+    private var accent: Color {
+        KazumiPalette.accent(for: colorScheme)
+    }
+
     private var groupBackground: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
             .fill(KazumiPalette.groupedRow(for: colorScheme))
