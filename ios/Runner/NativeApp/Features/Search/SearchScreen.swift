@@ -29,6 +29,7 @@ struct SearchScreen: View {
     @State private var notShowWatched = UserDefaults.standard.bool(forKey: "kazumi.settings.searchNotShowWatched")
     @State private var notShowAbandoned = UserDefaults.standard.bool(forKey: "kazumi.settings.searchNotShowAbandoned")
     @FocusState private var isInputFocused: Bool
+    @State private var didAutoFocusOnAppear = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(AppRouter.self) private var router
@@ -117,7 +118,15 @@ struct SearchScreen: View {
             proxy.size
         } action: { size in
             // 量到 0 不覆盖上一帧（N4）。
-            if size.width > 0 { containerSize = size }
+            if size.width > 0 {
+                let firstLayout = containerSize.width == 0
+                containerSize = size
+                // 首帧布局刚挂出 searchField 立刻聚焦（0ms 延迟），让键盘与页面推入转场完全同步滑入。
+                if firstLayout, !didAutoFocusOnAppear, initialKeyword.isEmpty, input.isEmpty, !hasSearched {
+                    didAutoFocusOnAppear = true
+                    isInputFocused = true
+                }
+            }
         }
         // 顶部滚动边缘：渐进模糊（.soft）。
         .scrollEdgeEffectStyle(.soft, for: .top)
@@ -171,6 +180,9 @@ struct SearchScreen: View {
                 router.pendingSearchKeyword = nil
                 input = picked
                 submit(picked)
+            } else if !didAutoFocusOnAppear, containerSize.width > 0, initialKeyword.isEmpty, input.isEmpty, !hasSearched {
+                didAutoFocusOnAppear = true
+                isInputFocused = true
             }
         }
         .onChange(of: router.pendingSearchKeyword) { _, picked in
@@ -183,14 +195,6 @@ struct SearchScreen: View {
             if !initialKeyword.isEmpty, input.isEmpty {
                 input = initialKeyword
                 submit(initialKeyword)
-            } else if initialKeyword.isEmpty, input.isEmpty, !hasSearched {
-                // U7：等 NavigationStack 的 0.35s 横向推入转场彻底结束后再聚焦，
-                // 避免键盘被卷进推入转场从右侧拖入，改由系统正常从底部弹出。
-                try? await Task.sleep(for: .milliseconds(380))
-                guard !Task.isCancelled else { return }
-                if input.isEmpty, !hasSearched {
-                    isInputFocused = true
-                }
             }
         }
     }
