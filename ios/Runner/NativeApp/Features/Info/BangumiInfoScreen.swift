@@ -834,7 +834,7 @@ extension BangumiInfoScreen {
 
     private var startPlayingButton: some View {
         let latestRecord = library.record(for: bangumiID)
-        return HStack(spacing: 10) {
+        return VStack(alignment: .trailing, spacing: 10) {
             if let latestRecord, latestRecord.episodeNumber > 0 {
                 // 已有观看记录时主按钮升级为 1 键续播，旁留紧凑「换源」入口（U1）。
                 Button {
@@ -849,10 +849,10 @@ extension BangumiInfoScreen {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
-                    .background(Capsule(style: .continuous).fill(.regularMaterial))
+                    .background(Capsule(style: .continuous).fill(Color(.secondarySystemBackground)))
                 }
                 .buttonStyle(KazumiPressButtonStyle())
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
                 .accessibilityLabel("换源")
 
                 Button {
