@@ -50,6 +50,8 @@ struct PopularShelf: View {
             }
             .scrollIndicators(.hidden)
             .scrollTargetBehavior(.viewAligned)
+            // 裁切在安全区边界内，防止横向 ScrollView 在 iPhone Duo 上向右侧竖栏底下溢出。
+            .clipped()
         }
     }
 

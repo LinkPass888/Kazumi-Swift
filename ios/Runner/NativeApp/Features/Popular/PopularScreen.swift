@@ -25,48 +25,27 @@ struct PopularScreen: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let extraInsets = Self.unappliedHorizontalSafeArea(for: proxy)
-            let size = CGSize(
-                width: max(1, proxy.size.width - extraInsets.leading - extraInsets.trailing),
-                height: proxy.size.height
-            )
+            let size = proxy.size
             // 卡片画法只看可用高这一个信号（Colo 8228 §4.1）：<760 叠压、≥760 现行画法。
             // 与宽度档是两条独立判据，不共用常量、不互相读（Ato 8199）。
             let overlayCard = size.height < Self.overlayCardMaxHeight
             // 叠压卡「填满焦点区」的那个高：可用高 ＋ 卡片自己铺上去的顶部安全区。
             let heroFillHeight = size.height + proxy.safeAreaInsets.top
             // 三档只按可用空间分（Colo 6687 §一）：A 单栏、B 宽档（再按宽高比分横式两栏／竖式英雄行）、C 矮屏。
-            Group {
-                if size.width < Self.narrowMaxWidth {
-                    narrowBody(size: size, safeTop: proxy.safeAreaInsets.top)
-                } else if size.height >= Self.wideMinHeight, size.width > size.height,
-                          Self.rightColumnWidth(forWidth: size.width) >= Self.rightColumnMinWidth {
-                    // 右栏 ≥ 320（Colo 6822）：不到就回落单栏，不缩左栏、不压海报。
-                    twoColumnBody(size: size, overlayCard: overlayCard, heroFillHeight: heroFillHeight)
-                } else if size.height < Self.wideMinHeight, size.width > size.height {
-                    // C 档：宽但矮（iPhone 横屏 750×402）。货架整宽接在封面下面会被浮动
-                    // tab 条压住，改成封面钉左、货架收进右栏自己滚（Colo 6886）。
-                    compactTwoColumnBody(size: size, insets: proxy.safeAreaInsets)
-                } else {
-                    heroRowBody(size: size, overlayCard: overlayCard, heroFillHeight: heroFillHeight)
-                }
+            if size.width < Self.narrowMaxWidth {
+                narrowBody(size: size, safeTop: proxy.safeAreaInsets.top)
+            } else if size.height >= Self.wideMinHeight, size.width > size.height,
+                      Self.rightColumnWidth(forWidth: size.width) >= Self.rightColumnMinWidth {
+                // 右栏 ≥ 320（Colo 6822）：不到就回落单栏，不缩左栏、不压海报。
+                twoColumnBody(size: size, overlayCard: overlayCard, heroFillHeight: heroFillHeight)
+            } else if size.height < Self.wideMinHeight, size.width > size.height {
+                // C 档：宽但矮（iPhone 横屏 750×402）。货架整宽接在封面下面会被浮动
+                // tab 条压住，改成封面钉左、货架收进右栏自己滚（Colo 6886）。
+                compactTwoColumnBody(size: size, insets: proxy.safeAreaInsets)
+            } else {
+                heroRowBody(size: size, overlayCard: overlayCard, heroFillHeight: heroFillHeight)
             }
-            .padding(.leading, extraInsets.leading)
-            .padding(.trailing, extraInsets.trailing)
         }
-    }
-
-    /// 读取窗口级水平安全区中未被 GeometryProxy 扣掉的部分（兼容 iPhone Duo 展开/合上右侧竖栏）。
-    private static func unappliedHorizontalSafeArea(for proxy: GeometryProxy) -> (leading: CGFloat, trailing: CGFloat) {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
-        guard let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.windows.first else {
-            return (0, 0)
-        }
-        let frame = proxy.frame(in: .global)
-        let leading = max(0, window.safeAreaInsets.left - frame.minX)
-        let trailing = max(0, frame.maxX - (window.bounds.width - window.safeAreaInsets.right))
-        return (leading, trailing)
     }
 
     /// 设备屏高：封面高一律取屏高 × 0.70（LP 6677 / 6679，Ato 6680 定案）。

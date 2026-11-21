@@ -12,6 +12,7 @@ struct WatchHistoryScreen: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isConfirmingClear = false
     @State private var isConfirmingBatchDelete = false
     @State private var isSelecting = false
@@ -54,50 +55,67 @@ struct WatchHistoryScreen: View {
                 ContentUnavailableView.search(text: searchText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(filteredRecords) { record in
-                            card(record)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, isSelecting ? 84 : 24)
-                    // 跟设置二级页同一套外壳（Ato 7332/7334）：限宽 700 居中，行内缩 16，行宽 668。
-                    .frame(maxWidth: 700)
-                    .frame(maxWidth: .infinity)
-                }
-                .scrollIndicators(.hidden)
-                // 顶部滚动边缘：渐进模糊（.soft）。
-                .scrollEdgeEffectStyle(.soft, for: .top)
-                .safeAreaInset(edge: .bottom) {
-                    if isSelecting {
-                        HStack(spacing: 12) {
-                            Button(selectedIDs.count == filteredRecords.count ? "取消全选" : "全选") {
-                                if selectedIDs.count == filteredRecords.count {
-                                    selectedIDs.removeAll()
+                GeometryReader { proxy in
+                    let containerWidth = proxy.size.width
+                    let isWide = containerWidth >= 700 && !dynamicTypeSize.isAccessibilitySize
+                    let columns = wideColumns(for: containerWidth)
+
+                    ScrollView {
+                        if containerWidth > 0 {
+                            Group {
+                                if isWide {
+                                    // 宽屏对齐时间表页（§6.1）：700 起 2 列、超宽 3 列，列距 12、行距 10。
+                                    LazyVGrid(columns: columns, spacing: 10) {
+                                        ForEach(filteredRecords) { record in
+                                            card(record)
+                                        }
+                                    }
+                                    .id(columns.count)
                                 } else {
-                                    selectedIDs = Set(filteredRecords.map(\.id))
+                                    LazyVStack(spacing: 8) {
+                                        ForEach(filteredRecords) { record in
+                                            card(record)
+                                        }
+                                    }
                                 }
                             }
-                            .buttonStyle(.bordered)
-
-                            Spacer(minLength: 0)
-
-                            Button(role: .destructive) {
-                                isConfirmingBatchDelete = true
-                            } label: {
-                                Text(selectedIDs.isEmpty
-                                    ? String(localized: "删除所选")
-                                    : String(localized: "删除所选（\(selectedIDs.count)）"))
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(selectedIDs.isEmpty)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .padding(.bottom, isSelecting ? 84 : 24)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: 700)
-                        .frame(maxWidth: .infinity)
-                        .background(.bar)
+                    }
+                    .scrollIndicators(.hidden)
+                    // 顶部滚动边缘：渐进模糊（.soft）。
+                    .scrollEdgeEffectStyle(.soft, for: .top)
+                    .safeAreaInset(edge: .bottom) {
+                        if isSelecting {
+                            HStack(spacing: 12) {
+                                Button(selectedIDs.count == filteredRecords.count ? "取消全选" : "全选") {
+                                    if selectedIDs.count == filteredRecords.count {
+                                        selectedIDs.removeAll()
+                                    } else {
+                                        selectedIDs = Set(filteredRecords.map(\.id))
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+
+                                Spacer(minLength: 0)
+
+                                Button(role: .destructive) {
+                                    isConfirmingBatchDelete = true
+                                } label: {
+                                    Text(selectedIDs.isEmpty
+                                        ? String(localized: "删除所选")
+                                        : String(localized: "删除所选（\(selectedIDs.count)）"))
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(selectedIDs.isEmpty)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .background(.bar)
+                        }
                     }
                 }
             }
@@ -285,6 +303,14 @@ struct WatchHistoryScreen: View {
     }
 
     private static let coverWidth: CGFloat = 84
+
+    /// 宽屏多列网格（对齐时间表页 §6.1）：可用宽 ≥700 时按 360pt/列分 2~3 列。
+    private func wideColumns(for width: CGFloat) -> [GridItem] {
+        let spacing: CGFloat = 12
+        let count = min(max(Int(floor((width - 32 + spacing) / 360)), 2), 3)
+        let each = max(1, (width - 32 - spacing * CGFloat(count - 1)) / CGFloat(count))
+        return Array(repeating: GridItem(.fixed(each), spacing: spacing), count: count)
+    }
 
     /// 「第 1 集」或「第 1 集 · 标题」：有集标题就用集标题，没有就退回集数。
     private func episodeLine(for record: WatchRecord) -> String {

@@ -1308,8 +1308,19 @@ struct PopularWideTopBar: View {
             }
         }
         .padding(.leading, leadingPadding)
-        // 外层 PopularScreen 已统一扣除右侧竖栏/安全区，这里只需常规右边距 18，避免重复叠加。
-        .padding(.trailing, 18)
+        // 让开安全区再留 18（Ato 8217）：Duo 内屏横着时右边那 84 是相机那条，
+        // 系统时钟就压在上面——按 16 顶到窗口边，两颗钮就跟时钟挤同一行了。
+        .padding(.trailing, Self.windowSafeAreaInsets.right + 18)
+    }
+
+    /// 窗口的安全区：顶栏在这页里是压在封面/白底上的，读不到 safeAreaInsets，
+    /// 跟 `statusBarHeight` 一样直接问窗口要。
+    private static var windowSafeAreaInsets: UIEdgeInsets {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        let window = scene?.windows.first { $0.isKeyWindow } ?? scene?.windows.first
+        return window?.safeAreaInsets ?? .zero
     }
 }
 

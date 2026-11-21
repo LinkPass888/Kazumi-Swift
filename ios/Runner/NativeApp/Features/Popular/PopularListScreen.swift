@@ -23,6 +23,7 @@ struct PopularListScreen: View {
 
     @State private var controller: Controller
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(source: PopularListSource, zoomNamespace: Namespace.ID? = nil) {
         self.source = source
@@ -32,36 +33,40 @@ struct PopularListScreen: View {
 
     var body: some View {
         GeometryReader { outer in
-            let extraInsets = Self.unappliedHorizontalSafeArea(for: outer)
-            let usableWidth = max(1, outer.size.width - extraInsets.leading - extraInsets.trailing)
+            let usableWidth = outer.size.width
             let count = columnCount(for: usableWidth)
             let itemWidth = posterWidth(for: usableWidth, columns: count)
             let itemHeight = cardHeight(for: itemWidth)
             let gridColumns = Array(
-                repeating: GridItem(.fixed(itemWidth), spacing: 8, alignment: .top),
+                repeating: GridItem(.fixed(itemWidth), spacing: Self.columnSpacing, alignment: .top),
                 count: count
             )
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 6) {
-                        ForEach(controller.items) { item in
-                            BangumiPosterCard(
-                                item: item,
-                                width: itemWidth,
-                                titleAreaHeight: 32,
-                                zoomNamespace: zoomNamespace
-                            )
-                            .frame(width: itemWidth, height: itemHeight, alignment: .top)
-                            .id(item.id)
-                            .task {
-                                await controller.loadMoreIfNeeded(current: item)
+                    if usableWidth > 0 {
+                        // 对齐追番页海报网格规格（§四 / §6.2）：列间距 10、行间距 14、左右 16；
+                        // 按列数绑定 id，确保 iPhone 横竖屏切换或 Duo 展开/合上时网格重建不乱位。
+                        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: Self.rowSpacing) {
+                            ForEach(controller.items) { item in
+                                BangumiPosterCard(
+                                    item: item,
+                                    width: itemWidth,
+                                    titleAreaHeight: 32,
+                                    zoomNamespace: zoomNamespace
+                                )
+                                .frame(width: itemWidth, height: itemHeight, alignment: .top)
+                                .id(item.id)
+                                .task {
+                                    await controller.loadMoreIfNeeded(current: item)
+                                }
                             }
                         }
+                        .id(count)
+                        .padding(.horizontal, Self.horizontalPadding)
+                        .padding(.top, 12)
+                        .padding(.bottom, 72)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
-                    .padding(.bottom, 72)
 
                     if controller.isLoadingMore {
                         ProgressView()
@@ -84,8 +89,6 @@ struct PopularListScreen: View {
                     }
                 }
             }
-            .padding(.leading, extraInsets.leading)
-            .padding(.trailing, extraInsets.trailing)
         }
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -130,37 +133,30 @@ struct PopularListScreen: View {
         .accessibilityLabel("回到顶部")
     }
 
-    // MARK: - 网格尺寸（与改版前的推荐页同一套算式）
+    // MARK: - 网格尺寸（对齐追番页 §四 / §6.2 规格）
+
+    private static let horizontalPadding: CGFloat = 16
+    private static let columnSpacing: CGFloat = 10
+    private static let rowSpacing: CGFloat = 14
 
     private func columnCount(for width: CGFloat) -> Int {
-        if width > KazumiLayout.mediumWidth { return 6 }
-        if width > KazumiLayout.compactWidth { return 5 }
-        return 3
+        if dynamicTypeSize >= .accessibility4 { return 1 }
+        if dynamicTypeSize >= .accessibility1 { return 2 }
+        return max(3, Int(floor((width - Self.horizontalPadding * 2 + Self.columnSpacing) / 160)))
     }
 
     private func posterWidth(for width: CGFloat, columns: Int) -> CGFloat {
-        KazumiLayout.posterColumnWidth(
+        let each = KazumiLayout.posterColumnWidth(
             containerWidth: width,
             columns: columns,
-            spacing: 8,
-            padding: 8
+            spacing: Self.columnSpacing,
+            padding: Self.horizontalPadding
         )
+        return width >= 700 ? min(each, 200) : each
     }
 
     private func cardHeight(for itemWidth: CGFloat) -> CGFloat {
         KazumiLayout.posterHeight(width: itemWidth) + 32
-    }
-
-    private static func unappliedHorizontalSafeArea(for proxy: GeometryProxy) -> (leading: CGFloat, trailing: CGFloat) {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
-        guard let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.windows.first else {
-            return (0, 0)
-        }
-        let frame = proxy.frame(in: .global)
-        let leading = max(0, window.safeAreaInsets.left - frame.minX)
-        let trailing = max(0, frame.maxX - (window.bounds.width - window.safeAreaInsets.right))
-        return (leading, trailing)
     }
 }
 
