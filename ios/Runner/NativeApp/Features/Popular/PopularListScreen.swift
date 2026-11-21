@@ -34,9 +34,8 @@ struct PopularListScreen: View {
     var body: some View {
         GeometryReader { outer in
             let usableWidth = outer.size.width
-            let count = columnCount(for: usableWidth)
+            let count = columnCount(for: outer.size)
             let itemWidth = posterWidth(for: usableWidth, columns: count)
-            let itemHeight = cardHeight(for: itemWidth)
             let gridColumns = Array(
                 repeating: GridItem(.fixed(itemWidth), spacing: Self.columnSpacing, alignment: .top),
                 count: count
@@ -52,10 +51,9 @@ struct PopularListScreen: View {
                                 BangumiPosterCard(
                                     item: item,
                                     width: itemWidth,
-                                    titleAreaHeight: 32,
                                     zoomNamespace: zoomNamespace
                                 )
-                                .frame(width: itemWidth, height: itemHeight, alignment: .top)
+                                .frame(width: itemWidth, alignment: .top)
                                 .id(item.id)
                                 .task {
                                     await controller.loadMoreIfNeeded(current: item)
@@ -139,10 +137,12 @@ struct PopularListScreen: View {
     private static let columnSpacing: CGFloat = 10
     private static let rowSpacing: CGFloat = 14
 
-    private func columnCount(for width: CGFloat) -> Int {
+    private func columnCount(for size: CGSize) -> Int {
         if dynamicTypeSize >= .accessibility4 { return 1 }
         if dynamicTypeSize >= .accessibility1 { return 2 }
-        return max(3, Int(floor((width - Self.horizontalPadding * 2 + Self.columnSpacing) / 160)))
+        // 手机横屏等矮屏（高 < 600 且宽 > 高）按 120pt 步长分 6 列，避免封面比竖屏大近一倍。
+        let step: CGFloat = (size.height > 0 && size.height < 600 && size.width > size.height) ? 120 : 160
+        return max(3, Int(floor((size.width - Self.horizontalPadding * 2 + Self.columnSpacing) / step)))
     }
 
     private func posterWidth(for width: CGFloat, columns: Int) -> CGFloat {
@@ -153,10 +153,6 @@ struct PopularListScreen: View {
             padding: Self.horizontalPadding
         )
         return width >= 700 ? min(each, 200) : each
-    }
-
-    private func cardHeight(for itemWidth: CGFloat) -> CGFloat {
-        KazumiLayout.posterHeight(width: itemWidth) + 32
     }
 }
 
