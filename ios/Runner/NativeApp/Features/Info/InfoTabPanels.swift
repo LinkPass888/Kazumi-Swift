@@ -524,14 +524,12 @@ struct InfoRelationsPanel: View {
         } else {
             LazyVStack(spacing: 8) {
                 ForEach(relations) { relation in
-                    Button {
-                        router.push(.bangumiInfo(bangumiID: relation.item.id))
-                    } label: {
+                    NavigationLink(value: AppRoute.bangumiInfo(bangumiID: relation.item.id)) {
                         card(relation)
                     }
-                    .buttonStyle(.plain)
-                    // 关联条目也能从卡片放大进入，ID 用被点的那一条，不会和当前页撞号。
-                    .kazumiZoomSource(id: relation.item.id, namespace: zoomNamespace)
+                    .buttonStyle(KazumiZoomCardButtonStyle())
+                    // 关联条目也能从圆角卡片放大进入，ID 用被点的那一条，不会和当前页撞号。
+                    .kazumiZoomSource(id: relation.item.id, namespace: zoomNamespace, cornerRadius: 16)
                 }
             }
         }

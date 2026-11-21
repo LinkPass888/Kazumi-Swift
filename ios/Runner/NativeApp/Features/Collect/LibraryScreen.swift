@@ -914,7 +914,7 @@ private struct LibraryEntryCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Button(action: onOpen) {
+            NavigationLink(value: AppRoute.bangumiInfo(bangumiID: entry.id)) {
                 HStack(alignment: .top, spacing: 12) {
                     BangumiRemoteImage(url: entry.imageURL)
                         .frame(
@@ -957,7 +957,7 @@ private struct LibraryEntryCard: View {
             .buttonStyle(.plain)
             // 只有「封面 + 文字」这块可点区域参与缩放转场，
             // 右侧的收藏状态菜单不跟着放大。
-            .kazumiZoomSource(id: entry.id, namespace: zoomNamespace)
+            .kazumiZoomSource(id: entry.id, namespace: zoomNamespace, cornerRadius: 20)
 
             // 这一份也走共用组件：列表布局今天还没接上（没有调用处），
             // 但留着一份自己写的菜单，就是留着一份将来会分叉的。

@@ -23,6 +23,7 @@ import SwiftUI
 struct KazumiZoomSourceModifier: ViewModifier {
     let id: Int
     let namespace: Namespace.ID?
+    let cornerRadius: CGFloat?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -30,10 +31,32 @@ struct KazumiZoomSourceModifier: ViewModifier {
         if reduceMotion, namespace != nil {
             content
         } else if let namespace {
-            content.matchedTransitionSource(id: id, in: namespace)
+            if let cornerRadius {
+                content.matchedTransitionSource(id: id, in: namespace) { source in
+                    source
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                }
+            } else {
+                content.matchedTransitionSource(id: id, in: namespace)
+            }
         } else {
             content
         }
+    }
+}
+
+/// 仿 Apple TV App 封面/卡片按压反馈：按下时轻度弹性缩放并略微压暗，减弱动态效果下不做缩放。
+struct KazumiZoomCardButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .brightness(configuration.isPressed ? -0.04 : 0)
+            .animation(
+                reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.78),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -56,9 +79,15 @@ struct KazumiZoomDestinationModifier: ViewModifier {
 }
 
 extension View {
-    /// 把当前视图登记成缩放转场的源（点击后展开成详情页的那张卡片）。
-    func kazumiZoomSource(id: Int, namespace: Namespace.ID?) -> some View {
-        modifier(KazumiZoomSourceModifier(id: id, namespace: namespace))
+    /// 把当前视图登记成缩放转场的源（点击后展开成详情页的封面或圆角卡片）。
+    /// 传入 `cornerRadius` 时会通过 `matchedTransitionSource` 的 configuration 指定连续圆角裁切，
+    /// 让展开与收回形变与 Apple TV App 封面转场保持一致。
+    func kazumiZoomSource(
+        id: Int,
+        namespace: Namespace.ID?,
+        cornerRadius: CGFloat? = nil
+    ) -> some View {
+        modifier(KazumiZoomSourceModifier(id: id, namespace: namespace, cornerRadius: cornerRadius))
     }
 
     /// 给推入的详情页绑定缩放转场，源 ID 与卡片侧保持一致。

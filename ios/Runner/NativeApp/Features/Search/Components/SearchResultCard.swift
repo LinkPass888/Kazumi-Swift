@@ -40,16 +40,17 @@ struct SearchResultCard: View {
     private static let compactCoverWidth: CGFloat = 96
 
     var body: some View {
-        Button {
-            // zoom 走默认（true）：跟时间表、追番页那张卡一样，点开时卡片原地放大成详情页。
-            // 原来这里写死 false，所以搜索结果点进去是普通的横向推入（LP 3096）。
-            router.push(.bangumiInfo(bangumiID: item.id))
-        } label: {
+        NavigationLink(value: AppRoute.bangumiInfo(bangumiID: item.id)) {
             // 大字号下封面不铺满：一列 370 点时封面高 528，一张卡就占满一屏，
             // 改成定宽 96 点。封面也不能跟标题并排：并排只剩 262 点给标题，
             // 「《COLOURS》」这种番名差七点装不下，「》」就被甩到下一行开头（Ato 6576）。
             VStack(alignment: .leading, spacing: 0) {
                 cover(dynamicTypeSize.isAccessibilitySize ? Self.compactCoverWidth : width)
+                    .kazumiZoomSource(
+                        id: item.id,
+                        namespace: zoomNamespace,
+                        cornerRadius: Self.cornerRadius
+                    )
                 title
                     .padding(.top, 10)
                 metaRow
@@ -57,8 +58,7 @@ struct SearchResultCard: View {
             }
             .frame(width: width, alignment: .leading)
         }
-        .buttonStyle(.plain)
-        .kazumiZoomSource(id: item.id, namespace: zoomNamespace)
+        .buttonStyle(KazumiZoomCardButtonStyle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.displayName)
         .accessibilityHint("打开详情")

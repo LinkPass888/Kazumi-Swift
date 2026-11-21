@@ -50,13 +50,16 @@ struct PopularPosterTile: View {
     static let totalHeight: CGFloat = height + 6 + titleHeight
 
     var body: some View {
-        Button {
-            router.push(.bangumiInfo(bangumiID: poster.id))
-        } label: {
+        NavigationLink(value: AppRoute.bangumiInfo(bangumiID: poster.id)) {
             VStack(spacing: 6) {
                 BangumiRemoteImage(url: poster.imageURL)
                     .frame(width: tileWidth, height: posterHeight)
                     .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+                    .kazumiZoomSource(
+                        id: poster.id,
+                        namespace: zoomNamespace,
+                        cornerRadius: Self.cornerRadius
+                    )
 
                 Text(poster.displayName)
                     .font(.caption)
@@ -74,8 +77,7 @@ struct PopularPosterTile: View {
             }
             .frame(width: tileWidth)
         }
-        .buttonStyle(.plain)
-        .kazumiZoomSource(id: poster.id, namespace: zoomNamespace)
+        .buttonStyle(KazumiZoomCardButtonStyle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(poster.displayName)
         .accessibilityHint("打开详情")

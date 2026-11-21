@@ -34,35 +34,50 @@ struct BangumiPosterCard: View {
     static let defaultTitleAreaHeight: CGFloat = 40
 
     var body: some View {
-        Button {
-            guard canTap else { return }
-            if let onTap {
-                onTap(item)
+        Group {
+            if canTap, onTap == nil {
+                NavigationLink(value: AppRoute.bangumiInfo(bangumiID: item.id)) {
+                    posterContent
+                }
             } else {
-                router.push(.bangumiInfo(bangumiID: item.id))
+                Button {
+                    guard canTap else { return }
+                    if let onTap {
+                        onTap(item)
+                    } else {
+                        router.push(.bangumiInfo(bangumiID: item.id))
+                    }
+                } label: {
+                    posterContent
+                }
             }
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                cover
-                Text(item.displayName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .kerning(0.3)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // 与 Dart 版 EdgeInsets.fromLTRB(5, 3, 5, 1) 一致。
-                    .padding(.init(top: 3, leading: 5, bottom: 1, trailing: 5))
-                    .frame(height: titleAreaHeight ?? Self.defaultTitleAreaHeight, alignment: .topLeading)
-            }
-            .frame(width: width)
         }
-        .buttonStyle(.plain)
-        // 整张卡片（封面 + 标题）作为缩放转场的源，放大时形变成详情页。
-        .kazumiZoomSource(id: item.id, namespace: zoomNamespace)
+        .buttonStyle(KazumiZoomCardButtonStyle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.displayName)
+    }
+
+    private var posterContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cover
+                .kazumiZoomSource(
+                    id: item.id,
+                    namespace: zoomNamespace,
+                    cornerRadius: Self.cornerRadius
+                )
+            Text(item.displayName)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .kerning(0.3)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // 与 Dart 版 EdgeInsets.fromLTRB(5, 3, 5, 1) 一致。
+                .padding(.init(top: 3, leading: 5, bottom: 1, trailing: 5))
+                .frame(height: titleAreaHeight ?? Self.defaultTitleAreaHeight, alignment: .topLeading)
+        }
+        .frame(width: width)
     }
 
     /// 封面：网格里给了固定宽度时按 2:3 算出确切高度。
