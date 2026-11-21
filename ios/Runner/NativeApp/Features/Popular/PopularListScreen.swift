@@ -23,6 +23,7 @@ struct PopularListScreen: View {
 
     @State private var controller: Controller
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(source: PopularListSource, zoomNamespace: Namespace.ID? = nil) {
         self.source = source
@@ -31,26 +32,37 @@ struct PopularListScreen: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
+        GeometryReader { outer in
+            let usableWidth = outer.size.width
+            let count = columnCount(for: outer.size)
+            let itemWidth = posterWidth(for: usableWidth, columns: count)
+            let gridColumns = Array(
+                repeating: GridItem(.fixed(itemWidth), spacing: Self.columnSpacing, alignment: .top),
+                count: count
+            )
+
             ScrollView {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
-                    ForEach(controller.items) { item in
-                        BangumiPosterCard(
-                            item: item,
-                            width: posterWidth,
-                            titleAreaHeight: 32,
-                            zoomNamespace: zoomNamespace
-                        )
-                        .frame(width: posterWidth, height: cardHeight, alignment: .top)
-                        .id(item.id)
-                        .task {
-                            await controller.loadMoreIfNeeded(current: item)
+                if usableWidth > 0 {
+                    // 对齐追番页海报网格规格（§四 / §6.2）：列间距 10、行间距 14、左右 16；
+                    // 按列数绑定 id，确保 iPhone 横竖屏切换或 Duo 展开/合上时网格重建不乱位。
+                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: Self.rowSpacing) {
+                        ForEach(controller.items) { item in
+                            BangumiPosterCard(
+                                item: item,
+                                width: itemWidth,
+                                zoomNamespace: zoomNamespace
+                            )
+                            .frame(width: itemWidth, alignment: .top)
+                            .task {
+                                await controller.loadMoreIfNeeded(current: item)
+                            }
                         }
                     }
+                    .id(count)
+                    .padding(.horizontal, Self.horizontalPadding)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 8)
-                .padding(.bottom, 72)
 
                 if controller.isLoadingMore {
                     ProgressView()
@@ -61,17 +73,6 @@ struct PopularListScreen: View {
             }
             .scrollIndicators(.hidden)
             .scrollEdgeEffectStyle(.soft, for: .top)
-            .overlay(alignment: .bottomTrailing) {
-                if !controller.items.isEmpty {
-                    scrollToTop {
-                        withAnimation(.easeOut(duration: 0.35)) {
-                            proxy.scrollTo(controller.items.first?.id, anchor: .top)
-                        }
-                    }
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 18)
-                }
-            }
         }
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -104,51 +105,28 @@ struct PopularListScreen: View {
         }
     }
 
-    private func scrollToTop(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "arrow.up")
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 48, height: 48)
-        }
-        .buttonStyle(.plain)
-        .kazumiGlassCapsule(interactive: true)
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-        .accessibilityLabel("回到顶部")
+    // MARK: - 网格尺寸（对齐追番页 §四 / §6.2 规格）
+
+    private static let horizontalPadding: CGFloat = 16
+    private static let columnSpacing: CGFloat = 10
+    private static let rowSpacing: CGFloat = 14
+
+    private func columnCount(for size: CGSize) -> Int {
+        if dynamicTypeSize >= .accessibility4 { return 1 }
+        if dynamicTypeSize >= .accessibility1 { return 2 }
+        // 手机横屏等矮屏（高 < 600 且宽 > 高）按 120pt 步长分 6 列，避免封面比竖屏大近一倍。
+        let step: CGFloat = (size.height > 0 && size.height < 600 && size.width > size.height) ? 120 : 160
+        return max(3, Int(floor((size.width - Self.horizontalPadding * 2 + Self.columnSpacing) / step)))
     }
 
-    // MARK: - 网格尺寸（与改版前的推荐页同一套算式）
-
-    private var columnCount: Int {
-        let width = containerWidth
-        if width > KazumiLayout.mediumWidth { return 6 }
-        if width > KazumiLayout.compactWidth { return 5 }
-        return 3
-    }
-
-    private var posterWidth: CGFloat {
-        KazumiLayout.posterColumnWidth(
-            containerWidth: containerWidth,
-            columns: columnCount,
-            spacing: 8,
-            padding: 8
+    private func posterWidth(for width: CGFloat, columns: Int) -> CGFloat {
+        let each = KazumiLayout.posterColumnWidth(
+            containerWidth: width,
+            columns: columns,
+            spacing: Self.columnSpacing,
+            padding: Self.horizontalPadding
         )
-    }
-
-    private var columns: [GridItem] {
-        Array(
-            repeating: GridItem(.fixed(posterWidth), spacing: 8, alignment: .top),
-            count: columnCount
-        )
-    }
-
-    private var cardHeight: CGFloat {
-        KazumiLayout.posterHeight(width: posterWidth) + 32
-    }
-
-    private var containerWidth: CGFloat {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.screen.bounds.width ?? 390
+        return width >= 700 ? min(each, 200) : each
     }
 }
 

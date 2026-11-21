@@ -35,19 +35,27 @@ struct LibraryPosterCard: View {
     @ScaledMetric(relativeTo: .footnote) private var titleBlockHeight: CGFloat = 34
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            cover
-            footer
+        ZStack(alignment: .topLeading) {
+            NavigationLink(value: AppRoute.bangumiInfo(bangumiID: entry.id)) {
+                VStack(alignment: .leading, spacing: 0) {
+                    posterArtwork
+                    footer
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // 状态角标叠在封面右下角，独立响应菜单点击不触发 NavigationLink。
+            Color.clear
+                .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
+                .allowsHitTesting(false)
+                .overlay(alignment: .bottomTrailing) {
+                    statusMenu
+                        .padding(6)
+                }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Colo 3501 §二：卡底和 18 圆角整个去掉——这一格和推荐页是同一件事
-        // （海报＋名字），海报自己就是主体，不需要再包一层底。
-        // 交互没动：整卡命中区、缩放转场、读屏标签与六项操作都留在下面。
-        // LP 2026-10-24：进详情页要整张卡片放大，不是只有封面。
-        .kazumiZoomSource(id: entry.id, namespace: zoomNamespace)
-        // 整格（海报、名字、空白）都是命中区。
-        .contentShape(Rectangle())
-        .onTapGesture { onOpen() }
+        .kazumiZoomSource(id: entry.id, namespace: zoomNamespace, cornerRadius: Self.coverCornerRadius)
         // 整卡合成一个元素。读屏念到这张卡时听到的是「片名，在看」——
         // 这是状态唯一念得出来的地方，不许撤。
         .accessibilityElement(children: .ignore)
@@ -66,25 +74,20 @@ struct LibraryPosterCard: View {
 
     // MARK: - 封面
 
-    private var cover: some View {
-        ZStack(alignment: .bottomTrailing) {
-            // 先立一个比例确定的框（宽由网格给，高 = 宽 / 0.65），再把图铺满它。
-            // 直接把图 .aspectRatio(.fit) 是不行的：`BangumiRemoteImage` 会
-            // 铺满可用空间（maxHeight 无限），网格里每张封面各长各的，行就叠在一起。
-            Color.clear
-                .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
-                .overlay {
-                    BangumiRemoteImage(
-                        url: entry.imageURL,
-                        networkLoadEnabled: false,
-                        reloadToken: coverReloadToken
-                    )
-                }
-                .clipShape(RoundedRectangle(cornerRadius: Self.coverCornerRadius, style: .continuous))
-
-            statusMenu
-                .padding(6)
-        }
+    private var posterArtwork: some View {
+        // 先立一个比例确定的框（宽由网格给，高 = 宽 / 0.65），再把图铺满它。
+        // 直接把图 .aspectRatio(.fit) 是不行的：`BangumiRemoteImage` 会
+        // 铺满可用空间（maxHeight 无限），网格里每张封面各长各的，行就叠在一起。
+        Color.clear
+            .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
+            .overlay {
+                BangumiRemoteImage(
+                    url: entry.imageURL,
+                    networkLoadEnabled: false,
+                    reloadToken: coverReloadToken
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Self.coverCornerRadius, style: .continuous))
     }
 
     private var statusMenu: some View {

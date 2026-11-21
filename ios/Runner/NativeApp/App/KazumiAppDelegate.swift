@@ -93,14 +93,15 @@ enum OrientationLock {
         UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
     static var mask: UIInterfaceOrientationMask = appDefault
 
-    /// 交还方向：把锁恢复成默认，并让系统重新算支持的方向。
-    /// 不在这里请求某个具体方向——多方向时「请求转到横/竖」没有意义，交给设备姿态。
+    /// 交还方向：把锁恢复成默认，并清除此前显式请求 `.portrait` / `.landscape`
+    /// 留在 UIWindowScene 上的几何偏好，避免 Duo 折叠全屏退出后展开仍被钉在竖向。
     static func release(scene: UIWindowScene?) {
         mask = appDefault
         guard let scene else { return }
         for window in scene.windows {
             markDirty(window.rootViewController)
         }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: appDefault)) { _ in }
     }
 
     private static func markDirty(_ controller: UIViewController?) {

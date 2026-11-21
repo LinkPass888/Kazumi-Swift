@@ -548,13 +548,31 @@ struct PopularScreen: View {
     }
 
 
+    /// 为每行货架计算需要抑制缩放源的重复番剧 ID（只保留首次出现的那张，避免同 Namespace 冲突）。
+    private var shelfSuppressedZoomIDs: [String: Set<Int>] {
+        var seen = Set<Int>()
+        var result: [String: Set<Int>] = [:]
+        for row in controller.rows {
+            var suppressed = Set<Int>()
+            for poster in row.items {
+                if !seen.insert(poster.id).inserted {
+                    suppressed.insert(poster.id)
+                }
+            }
+            result[row.id] = suppressed
+        }
+        return result
+    }
+
     /// 下面那几行横向海报架。
     private func shelves(tileWidth: CGFloat? = nil) -> some View {
-        LazyVStack(spacing: 24) {
+        let suppressedMap = shelfSuppressedZoomIDs
+        return LazyVStack(spacing: 24) {
             ForEach(controller.rows) { row in
                 PopularShelf(
                     row: row,
                     zoomNamespace: zoomNamespace,
+                    suppressedZoomIDs: suppressedMap[row.id] ?? [],
                     onMore: { router.push(.popularList($0)) },
                     // 第一行「热门番组」标题点开选标签（LP 3044：菜单从封面大标题挪到这儿）。
                     tagOptions: row.list == .trending ? heroTags : [],

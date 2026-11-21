@@ -1909,7 +1909,7 @@ struct PlayerScreen: View {
         guard isFullscreen else { return }
         isFullscreen = false
         sawLandscape = false
-        if !usesInlineFullscreen { requestOrientation(.portrait) }
+        if !usesInlineFullscreen { requestOrientation(.portrait, releaseAfterSuccess: true) }
         showControls()
     }
 

@@ -539,16 +539,25 @@ struct TimelineScreen: View {
                 // 页宽 = 安全区内宽 + 左右安全区：横屏 750 + 62 + 62 = 874，正好一屏。
                 // 之前页宽取安全区内宽 750，视口却铺到屏幕边，右边 62 点就永远露着下一天，
                 // 翻页步长和页宽也不一致，每换一天攒 31 点。
+                let windowInsets = Self.windowHorizontalSafeArea(for: pageProxy)
+                let leadingInset = max(pageProxy.safeAreaInsets.leading, windowInsets.leading)
+                let trailingInset = max(pageProxy.safeAreaInsets.trailing, windowInsets.trailing)
                 let pageW = max(pageProxy.size.width
                     + pageProxy.safeAreaInsets.leading
                     + pageProxy.safeAreaInsets.trailing, 1)
+                let contentW = max(1, pageW - leadingInset - trailingInset)
                 ScrollViewReader { scrollProxy in
                 ScrollView(.horizontal) {
                     HStack(spacing: 0) {
                         ForEach(0..<7, id: \.self) { day in
-                            dayPage(day)
-                                .frame(width: pageW)
-                                .id(day)
+                            dayPage(
+                                day,
+                                contentWidth: contentW,
+                                leadingInset: leadingInset,
+                                trailingInset: trailingInset
+                            )
+                            .frame(width: pageW)
+                            .id(day)
                         }
                     }
                     .scrollTargetLayout()
@@ -593,28 +602,49 @@ struct TimelineScreen: View {
         settings.hapticFeedbackEnabled ? selectedWeekday : nil
     }
 
+    /// 读取窗口级水平安全区中未被当前 GeometryProxy 扣掉的部分（兼容 iPhone Duo 竖栏）。
+    private static func windowHorizontalSafeArea(for proxy: GeometryProxy) -> (leading: CGFloat, trailing: CGFloat) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        guard let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.windows.first else {
+            return (0, 0)
+        }
+        let frame = proxy.frame(in: .global)
+        let leading = max(0, window.safeAreaInsets.left - frame.minX)
+        let trailing = max(0, frame.maxX - (window.bounds.width - window.safeAreaInsets.right))
+        return (leading, trailing)
+    }
+
     @ViewBuilder
-    private func dayPage(_ day: Int) -> some View {
+    private func dayPage(
+        _ day: Int,
+        contentWidth: CGFloat,
+        leadingInset: CGFloat,
+        trailingInset: CGFloat
+    ) -> some View {
         let items = filteredCalendar.indices.contains(day) ? filteredCalendar[day] : []
         if items.isEmpty {
             emptyState(day: day)
+                .padding(.leading, leadingInset)
+                .padding(.trailing, trailingInset)
         } else {
             ScrollViewReader { proxy in
             ScrollView {
                 // 宽档：日列表改成网格（§6.1），卡片不再被拉成 1342×160。
-                if containerSize.width > 0 {
+                if contentWidth > 0 {
                     Group {
-                        if containerSize.width >= 700 {
-                            LazyVGrid(columns: wideDayColumns, spacing: 10) {
-                                dayCards(items)
+                        if contentWidth >= 700 {
+                            LazyVGrid(columns: wideDayColumns(for: contentWidth), spacing: 10) {
+                                dayCards(items, isWide: true)
                             }
                         } else {
                             LazyVStack(spacing: 10) {
-                                dayCards(items)
+                                dayCards(items, isWide: false)
                             }
                         }
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.leading, 12 + leadingInset)
+                    .padding(.trailing, 12 + trailingInset)
                     .padding(.top, 12)
                     .padding(.bottom, 24)
                 }
@@ -638,8 +668,7 @@ struct TimelineScreen: View {
     /// 宽档日列表的列数：n = clamp(floor((容器宽 − 24 + 12) / 360), 1, 3)（§6.1）。
     /// 门槛 430 → 360（Colo 6808）：430 是按竖屏卡宽定的，iPhone 横屏 750 会算出 1 列、
     /// 一张 726 宽的卡，402 高的屏上只放得下两行；360 后 750 出 2 列，iPad 各档不变。
-    private var wideDayColumns: [GridItem] {
-        let width = containerSize.width
+    private func wideDayColumns(for width: CGFloat) -> [GridItem] {
         let count = min(max(Int(floor((width - 24 + 12) / 360)), 1), 3)
         let spacing: CGFloat = 12
         let each = max(1, (width - 24 - spacing * CGFloat(count - 1)) / CGFloat(count))
@@ -647,7 +676,7 @@ struct TimelineScreen: View {
     }
 
     @ViewBuilder
-    private func dayCards(_ items: [BangumiItem]) -> some View {
+    private func dayCards(_ items: [BangumiItem], isWide: Bool) -> some View {
         ForEach(items) { item in
             BangumiTimelineCard(
                 item: item,
@@ -656,7 +685,7 @@ struct TimelineScreen: View {
                 updateText: controller.updateText(for: item),
                 currentEpisode: controller.currentEpisode(for: item),
                 // 宽档卡片高 176，给两行标题留地方（§6.1）。
-                cardMinHeight: containerSize.width >= 700 ? 176 : nil,
+                cardMinHeight: isWide ? 176 : nil,
                 zoomNamespace: zoomSuppressedIDs.contains(item.id) ? nil : zoomNamespace
             )
             .opacity(isFlashing(item.id) ? 0 : 1)

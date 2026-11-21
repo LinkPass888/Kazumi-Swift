@@ -56,8 +56,12 @@ struct LibraryScreen: View {
     private var columnCount: Int {
         if dynamicTypeSize >= .accessibility4 { return 1 }
         if dynamicTypeSize >= .accessibility1 { return 2 }
-        // 按容器宽算列数（§6.2）：max(3, floor((容器宽 − 32 + 10) / 160))。
-        return max(3, Int(floor((libraryContainerSize.width - 32 + 10) / 160)))
+        // 手机横屏等矮屏（高 < 600 且宽 > 高）按 120pt 步长分 6 列，封面尺寸与竖屏保持一致；
+        // 其余仍按 §6.2 的 160pt 步长。
+        let step: CGFloat = (libraryContainerSize.height > 0
+            && libraryContainerSize.height < 600
+            && libraryContainerSize.width > libraryContainerSize.height) ? 120 : 160
+        return max(3, Int(floor((libraryContainerSize.width - 32 + 10) / step)))
     }
     /// 网格列间距。
     private static let columnSpacing: CGFloat = 10
@@ -914,7 +918,7 @@ private struct LibraryEntryCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Button(action: onOpen) {
+            NavigationLink(value: AppRoute.bangumiInfo(bangumiID: entry.id)) {
                 HStack(alignment: .top, spacing: 12) {
                     BangumiRemoteImage(url: entry.imageURL)
                         .frame(
@@ -957,7 +961,7 @@ private struct LibraryEntryCard: View {
             .buttonStyle(.plain)
             // 只有「封面 + 文字」这块可点区域参与缩放转场，
             // 右侧的收藏状态菜单不跟着放大。
-            .kazumiZoomSource(id: entry.id, namespace: zoomNamespace)
+            .kazumiZoomSource(id: entry.id, namespace: zoomNamespace, cornerRadius: 20)
 
             // 这一份也走共用组件：列表布局今天还没接上（没有调用处），
             // 但留着一份自己写的菜单，就是留着一份将来会分叉的。

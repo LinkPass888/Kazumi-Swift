@@ -35,34 +35,40 @@ struct BangumiTimelineCard: View {
     private static let labelFontSize: CGFloat = 12
 
     var body: some View {
-        Button {
+        Group {
             if let onTap {
-                onTap()
+                Button(action: onTap) {
+                    cardSurface
+                }
             } else {
-                router.push(.bangumiInfo(bangumiID: item.id))
+                NavigationLink(value: AppRoute.bangumiInfo(bangumiID: item.id)) {
+                    cardSurface
+                }
             }
-        } label: {
-            HStack(alignment: .top, spacing: compact ? 12 : 16) {
-                cover
-                details
-            }
-            .padding(Self.contentPadding)
-            .frame(
-                maxWidth: .infinity,
-                minHeight: cardMinHeight ?? (compact ? 144 : 160),
-                alignment: .top
-            )
-            // Colo 3501 §一：卡片多、每张里装着海报＋标题＋胶囊，需要「一块面」把它们
-            // 框住——给实的浅灰底，不描边（白卡加发丝线看着像个空框）。
-            .background(
-                KazumiPalette.contentCardShape(cornerRadius: Self.cornerRadius, scheme: colorScheme)
-            )
         }
         .buttonStyle(.plain)
-        // 整张卡片作为缩放转场的源，放大时形变成详情页。
-        .kazumiZoomSource(id: item.id, namespace: zoomNamespace)
+        // 整张圆角卡片作为缩放转场的源，带连续圆角裁切配置，放大与收回无缝衔接。
+        .kazumiZoomSource(id: item.id, namespace: zoomNamespace, cornerRadius: Self.cornerRadius)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.displayName)
+    }
+
+    private var cardSurface: some View {
+        HStack(alignment: .top, spacing: compact ? 12 : 16) {
+            cover
+            details
+        }
+        .padding(Self.contentPadding)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: cardMinHeight ?? (compact ? 144 : 160),
+            alignment: .top
+        )
+        // Colo 3501 §一：卡片多、每张里装着海报＋标题＋胶囊，需要「一块面」把它们
+        // 框住——给实的浅灰底，不描边（白卡加发丝线看着像个空框）。
+        .background(
+            KazumiPalette.contentCardShape(cornerRadius: Self.cornerRadius, scheme: colorScheme)
+        )
     }
 
     // MARK: - 封面

@@ -16,6 +16,8 @@ import SwiftUI
 struct PopularShelf: View {
     let row: PopularRow
     var zoomNamespace: Namespace.ID?
+    /// 同一命名空间下已在前面货架登记过缩放源的番剧 ID，避免重复 ID 导致系统收回错位。
+    var suppressedZoomIDs: Set<Int> = []
     var onMore: (PopularListSource) -> Void
     /// 行标题上挂的标签菜单：只有第一行「热门番组」有（LP 3044，从封面大标题挪下来）。
     var tagOptions: [String] = []
@@ -36,7 +38,11 @@ struct PopularShelf: View {
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 12) {
                     ForEach(row.items) { poster in
-                        PopularPosterTile(poster: poster, zoomNamespace: zoomNamespace, widthOverride: tileWidth)
+                        PopularPosterTile(
+                            poster: poster,
+                            zoomNamespace: suppressedZoomIDs.contains(poster.id) ? nil : zoomNamespace,
+                            widthOverride: tileWidth
+                        )
                     }
                 }
                 .scrollTargetLayout()
@@ -44,6 +50,8 @@ struct PopularShelf: View {
             }
             .scrollIndicators(.hidden)
             .scrollTargetBehavior(.viewAligned)
+            // 裁切在安全区边界内，防止横向 ScrollView 在 iPhone Duo 上向右侧竖栏底下溢出。
+            .clipped()
         }
     }
 

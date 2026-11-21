@@ -24,45 +24,54 @@ struct BangumiPosterCard: View {
     var zoomNamespace: Namespace.ID?
 
     @Environment(AppRouter.self) private var router
+    /// 标题两行的高度（对齐 LibraryPosterCard：默认 34，随动态字体缩放）。
+    @ScaledMetric(relativeTo: .footnote) private var titleBlockHeight: CGFloat = 34
 
     /// 与 constants.dart 的 StyleString.imgRadius 一致。
     private static let cornerRadius: CGFloat = 12
     /// 与 bangumi_card.dart 的 aspectRatio: 0.65 一致。
     static let coverAspectRatio: CGFloat = 0.65
-    /// 标题区高度：两行 15pt 文字 + 原版 EdgeInsets.fromLTRB(5, 3, 5, 1) 的上下留白。
-    /// 固定住之后，海报底边到下一行海报顶边的高度是恒定的，排版不会因标题长短跳动。
-    static let defaultTitleAreaHeight: CGFloat = 40
 
     var body: some View {
-        Button {
-            guard canTap else { return }
-            if let onTap {
-                onTap(item)
+        Group {
+            if canTap, onTap == nil {
+                NavigationLink(value: AppRoute.bangumiInfo(bangumiID: item.id)) {
+                    posterContent
+                }
             } else {
-                router.push(.bangumiInfo(bangumiID: item.id))
+                Button {
+                    guard canTap else { return }
+                    if let onTap {
+                        onTap(item)
+                    } else {
+                        router.push(.bangumiInfo(bangumiID: item.id))
+                    }
+                } label: {
+                    posterContent
+                }
             }
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                cover
-                Text(item.displayName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .kerning(0.3)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // 与 Dart 版 EdgeInsets.fromLTRB(5, 3, 5, 1) 一致。
-                    .padding(.init(top: 3, leading: 5, bottom: 1, trailing: 5))
-                    .frame(height: titleAreaHeight ?? Self.defaultTitleAreaHeight, alignment: .topLeading)
-            }
-            .frame(width: width)
         }
         .buttonStyle(.plain)
-        // 整张卡片（封面 + 标题）作为缩放转场的源，放大时形变成详情页。
-        .kazumiZoomSource(id: item.id, namespace: zoomNamespace)
+        .kazumiZoomSource(id: item.id, namespace: zoomNamespace, cornerRadius: Self.cornerRadius)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.displayName)
+    }
+
+    private var posterContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cover
+            // 对齐追番页 LibraryPosterCard：12pt 常规、两行、行距 3.6、顶距 6、左对齐与海报齐平。
+            Text(item.displayName)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .lineSpacing(1.3 * 12 - 12)
+                .multilineTextAlignment(.leading)
+                .frame(height: titleAreaHeight ?? titleBlockHeight, alignment: .top)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.top, 6)
+        }
+        .frame(width: width)
     }
 
     /// 封面：网格里给了固定宽度时按 2:3 算出确切高度。

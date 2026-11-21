@@ -76,6 +76,8 @@ final class PopularController {
     /// 用缓存把页面先画出来。返回是否画到了东西。
     @discardableResult
     func paintFromCache() -> Bool {
+        // 已有数据时不重读磁盘、不覆写 rows，避免从详情页返回触发整页与所有缩放源全量重排。
+        guard rows.isEmpty else { return true }
         var painted: [PopularRow] = []
         for spec in specs {
             guard let items = cache.items(for: cacheKey(for: spec)), !items.isEmpty else { continue }
