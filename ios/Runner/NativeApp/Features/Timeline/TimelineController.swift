@@ -234,9 +234,9 @@ final class TimelineController {
         let timed = await mergeCustomEntries(into: groupedBaseCalendar(), collectTypes: collectTypes)
         bangumiCalendar = applySort(timed)
 
-        // 季度表拿到 MAL id 之后，再用 AniList 补一轮实测时刻：只查还没到
-        // 下一集播出时刻的那些番，按 25 部一批，请求量与当季番数无关。
-        await BangumiAirTimeService.shared.ensureAniListLoaded(calendar.flatMap { $0.map(\.id) })
+        // 季度表拿到 MAL id 之后，再用 AniList 补一轮实测时刻（连同手动添加到时间表的条目一并查）：
+        // 只查还没到下一集播出时刻的那些番，按 25 部一批，请求量与当季番数无关。
+        await BangumiAirTimeService.shared.ensureAniListLoaded(timed.flatMap { $0.map(\.id) })
         guard selectedDate == date else { return }
         // 默认顺序按当天时刻从早到晚，所以时刻到了要重排一次；
         // 其余排序不依赖时刻，重算一遍结果不变。
@@ -397,13 +397,21 @@ final class TimelineController {
     private func applySort(_ calendar: [[BangumiItem]]) -> [[BangumiItem]] {
         switch sort {
         case .defaultOrder:
-            // 与 Dart 的 compareTimelineUpdateTime 一致：同一列内按当天时刻从早到晚，
-            // 无时刻的排最后，同序回退 id。时刻来自卡片的同一个 HH:mm。
-            let times = BangumiAirTimeService.shared.times
+            // 与卡片底部「HH:mm 更新」完全同源（优先 AniList 实测时刻，再退回季度表）：
+            // 同一列内按当天时刻从早到晚，无时刻的排最后，同序回退 id。
+            let service = BangumiAirTimeService.shared
+            var resolvedTimes: [Int: String] = [:]
+            for day in calendar {
+                for item in day where resolvedTimes[item.id] == nil {
+                    if let time = service.airTime(for: item.id) {
+                        resolvedTimes[item.id] = time
+                    }
+                }
+            }
             return calendar.map { day in
                 day.sorted { lhs, rhs in
-                    let left = times[lhs.id]
-                    let right = times[rhs.id]
+                    let left = resolvedTimes[lhs.id]
+                    let right = resolvedTimes[rhs.id]
                     if left == nil, right == nil { return lhs.id < rhs.id }
                     if left == nil { return false }
                     if right == nil { return true }
