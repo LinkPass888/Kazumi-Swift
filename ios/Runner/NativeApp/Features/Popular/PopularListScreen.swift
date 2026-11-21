@@ -41,52 +41,38 @@ struct PopularListScreen: View {
                 count: count
             )
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    if usableWidth > 0 {
-                        // 对齐追番页海报网格规格（§四 / §6.2）：列间距 10、行间距 14、左右 16；
-                        // 按列数绑定 id，确保 iPhone 横竖屏切换或 Duo 展开/合上时网格重建不乱位。
-                        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: Self.rowSpacing) {
-                            ForEach(controller.items) { item in
-                                BangumiPosterCard(
-                                    item: item,
-                                    width: itemWidth,
-                                    zoomNamespace: zoomNamespace
-                                )
-                                .frame(width: itemWidth, alignment: .top)
-                                .id(item.id)
-                                .task {
-                                    await controller.loadMoreIfNeeded(current: item)
-                                }
+            ScrollView {
+                if usableWidth > 0 {
+                    // 对齐追番页海报网格规格（§四 / §6.2）：列间距 10、行间距 14、左右 16；
+                    // 按列数绑定 id，确保 iPhone 横竖屏切换或 Duo 展开/合上时网格重建不乱位。
+                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: Self.rowSpacing) {
+                        ForEach(controller.items) { item in
+                            BangumiPosterCard(
+                                item: item,
+                                width: itemWidth,
+                                zoomNamespace: zoomNamespace
+                            )
+                            .frame(width: itemWidth, alignment: .top)
+                            .task {
+                                await controller.loadMoreIfNeeded(current: item)
                             }
                         }
-                        .id(count)
-                        .padding(.horizontal, Self.horizontalPadding)
-                        .padding(.top, 12)
-                        .padding(.bottom, 72)
                     }
-
-                    if controller.isLoadingMore {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity)
-                            .padding(.bottom, 16)
-                    }
+                    .id(count)
+                    .padding(.horizontal, Self.horizontalPadding)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
                 }
-                .scrollIndicators(.hidden)
-                .scrollEdgeEffectStyle(.soft, for: .top)
-                .overlay(alignment: .bottomTrailing) {
-                    if !controller.items.isEmpty {
-                        scrollToTop {
-                            withAnimation(.easeOut(duration: 0.35)) {
-                                proxy.scrollTo(controller.items.first?.id, anchor: .top)
-                            }
-                        }
-                        .padding(.trailing, 18)
-                        .padding(.bottom, 18)
-                    }
+
+                if controller.isLoadingMore {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 16)
                 }
             }
+            .scrollIndicators(.hidden)
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -117,18 +103,6 @@ struct PopularListScreen: View {
             }
             .buttonStyle(.borderedProminent)
         }
-    }
-
-    private func scrollToTop(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "arrow.up")
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 48, height: 48)
-        }
-        .buttonStyle(.plain)
-        .kazumiGlassCapsule(interactive: true)
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-        .accessibilityLabel("回到顶部")
     }
 
     // MARK: - 网格尺寸（对齐追番页 §四 / §6.2 规格）
