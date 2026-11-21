@@ -55,11 +55,6 @@ struct PopularPosterTile: View {
                 BangumiRemoteImage(url: poster.imageURL)
                     .frame(width: tileWidth, height: posterHeight)
                     .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
-                    .kazumiZoomSource(
-                        id: poster.id,
-                        namespace: zoomNamespace,
-                        cornerRadius: Self.cornerRadius
-                    )
 
                 Text(poster.displayName)
                     .font(.caption)
@@ -77,7 +72,8 @@ struct PopularPosterTile: View {
             }
             .frame(width: tileWidth)
         }
-        .buttonStyle(KazumiZoomCardButtonStyle())
+        .buttonStyle(.plain)
+        .kazumiZoomSource(id: poster.id, namespace: zoomNamespace, cornerRadius: Self.cornerRadius)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(poster.displayName)
         .accessibilityHint("打开详情")

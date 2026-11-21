@@ -51,6 +51,8 @@ struct BangumiInfoScreen: View {
     @State private var barTitleProgress: CGFloat = 0
     /// 栏是不是竖的（Duo 合上／摊开横屏）：是就不放那行番名。
     @State private var isVerticalBar = false
+    /// 正在退出详情页（zoom 收回期间）：冻结布局与工具栏几何回写，防止逐帧重排拖慢系统导航栏淡出。
+    @State private var isDismissing = false
 
     /// B 档：宽且不矮。
     private var isWideTier: Bool {
@@ -120,6 +122,12 @@ struct BangumiInfoScreen: View {
         .onChange(of: bangumiID) { _, _ in
             controller = nil
             didFailToLoad = false
+        }
+        .onAppear {
+            isDismissing = false
+        }
+        .onDisappear {
+            isDismissing = true
         }
     }
 
@@ -204,6 +212,7 @@ struct BangumiInfoScreen: View {
                     // 进度涨一下又倒回去（Fuck 8448 / Ato 8449）。
                     geometry.contentOffset.y
                 } action: { _, scrolled in
+                    guard !isDismissing else { return }
                     // 顶上那格当 0，位移除以大标题高；量不到高就用 28 兜底，
                     // 这样不可能卡在 0（Ato 8463）。
                     if !didCaptureScrollTop {
@@ -211,7 +220,10 @@ struct BangumiInfoScreen: View {
                         didCaptureScrollTop = true
                     }
                     let height = titleHeight > 0 ? titleHeight : 28
-                    barTitleProgress = min(max((scrolled - scrollTopOffset) / height, 0), 1)
+                    let next = min(max((scrolled - scrollTopOffset) / height, 0), 1)
+                    if abs(next - barTitleProgress) > 0.01 {
+                        barTitleProgress = next
+                    }
                 }
             }
 
@@ -219,10 +231,14 @@ struct BangumiInfoScreen: View {
         }
         .overlay(alignment: .top) { toastView }
         // 量容器尺寸：宽档两栏、矮屏封面封顶都按它算。
+        // 过滤掉退出缩放动画期间的过渡尺寸抖动，避免逐帧触发整页重排拖慢导航栏收尾。
         .onGeometryChange(for: CGSize.self) { proxy in
             proxy.size
         } action: { size in
-            containerSize = size
+            guard !isDismissing, size.width >= 200, size.height >= 200 else { return }
+            if abs(size.width - containerSize.width) > 1 || abs(size.height - containerSize.height) > 1 {
+                containerSize = size
+            }
         }
         // 出入场由值驱动：状态变化本身不在动画事务里，只有结果被动画化。
         .animation(.easeOut(duration: 0.2), value: toastMessage)
@@ -230,6 +246,7 @@ struct BangumiInfoScreen: View {
         // （Apple《Vertical bars》：竖栏只排带图标的项）。所以先问系统这一格是不是竖栏，
         // 是就不放那行番名，横栏上照旧渐显（Ato 8475）。
         .modifier(VerticalBarProbe { isVerticalBar = $0 })
+        // 合并为单个 .toolbar：系统返回键 + 渐显标题 + 右上角更多按钮，减少转场期工具栏重复 diff。
         .toolbar {
             ToolbarItem(placement: .principal) {
                 if !isVerticalBar {
@@ -240,10 +257,6 @@ struct BangumiInfoScreen: View {
                         .accessibilityHidden(barTitleProgress < 0.5)
                 }
             }
-        }
-        // 顶部那排交给系统：系统返回键 + 系统工具栏按钮，玻璃底与间距由系统给
-        // （LP 2026-11-11 / Apple《Adopting Liquid Glass》）。
-        .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 moreMenu(controller)
             }

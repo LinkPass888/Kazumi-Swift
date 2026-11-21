@@ -39,17 +39,12 @@ struct LibraryPosterCard: View {
             NavigationLink(value: AppRoute.bangumiInfo(bangumiID: entry.id)) {
                 VStack(alignment: .leading, spacing: 0) {
                     posterArtwork
-                        .kazumiZoomSource(
-                            id: entry.id,
-                            namespace: zoomNamespace,
-                            cornerRadius: Self.coverCornerRadius
-                        )
                     footer
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(KazumiZoomCardButtonStyle())
+            .buttonStyle(.plain)
 
             // 状态角标叠在封面右下角，独立响应菜单点击不触发 NavigationLink。
             Color.clear
@@ -60,6 +55,7 @@ struct LibraryPosterCard: View {
                         .padding(6)
                 }
         }
+        .kazumiZoomSource(id: entry.id, namespace: zoomNamespace, cornerRadius: Self.coverCornerRadius)
         // 整卡合成一个元素。读屏念到这张卡时听到的是「片名，在看」——
         // 这是状态唯一念得出来的地方，不许撤。
         .accessibilityElement(children: .ignore)

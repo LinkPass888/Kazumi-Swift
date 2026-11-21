@@ -45,21 +45,6 @@ struct KazumiZoomSourceModifier: ViewModifier {
     }
 }
 
-/// 仿 Apple TV App 封面/卡片按压反馈：按下时轻度弹性缩放并略微压暗，减弱动态效果下不做缩放。
-struct KazumiZoomCardButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .brightness(configuration.isPressed ? -0.04 : 0)
-            .animation(
-                reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.78),
-                value: configuration.isPressed
-            )
-    }
-}
-
 /// 详情页侧的转场目的地。
 struct KazumiZoomDestinationModifier: ViewModifier {
     let id: Int

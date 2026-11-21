@@ -46,7 +46,7 @@ struct BangumiTimelineCard: View {
                 }
             }
         }
-        .buttonStyle(KazumiZoomCardButtonStyle())
+        .buttonStyle(.plain)
         // 整张圆角卡片作为缩放转场的源，带连续圆角裁切配置，放大与收回无缝衔接。
         .kazumiZoomSource(id: item.id, namespace: zoomNamespace, cornerRadius: Self.cornerRadius)
         .accessibilityElement(children: .combine)

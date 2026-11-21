@@ -46,11 +46,6 @@ struct SearchResultCard: View {
             // 「《COLOURS》」这种番名差七点装不下，「》」就被甩到下一行开头（Ato 6576）。
             VStack(alignment: .leading, spacing: 0) {
                 cover(dynamicTypeSize.isAccessibilitySize ? Self.compactCoverWidth : width)
-                    .kazumiZoomSource(
-                        id: item.id,
-                        namespace: zoomNamespace,
-                        cornerRadius: Self.cornerRadius
-                    )
                 title
                     .padding(.top, 10)
                 metaRow
@@ -58,7 +53,8 @@ struct SearchResultCard: View {
             }
             .frame(width: width, alignment: .leading)
         }
-        .buttonStyle(KazumiZoomCardButtonStyle())
+        .buttonStyle(.plain)
+        .kazumiZoomSource(id: item.id, namespace: zoomNamespace, cornerRadius: Self.cornerRadius)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.displayName)
         .accessibilityHint("打开详情")

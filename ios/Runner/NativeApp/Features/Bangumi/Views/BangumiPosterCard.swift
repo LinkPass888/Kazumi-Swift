@@ -52,7 +52,8 @@ struct BangumiPosterCard: View {
                 }
             }
         }
-        .buttonStyle(KazumiZoomCardButtonStyle())
+        .buttonStyle(.plain)
+        .kazumiZoomSource(id: item.id, namespace: zoomNamespace, cornerRadius: Self.cornerRadius)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.displayName)
     }
@@ -60,11 +61,6 @@ struct BangumiPosterCard: View {
     private var posterContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             cover
-                .kazumiZoomSource(
-                    id: item.id,
-                    namespace: zoomNamespace,
-                    cornerRadius: Self.cornerRadius
-                )
             Text(item.displayName)
                 .font(.subheadline)
                 .fontWeight(.medium)
