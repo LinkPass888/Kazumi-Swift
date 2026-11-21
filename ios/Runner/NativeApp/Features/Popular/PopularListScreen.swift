@@ -31,47 +31,61 @@ struct PopularListScreen: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
-                    ForEach(controller.items) { item in
-                        BangumiPosterCard(
-                            item: item,
-                            width: posterWidth,
-                            titleAreaHeight: 32,
-                            zoomNamespace: zoomNamespace
-                        )
-                        .frame(width: posterWidth, height: cardHeight, alignment: .top)
-                        .id(item.id)
-                        .task {
-                            await controller.loadMoreIfNeeded(current: item)
-                        }
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.top, 8)
-                .padding(.bottom, 72)
+        GeometryReader { outer in
+            let extraInsets = Self.unappliedHorizontalSafeArea(for: outer)
+            let usableWidth = max(1, outer.size.width - extraInsets.leading - extraInsets.trailing)
+            let count = columnCount(for: usableWidth)
+            let itemWidth = posterWidth(for: usableWidth, columns: count)
+            let itemHeight = cardHeight(for: itemWidth)
+            let gridColumns = Array(
+                repeating: GridItem(.fixed(itemWidth), spacing: 8, alignment: .top),
+                count: count
+            )
 
-                if controller.isLoadingMore {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity)
-                        .padding(.bottom, 16)
-                }
-            }
-            .scrollIndicators(.hidden)
-            .scrollEdgeEffectStyle(.soft, for: .top)
-            .overlay(alignment: .bottomTrailing) {
-                if !controller.items.isEmpty {
-                    scrollToTop {
-                        withAnimation(.easeOut(duration: 0.35)) {
-                            proxy.scrollTo(controller.items.first?.id, anchor: .top)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 6) {
+                        ForEach(controller.items) { item in
+                            BangumiPosterCard(
+                                item: item,
+                                width: itemWidth,
+                                titleAreaHeight: 32,
+                                zoomNamespace: zoomNamespace
+                            )
+                            .frame(width: itemWidth, height: itemHeight, alignment: .top)
+                            .id(item.id)
+                            .task {
+                                await controller.loadMoreIfNeeded(current: item)
+                            }
                         }
                     }
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 18)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .padding(.bottom, 72)
+
+                    if controller.isLoadingMore {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 16)
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .scrollEdgeEffectStyle(.soft, for: .top)
+                .overlay(alignment: .bottomTrailing) {
+                    if !controller.items.isEmpty {
+                        scrollToTop {
+                            withAnimation(.easeOut(duration: 0.35)) {
+                                proxy.scrollTo(controller.items.first?.id, anchor: .top)
+                            }
+                        }
+                        .padding(.trailing, 18)
+                        .padding(.bottom, 18)
+                    }
                 }
             }
+            .padding(.leading, extraInsets.leading)
+            .padding(.trailing, extraInsets.trailing)
         }
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -118,37 +132,35 @@ struct PopularListScreen: View {
 
     // MARK: - 网格尺寸（与改版前的推荐页同一套算式）
 
-    private var columnCount: Int {
-        let width = containerWidth
+    private func columnCount(for width: CGFloat) -> Int {
         if width > KazumiLayout.mediumWidth { return 6 }
         if width > KazumiLayout.compactWidth { return 5 }
         return 3
     }
 
-    private var posterWidth: CGFloat {
+    private func posterWidth(for width: CGFloat, columns: Int) -> CGFloat {
         KazumiLayout.posterColumnWidth(
-            containerWidth: containerWidth,
-            columns: columnCount,
+            containerWidth: width,
+            columns: columns,
             spacing: 8,
             padding: 8
         )
     }
 
-    private var columns: [GridItem] {
-        Array(
-            repeating: GridItem(.fixed(posterWidth), spacing: 8, alignment: .top),
-            count: columnCount
-        )
+    private func cardHeight(for itemWidth: CGFloat) -> CGFloat {
+        KazumiLayout.posterHeight(width: itemWidth) + 32
     }
 
-    private var cardHeight: CGFloat {
-        KazumiLayout.posterHeight(width: posterWidth) + 32
-    }
-
-    private var containerWidth: CGFloat {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.screen.bounds.width ?? 390
+    private static func unappliedHorizontalSafeArea(for proxy: GeometryProxy) -> (leading: CGFloat, trailing: CGFloat) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        guard let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.windows.first else {
+            return (0, 0)
+        }
+        let frame = proxy.frame(in: .global)
+        let leading = max(0, window.safeAreaInsets.left - frame.minX)
+        let trailing = max(0, frame.maxX - (window.bounds.width - window.safeAreaInsets.right))
+        return (leading, trailing)
     }
 }
 
