@@ -647,14 +647,19 @@ extension BangumiInfoScreen {
     }
 
     /// 放送星期菜单：七项，收窄成一颗小胶囊（与推荐页的标签菜单同一处理）。
+    /// 手动修改过放送星期时，在原始那一天旁标出「（默认）」方便一键改回。
     private func weekdayMenu(_ controller: InfoController) -> some View {
         let current = currentWeekday(controller)
+        let original = defaultWeekday(controller)
+        let isModified = current != original
         return Menu {
             ForEach(1...7, id: \.self) { weekday in
                 Button {
                     BangumiTimelineStore.shared.setWeekday(weekday, for: controller.item.id)
                 } label: {
-                    Text(weekday == current ? "✓ \(weekdayTitle(weekday))" : weekdayTitle(weekday))
+                    let base = weekdayTitle(weekday)
+                    let suffix = (isModified && weekday == original) ? String(localized: "（默认）") : ""
+                    Text(weekday == current ? "✓ \(base)\(suffix)" : "\(base)\(suffix)")
                 }
             }
         } label: {
@@ -1100,18 +1105,28 @@ extension BangumiInfoScreen {
     /// 顺序和 main 一致：手动选的星期 → 时间表的分组（含凌晨档换列）→
     /// 开播日过一遍凌晨档规则。不能直接拿开播日：接口经常不给开播日，退回
     /// 默认值就会和时间表对不上（时间表排周一、这里写周日）。
+    private func defaultWeekday(_ controller: InfoController) -> Int {
+        if let column = TimelineWeekdayCache.weekday(of: controller.item.id) {
+            return max(1, min(7, column))
+        }
+        return max(
+            1,
+            min(
+                7,
+                TimelineColumn.weekday(
+                    bangumiWeekday: controller.item.airWeekday,
+                    airTimeOf: controller.item.id
+                )
+            )
+        )
+    }
+
     private func currentWeekday(_ controller: InfoController) -> Int {
         let store = BangumiTimelineStore.shared
         if let entry = store.entry(for: controller.item.id), entry.weekdayCustom {
             return max(1, min(7, entry.weekday))
         }
-        if let column = TimelineWeekdayCache.weekday(of: controller.item.id) {
-            return column
-        }
-        return TimelineColumn.weekday(
-            bangumiWeekday: controller.item.airWeekday,
-            airTimeOf: controller.item.id
-        )
+        return defaultWeekday(controller)
     }
 
     private func isInTimeline(_ controller: InfoController) -> Bool {

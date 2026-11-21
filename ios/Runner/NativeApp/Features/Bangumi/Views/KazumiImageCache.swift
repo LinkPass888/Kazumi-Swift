@@ -169,8 +169,8 @@ final class KazumiImageLoader: @unchecked Sendable {
         let bucket = Self.bucket(pixelSize)
         let exact = memory.object(forKey: Self.memoryKey(key, bucket: bucket) as NSString)
         if let exact { return exact.image }
-        // 档位不同：看看有没有更大的一份，或者略小一点还能用的。
-        for candidate in stride(from: bucket + 100, through: bucket + 400, by: 100) {
+        // 档位不同：看看有没有更大的一份（一直查到上限 1600，让小图秒命中已缓存大图），或者略小一点还能用的。
+        for candidate in stride(from: bucket + 100, through: 1600, by: 100) {
             if let entry = memory.object(forKey: Self.memoryKey(key, bucket: candidate) as NSString) {
                 return entry.image
             }
