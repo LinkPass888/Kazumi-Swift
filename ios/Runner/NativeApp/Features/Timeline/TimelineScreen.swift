@@ -666,11 +666,9 @@ struct TimelineScreen: View {
                 guard let new, items.contains(where: { $0.id == new }) else { return }
                 proxy.scrollTo(new, anchor: .center)
             }
-            // 切换过滤条件或排序时回到顶部，避免列表变短后停在原偏移导致页面全空。
-            .onChange(of: filterScrollKey) { _, _ in
-                guard let firstID = items.first?.id else { return }
-                proxy.scrollTo(firstID, anchor: .top)
-            }
+            // 过滤条件或排序变化时重建该日竖向 ScrollView，彻底清掉旧的底部偏移和 Lazy 布局缓存，
+            // 防止滑到底部后再大量过滤时 LazyVStack/LazyVGrid 卡死在可视区外导致全空。
+            .id(filterScrollKey)
             }
         }
     }
