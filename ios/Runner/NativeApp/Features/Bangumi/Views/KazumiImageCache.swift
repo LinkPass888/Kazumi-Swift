@@ -234,6 +234,22 @@ final class KazumiImageLoader: @unchecked Sendable {
         return cachedImage(for: url, pixelSize: pixelSize) != nil
     }
 
+    /// 仅查本地磁盘：如果指定 URL 对应的图片已缓存在磁盘，则返回其原始数据；
+    /// 若无本地缓存则返回 nil，绝不发起任何网络请求。
+    func cachedDiskData(for url: String) -> Data? {
+        let key = Self.cacheKey(for: url)
+        guard !key.isEmpty else { return nil }
+        let name = Self.fileName(for: key)
+        let candidates = [directory.appendingPathComponent(name)]
+            + legacyDirectories.map { $0.appendingPathComponent(name) }
+        for fileURL in candidates {
+            if let data = try? Data(contentsOf: fileURL), !data.isEmpty {
+                return data
+            }
+        }
+        return nil
+    }
+
     @discardableResult
     private func load(_ url: String, pixelSize: Int, highPriority: Bool) async -> Bool {
         let key = Self.cacheKey(for: url)
