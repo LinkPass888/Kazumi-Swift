@@ -248,12 +248,24 @@ final class BangumiSyncEngine {
 
     /// 改了一条追番状态之后把这一条推上去（对应 syncCollectibleWhenIdle）。
     ///
-    /// 返回 false 表示没推成功，调用方要按原版的规矩把本地这次修改退回去 ——
-    /// 本地显示「已看过」而 Bangumi 上还是「在看」，比不改更让人糊涂。
+    /// 返回 false 表示没推成功，并在 lastError 中记录具体失败原因，调用方据此展示提示。
+    @discardableResult
     func pushCollectible(bangumiID: Int, type: CollectType) async -> Bool {
         if !initialized { await ping() }
-        guard initialized else { return false }
-        return await BangumiAPI.updateCollection(subjectID: bangumiID, type: type)
+        guard initialized else {
+            if lastError == nil {
+                lastError = String(localized: "未配置或未验证 Bangumi 账号")
+            }
+            return false
+        }
+        do {
+            try await BangumiAPI.updateCollectionThrows(subjectID: bangumiID, type: type)
+            lastError = nil
+            return true
+        } catch {
+            lastError = Self.describeError(error)
+            return false
+        }
     }
 
     // MARK: - 合并

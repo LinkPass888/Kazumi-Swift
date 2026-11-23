@@ -38,7 +38,9 @@ struct BangumiRemoteImage: View {
         self.reloadToken = reloadToken
         // 命中内存缓存时直接出图，不经历「占位 → 图片」这一帧。
         let size = KazumiImageLoader.pixelSize(for: CGSize(width: 200, height: 300))
-        _image = State(initialValue: KazumiImageLoader.shared.cachedImage(for: url, pixelSize: size))
+        let initial = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: size)
+            ?? KazumiImageLoader.shared.cachedImage(for: url, pixelSize: 120)
+        _image = State(initialValue: initial)
     }
 
     private var key: String { KazumiImageLoader.cacheKey(for: url) }
@@ -63,8 +65,15 @@ struct BangumiRemoteImage: View {
             // 只在像素档位真的变了才重来一次：布局每帧都会回调，
             // 若把尺寸直接绑进 .task 的 id，加载会被反复取消，永远出不来图。
             guard newValue != pixelSize else { return }
+            let needsUpgrade: Bool
+            if let current = image {
+                let currentLongest = Int(max(current.size.width * current.scale, current.size.height * current.scale))
+                needsUpgrade = newValue > currentLongest + 100
+            } else {
+                needsUpgrade = true
+            }
             pixelSize = newValue
-            if image == nil { attempt += 1 }
+            if needsUpgrade { attempt += 1 }
         }
         .task(id: "\(key)#\(attempt)#\(reloadToken)") {
             await loadIfNeeded()

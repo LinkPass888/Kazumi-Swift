@@ -68,6 +68,10 @@ struct ProfileScreen: View {
         // 所以这次连底色一起删掉，不再自己画任何一条栏。
         // 这一页下面挂的记录也一样：封面空的读到时补一次。
         .task {
+            let coverPixelSize = KazumiImageLoader.pixelSize(
+                for: CGSize(width: Self.recentCoverWidth, height: Self.recentCoverWidth / BangumiPosterCard.coverAspectRatio)
+            )
+            KazumiImageLoader.shared.prefetch(recentRecords.map(\.imageURL), pixelSize: coverPixelSize)
             WatchRecordMetaBackfill.fill(recentRecords, in: library)
         }
         .navigationTitle("我的")

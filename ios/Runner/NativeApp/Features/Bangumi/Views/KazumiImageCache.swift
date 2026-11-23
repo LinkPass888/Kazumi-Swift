@@ -169,8 +169,8 @@ final class KazumiImageLoader: @unchecked Sendable {
         let bucket = Self.bucket(pixelSize)
         let exact = memory.object(forKey: Self.memoryKey(key, bucket: bucket) as NSString)
         if let exact { return exact.image }
-        // 档位不同：看看有没有更大的一份，或者略小一点还能用的。
-        for candidate in stride(from: bucket + 100, through: bucket + 400, by: 100) {
+        // 档位不同：看看有没有更大的一份（一直查到上限 1600，让小图秒命中已缓存大图），或者略小一点还能用的。
+        for candidate in stride(from: bucket + 100, through: 1600, by: 100) {
             if let entry = memory.object(forKey: Self.memoryKey(key, bucket: candidate) as NSString) {
                 return entry.image
             }
@@ -232,6 +232,22 @@ final class KazumiImageLoader: @unchecked Sendable {
         if cachedImage(for: url, pixelSize: pixelSize) != nil { return true }
         await fetch(key: key, bucket: Self.bucket(pixelSize), highPriority: false)
         return cachedImage(for: url, pixelSize: pixelSize) != nil
+    }
+
+    /// 仅查本地磁盘：如果指定 URL 对应的图片已缓存在磁盘，则返回其原始数据；
+    /// 若无本地缓存则返回 nil，绝不发起任何网络请求。
+    func cachedDiskData(for url: String) -> Data? {
+        let key = Self.cacheKey(for: url)
+        guard !key.isEmpty else { return nil }
+        let name = Self.fileName(for: key)
+        let candidates = [directory.appendingPathComponent(name)]
+            + legacyDirectories.map { $0.appendingPathComponent(name) }
+        for fileURL in candidates {
+            if let data = try? Data(contentsOf: fileURL), !data.isEmpty {
+                return data
+            }
+        }
+        return nil
     }
 
     @discardableResult

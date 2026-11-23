@@ -17,6 +17,7 @@
 //
 
 import Foundation
+import UIKit
 import UserNotifications
 
 /// 一条已排定的更新提醒（设置页「通知排程」展示用）。
@@ -128,6 +129,12 @@ final class UpdateNotificationScheduler {
 
         let calendar = Calendar.current
         var candidates: [(fireAt: Date, request: UNNotificationRequest)] = []
+        var tempURLsToClean: [URL] = []
+        defer {
+            for tempURL in tempURLsToClean {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+        }
 
         for entry in entries {
             let airing = AniListClient.shared.staleCached(entry.id, now: now)
@@ -148,6 +155,10 @@ final class UpdateNotificationScheduler {
             }
             let period = (schedule?.period ?? 0) > 0 ? schedule!.period : Self.defaultPeriod
 
+            let coverURL = !entry.imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? entry.imageURL
+                : (BangumiSubjectCache.shared.memoryItem(for: entry.id)?.largeImage ?? "")
+
             var scheduled = 0
             var fireAt = firstFireAt
             while scheduled < Self.maxEpisodesPerBangumi,
@@ -159,13 +170,21 @@ final class UpdateNotificationScheduler {
                 content.sound = .default
                 content.userInfo = ["bangumiID": entry.id, "fireAt": fireAt.timeIntervalSince1970]
 
+                // 同一部番的两集要各自成条，id 用「番 + 集序号」，否则后一条盖掉前一条。
+                let identifier = "\(Self.identifier(for: entry.id))-\(scheduled)"
+                if let (attachment, tempURL) = makeCoverAttachment(
+                    coverURLString: coverURL,
+                    attachmentIdentifier: "cover-\(identifier)"
+                ) {
+                    content.attachments = [attachment]
+                    tempURLsToClean.append(tempURL)
+                }
+
                 let components = calendar.dateComponents(
                     [.year, .month, .day, .hour, .minute],
                     from: fireAt
                 )
                 let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-                // 同一部番的两集要各自成条，id 用「番 + 集序号」，否则后一条盖掉前一条。
-                let identifier = "\(Self.identifier(for: entry.id))-\(scheduled)"
                 let request = UNNotificationRequest(
                     identifier: identifier,
                     content: content,
@@ -254,5 +273,52 @@ final class UpdateNotificationScheduler {
 
     private static func identifier(for bangumiID: Int) -> Int {
         idBase + (abs(bangumiID) % idRange)
+    }
+
+    // MARK: - 封面附件
+
+    /// 为本地通知创建临时封面附件（仅从本地缓存读取，无缓存则返回 nil，绝不发起任何网络请求）。
+    /// 返回生成的附件以及需要清理的临时文件 URL。
+    private func makeCoverAttachment(
+        coverURLString: String,
+        attachmentIdentifier: String
+    ) -> (attachment: UNNotificationAttachment, tempURL: URL)? {
+        guard !coverURLString.isEmpty,
+              let data = KazumiImageLoader.shared.cachedDiskData(for: coverURLString)
+        else {
+            return nil
+        }
+
+        // 识别图片魔数，确认为标准 JPEG 或 PNG；其他格式（如 WebP）转为 JPEG 以便 iOS 通知服务原生显示。
+        let isJPEG = data.count >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF
+        let isPNG = data.count >= 4 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47
+
+        let ext = isJPEG ? "jpg" : (isPNG ? "png" : "jpg")
+        let finalData: Data
+        if isJPEG || isPNG {
+            finalData = data
+        } else if let image = UIImage(data: data),
+                  let converted = image.jpegData(compressionQuality: 0.85) {
+            finalData = converted
+        } else {
+            return nil
+        }
+
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notif_cover_\(UUID().uuidString)")
+            .appendingPathExtension(ext)
+
+        do {
+            try finalData.write(to: tempURL, options: .atomic)
+            let attachment = try UNNotificationAttachment(
+                identifier: attachmentIdentifier,
+                url: tempURL,
+                options: nil
+            )
+            return (attachment, tempURL)
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            return nil
+        }
     }
 }

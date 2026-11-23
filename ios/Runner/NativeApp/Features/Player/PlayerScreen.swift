@@ -499,6 +499,11 @@ struct PlayerScreen: View {
             hudToastSerial &+= 1
             surface.hudToastMessage = notice.message
         }
+        .onChange(of: environment.bangumiProgress.failureNotice) { _, notice in
+            guard let notice else { return }
+            hudToastSerial &+= 1
+            surface.hudToastMessage = notice.message
+        }
         // 下载失败说一句带原因的（LP 5115）：格子上不再挂红点，改成弹一下。
         .onChange(of: environment.downloads.failureNotice) { _, message in
             guard let message, !message.isEmpty else { return }
@@ -2474,7 +2479,8 @@ struct PlayerScreen: View {
                     type: type
                 )
                 guard pushed else {
-                    surface.toastMessage = "同步到 Bangumi 失败，已取消本次状态修改"
+                    let reason = environment.bangumiSync.lastError ?? String(localized: "网络或服务异常")
+                    surface.toastMessage = String(localized: "同步到 Bangumi 失败（\(reason)），已取消本次状态修改")
                     return
                 }
             }
@@ -4879,6 +4885,20 @@ struct PlayerScreen: View {
                                     episodeGridCell(controller, index: index)
                                 }
                                 .buttonStyle(PlayerPressStyle())
+                                .contextMenu {
+                                    if !isChoosingDownloads, (settings.bangumiSyncEnable || settings.bangumiAutoMarkWatched) {
+                                        Button {
+                                            Task {
+                                                await environment.bangumiProgress.markManually(
+                                                    subjectID: controller.bangumiID,
+                                                    episodeNumber: index + 1
+                                                )
+                                            }
+                                        } label: {
+                                            Label(String(localized: "标为已看 (Bangumi)"), systemImage: "checkmark.circle")
+                                        }
+                                    }
+                                }
                                 .id(index)
                             }
                         }

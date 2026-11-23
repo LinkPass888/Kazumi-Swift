@@ -597,6 +597,11 @@ struct TimelineScreen: View {
         }
     }
 
+    /// 过滤条件与排序组合键：变化时让各日列表回顶，避免列表缩短后停在底部空白。
+    private var filterScrollKey: String {
+        "\(controller.notShowWatchedBangumis)-\(controller.notShowAbandonedBangumis)-\(controller.onlyShowWatchingBangumis)-\(controller.sort.rawValue)"
+    }
+
     /// 触感反馈关闭时传 nil：`.sensoryFeedback` 不比较到新值就不触发。
     private var hapticTrigger: Int? {
         settings.hapticFeedbackEnabled ? selectedWeekday : nil
@@ -661,6 +666,9 @@ struct TimelineScreen: View {
                 guard let new, items.contains(where: { $0.id == new }) else { return }
                 proxy.scrollTo(new, anchor: .center)
             }
+            // 过滤条件或排序变化时重建该日竖向 ScrollView，彻底清掉旧的底部偏移和 Lazy 布局缓存，
+            // 防止滑到底部后再大量过滤时 LazyVStack/LazyVGrid 卡死在可视区外导致全空。
+            .id(filterScrollKey)
             }
         }
     }

@@ -647,14 +647,19 @@ extension BangumiInfoScreen {
     }
 
     /// 放送星期菜单：七项，收窄成一颗小胶囊（与推荐页的标签菜单同一处理）。
+    /// 手动修改过放送星期时，在原始那一天旁标出「（默认）」方便一键改回。
     private func weekdayMenu(_ controller: InfoController) -> some View {
         let current = currentWeekday(controller)
+        let original = defaultWeekday(controller)
+        let isModified = current != original
         return Menu {
             ForEach(1...7, id: \.self) { weekday in
                 Button {
                     BangumiTimelineStore.shared.setWeekday(weekday, for: controller.item.id)
                 } label: {
-                    Text(weekday == current ? "✓ \(weekdayTitle(weekday))" : weekdayTitle(weekday))
+                    let base = weekdayTitle(weekday)
+                    let suffix = (isModified && weekday == original) ? String(localized: "（默认）") : ""
+                    Text(weekday == current ? "✓ \(base)\(suffix)" : "\(base)\(suffix)")
                 }
             }
         } label: {
@@ -958,15 +963,18 @@ extension BangumiInfoScreen {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(.ultraThinMaterial)
+                    Capsule(style: .continuous)
+                        .fill(.regularMaterial)
+                        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
                 )
-                .padding(.top, 8)
+                .padding(.top, 6)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(100)
                 // 自动消失只做纯赋值，不包 withAnimation：连同下面把出入场
                 // 交给 .animation(value:)，这条路径上不再存在“在动画里改状态”。
                 // task 以文案为 id：快速连点时上一条定时器自然作废，不会提前清掉新的。
                 .task(id: message) {
-                    try? await Task.sleep(for: .seconds(2))
+                    try? await Task.sleep(for: .seconds(2.5))
                     guard !Task.isCancelled else { return }
                     toastMessage = nil
                 }
@@ -1057,7 +1065,8 @@ extension BangumiInfoScreen {
                 type: type
             )
             guard pushed else {
-                toastMessage = String(localized: "同步到 Bangumi 失败，已取消本次状态修改")
+                let reason = environment.bangumiSync.lastError ?? String(localized: "网络或服务异常")
+                toastMessage = String(localized: "同步到 Bangumi 失败（\(reason)），已取消本次状态修改")
                 return
             }
             applyCollect(controller, type)
@@ -1100,18 +1109,28 @@ extension BangumiInfoScreen {
     /// 顺序和 main 一致：手动选的星期 → 时间表的分组（含凌晨档换列）→
     /// 开播日过一遍凌晨档规则。不能直接拿开播日：接口经常不给开播日，退回
     /// 默认值就会和时间表对不上（时间表排周一、这里写周日）。
+    private func defaultWeekday(_ controller: InfoController) -> Int {
+        if let column = TimelineWeekdayCache.weekday(of: controller.item.id) {
+            return max(1, min(7, column))
+        }
+        return max(
+            1,
+            min(
+                7,
+                TimelineColumn.weekday(
+                    bangumiWeekday: controller.item.airWeekday,
+                    airTimeOf: controller.item.id
+                )
+            )
+        )
+    }
+
     private func currentWeekday(_ controller: InfoController) -> Int {
         let store = BangumiTimelineStore.shared
         if let entry = store.entry(for: controller.item.id), entry.weekdayCustom {
             return max(1, min(7, entry.weekday))
         }
-        if let column = TimelineWeekdayCache.weekday(of: controller.item.id) {
-            return column
-        }
-        return TimelineColumn.weekday(
-            bangumiWeekday: controller.item.airWeekday,
-            airTimeOf: controller.item.id
-        )
+        return defaultWeekday(controller)
     }
 
     private func isInTimeline(_ controller: InfoController) -> Bool {
@@ -1165,7 +1184,8 @@ extension BangumiInfoScreen {
                 type: .watching
             )
             guard pushed else {
-                toastMessage = String(localized: "同步到 Bangumi 失败，已取消本次状态修改")
+                let reason = environment.bangumiSync.lastError ?? String(localized: "网络或服务异常")
+                toastMessage = String(localized: "同步到 Bangumi 失败（\(reason)），已取消本次状态修改")
                 return
             }
             applyWatchingAndEnableTimeline(item, totalEpisodes: max(0, totalEpisodes))
