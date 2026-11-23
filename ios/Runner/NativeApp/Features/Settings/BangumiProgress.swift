@@ -41,11 +41,7 @@ final class BangumiProgressService {
     /// 记一句「刚标记了」并换一个序号，保证消费端每次都算新值。
     private func noteMarked(episodeNumber: Int? = nil) {
         markedNoticeSerial += 1
-        let text = if let episodeNumber {
-            String(localized: "已标记第 \(episodeNumber) 集看过")
-        } else {
-            String(localized: "已标记本集看过")
-        }
+        let text = episodeNumber.map { String(localized: "已标记第 \($0) 集看过") } ?? String(localized: "已标记本集看过")
         markedNotice = MarkedNotice(
             message: text,
             serial: markedNoticeSerial

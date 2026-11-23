@@ -217,7 +217,7 @@ struct BangumiInfoScreen: View {
 
             startPlayingButton
         }
-        .safeAreaInset(edge: .top) { toastView }
+        .overlay(alignment: .top) { toastView }
         // 量容器尺寸：宽档两栏、矮屏封面封顶都按它算。
         .onGeometryChange(for: CGSize.self) { proxy in
             proxy.size

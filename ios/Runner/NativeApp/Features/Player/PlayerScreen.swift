@@ -4891,7 +4891,7 @@ struct PlayerScreen: View {
                                             Task {
                                                 await environment.bangumiProgress.markManually(
                                                     subjectID: controller.bangumiID,
-                                                    episodeNumber: number
+                                                    episodeNumber: index + 1
                                                 )
                                             }
                                         } label: {
