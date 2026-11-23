@@ -399,6 +399,7 @@ struct PlayerScreen: View {
                             sawLandscape = true
                             landscapeExitTask?.cancel()
                             landscapeExitTask = nil
+                            surface.requestRender()
                         } else if !usesInlineFullscreen, isFullscreen, sawLandscape {
                             sawLandscape = false
                             // 等竖屏稳住再退：转屏途中会报几帧中间尺寸，见一帧竖的
@@ -550,6 +551,7 @@ struct PlayerScreen: View {
             if !fullscreen, showsEpisodesPanel {
                 closeEpisodesPanel()
             }
+            surface.requestRender()
         }
         .onChange(of: controller?.phase) { _, phase in
             if phase == .ready {
@@ -1181,12 +1183,15 @@ struct PlayerScreen: View {
     }
 
     private var boxAspectRatio: CGFloat {
-        if isFullscreen, containerSize.width > 0, containerSize.height > 0 {
-            let window = fullscreenVideoSize
+        if isFullscreen {
+            let window = hostWindowSize(fallback: containerSize)
             if window.width > 0, window.height > 0 {
                 return window.width / window.height
             }
-            return containerSize.width / containerSize.height
+            if containerSize.width > 0, containerSize.height > 0 {
+                return containerSize.width / containerSize.height
+            }
+            return 16.0 / 9.0
         }
         if isWideSplitLayout {
             let totalWidth = max(1, containerSize.width)
@@ -1301,7 +1306,7 @@ struct PlayerScreen: View {
                     usesWideTransport: proxy.size.width >= 600 || (isFullscreen && !usesInlineFullscreen)
                 )
                 let maskWidth: CGFloat? = isFullscreen
-                    ? fullscreenVideoSize.width + Self.maskTopOvershoot * 2
+                    ? proxy.size.width + Self.maskTopOvershoot * 2
                     : nil
                 controlLayer(controller, width: proxy.size.width)
                     .frame(width: proxy.size.width, height: proxy.size.height)
@@ -1395,21 +1400,9 @@ struct PlayerScreen: View {
         }
     }
 
-    private var fullscreenVideoSize: CGSize {
-        guard isFullscreen else { return .zero }
-        return CGSize(
-            width: containerSize.width + containerInsets.leading + containerInsets.trailing,
-            height: containerSize.height + containerInsets.top + containerInsets.bottom
-        )
-    }
-
     private func interactiveSurface(_ controller: PlayerController) -> some View {
         GeometryReader { proxy in
-            let videoBoxSize: CGSize = if isFullscreen && !usesInlineFullscreen {
-                fullscreenVideoSize
-            } else {
-                proxy.size
-            }
+            let videoBoxSize = proxy.size
             let gestureWidth = max(1, proxy.size.width)
             let gestureHeight = max(1, proxy.size.height)
 

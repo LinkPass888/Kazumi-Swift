@@ -201,6 +201,11 @@ final class PlayerSurfaceModel {
         engine?.setRenderingLocked(locked)
     }
 
+    /// 请求重新出图并按当前图层尺寸重构交换链（转屏完成、退出/进入全屏等突变时使用）。
+    func requestRender() {
+        engine?.requestRender()
+    }
+
     /// 抓当前这一帧（截图）。mpv 的 `screenshot-raw` 直接给解码后的原始帧，
     /// 再退一步才让 VO 出 PNG；`CAMetalLayer` 的 drawable 不能被 CPU 截取。
     ///

@@ -71,6 +71,27 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
         }
     }
 
+    /// 尺寸稳定后分段重配视频输出，确保转屏过渡完成后拿到最终正确的全屏物理尺寸。
+    private var pendingSizeCommit: Task<Void, Never>?
+
+    private func scheduleSizeCommit() {
+        pendingSizeCommit?.cancel()
+        pendingSizeCommit = Task { @MainActor [weak self] in
+            // iOS 转屏动画通常持续 300~400ms。分段多次校验同步，
+            // 确保转屏中段与动画最终稳态落定时都能拿到准确的全屏目标物理尺寸并重构 swapchain。
+            for delay in [100, 250, 200] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard let self, !Task.isCancelled else { return }
+                self.metalView.setNeedsLayout()
+                self.metalView.updateDrawableSize()
+                if self.videoSize.width > 0, self.videoSize.height > 0 {
+                    self.engine?.reconfigureVideoOutputForSurfaceResize()
+                }
+            }
+            self?.pendingSizeCommit = nil
+        }
+    }
+
     /// 更新视频矩形所需的三样东西；真正的尺寸在 layoutSubviews 里按当前 bounds 算。
     func updateVideoLayout(
         videoSize: CGSize,
@@ -119,6 +140,8 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
             if videoSize.width > 0, videoSize.height > 0 {
                 engine?.reconfigureVideoOutputForSurfaceResize()
             }
+            // 转屏途中尺寸会连抖几次，等动画稳步落定后再分批补发确认。
+            scheduleSizeCommit()
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
         // 顶部按宿主视图坐标系内顶栏实际侵入视频矩形的深度（`max(0, danmakuTopInset - rect.minY)`）扣减；
