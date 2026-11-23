@@ -1200,7 +1200,8 @@ struct PopularHero: View {
         }
         let pushed = await environment.bangumiSync.pushCollectible(bangumiID: poster.id, type: next)
         guard pushed else {
-            withAnimation { toastMessage = "同步到 Bangumi 失败，已取消本次状态修改" }
+            let reason = environment.bangumiSync.lastError ?? String(localized: "网络或服务异常")
+            withAnimation { toastMessage = String(localized: "同步到 Bangumi 失败（\(reason)），已取消本次状态修改") }
             scheduleToastClear()
             return
         }

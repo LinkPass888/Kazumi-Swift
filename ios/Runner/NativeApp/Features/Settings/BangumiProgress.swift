@@ -28,25 +28,35 @@ final class BangumiProgressService {
     /// 服务端同状态重复写是幂等的。
     private var handled = Set<String>()
 
-    /// 刚标上的那一集，给播放器显示一句提示（LP 2026-10-29 4795「标记后加个提示就好了」）。
-    /// 只存最新一句：补队列时连着标好几集，屏幕上也只说最后那集。
-    ///
-    /// **必须带一个自增序号**：提示文案是固定的一句，连标两集时值是同一个字符串，
-    /// `.onChange` 认「值没变」就不再触发——表现是「第一集有提示，后面全没有」，
-    /// 而 Bangumi 那边其实每集都标上了（LP 2026-11-08）。
+    /// 标记提示信息（成功或失败提示）。
     struct MarkedNotice: Equatable {
         let message: String
         let serial: Int
     }
 
     private(set) var markedNotice: MarkedNotice?
+    private(set) var failureNotice: MarkedNotice?
     private var markedNoticeSerial = 0
 
     /// 记一句「刚标记了」并换一个序号，保证消费端每次都算新值。
-    private func noteMarked() {
+    private func noteMarked(episodeNumber: Int? = nil) {
         markedNoticeSerial += 1
+        let text = if let episodeNumber {
+            String(localized: "已标记第 \(episodeNumber) 集看过")
+        } else {
+            String(localized: "已标记本集看过")
+        }
         markedNotice = MarkedNotice(
-            message: String(localized: "已标记本集看过"),
+            message: text,
+            serial: markedNoticeSerial
+        )
+    }
+
+    /// 记一句「标记失败」并换一个序号，供播放器 HUD 提示。
+    private func noteFailure(_ message: String) {
+        markedNoticeSerial += 1
+        failureNotice = MarkedNotice(
+            message: message,
             serial: markedNoticeSerial
         )
     }
@@ -99,6 +109,16 @@ final class BangumiProgressService {
         }
     }
 
+    /// 手动标记某集为已看（如在选集面板快捷标记）。
+    func markManually(subjectID: Int, episodeNumber: Int) async {
+        guard subjectID > 0, episodeNumber > 0 else { return }
+        guard !settings.bangumiAccessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            noteFailure(String(localized: "请先在设置中绑定 Bangumi 访问令牌"))
+            return
+        }
+        _ = await markOnce(subjectID: subjectID, episodeNumber: episodeNumber)
+    }
+
     /// 把队列里欠着的标记补一遍（回前台、以及手动调用时）。
     ///
     /// 一条一条来：补到一半被系统杀掉，队列里剩下的还在，下次接着补。
@@ -135,12 +155,14 @@ final class BangumiProgressService {
         case .listUnavailable:
             // 列表拉不下来多半是网络：先欠着，回前台再试（原版 eps 为空也入队）。
             enqueue(subjectID: subjectID, episodeNumber: episodeNumber)
+            noteFailure(String(localized: "获取 Bangumi 剧集失败，已加入稍后重试"))
             return true
         case .noSuchEpisode:
             // 服务端没有这一集（特别篇、未开播）：再试多少次也一样，丢掉。
             KazumiLog.network.notice(
                 "Bangumi: \(subjectID, privacy: .public) 没有第 \(episodeNumber, privacy: .public) 集，跳过"
             )
+            noteFailure(String(localized: "Bangumi 未找到第 \(episodeNumber) 集"))
             return false
         }
 
@@ -150,31 +172,33 @@ final class BangumiProgressService {
             KazumiLog.network.notice(
                 "Bangumi: 已标记看过 \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集"
             )
-            noteMarked()
+            noteMarked(episodeNumber: episodeNumber)
             return false
         case .unauthorized:
             // 令牌没了或过期：这次就算了，不要拿一个失效凭据反复重试。
             KazumiLog.network.error("Bangumi: 自动标记看过失败，令牌无效")
+            noteFailure(String(localized: "Bangumi 标记看过失败：访问令牌已失效"))
             return false
         case .rejected:
             KazumiLog.network.error(
                 "Bangumi: \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集在 Bangumi 上不存在，标记丢弃"
             )
+            noteFailure(String(localized: "Bangumi 标记看过失败：单集不存在"))
             return false
         case .notCollected:
             // 这部番不在收藏里。Bangumi 的单集接口挂在 `/collections/{subject_id}/`
-            // 下面，没收藏就是 400，标不了——而「顺手把整部番改成在看」是用户明确
-            // 不要的副作用（LP 2026-11-08）。所以这里什么都不做：不改收藏状态、
-            // 不入队（重试多少次还是 400）、也不弹提示，只留一行日志。
+            // 下面，没收藏就是 400，标不了。
             KazumiLog.network.notice(
                 "Bangumi: 该番未收藏，跳过本集标记（不改收藏状态）"
             )
+            noteFailure(String(localized: "Bangumi 标记看过失败：请先将番剧加入收藏"))
             return false
-        case .failed:
+        case let .failed(reason):
             KazumiLog.network.error(
-                "Bangumi: 自动标记看过失败 \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集，进队列等下次补"
+                "Bangumi: 自动标记看过失败 \(subjectID, privacy: .public) 第 \(episodeNumber, privacy: .public) 集，进队列等下次补: \(reason)"
             )
             enqueue(subjectID: subjectID, episodeNumber: episodeNumber)
+            noteFailure(String(localized: "Bangumi 标记第 \(episodeNumber) 集失败（\(reason)），已加入重试"))
             return true
         }
     }

@@ -47,9 +47,10 @@ enum BangumiEndpoints {
     /// 吐槽（评论），next 域。
     static let commentsNext = "/p1/subjects/{0}/comments?limit={1}&offset={2}"
 
-    /// 写收藏（追番状态 / 吐槽 / 评分）。与原版 api_endpoints.dart 一致：
-    /// 写操作走 bgmapi 这个认证镜像域，读操作走 api.bgm.tv。
-    static let authMirrorDomain = "https://api.bgmapi.com"
+    /// 写收藏（追番状态 / 吐槽 / 评分）。与 Kazumi 2.4.6 一致：
+    /// 废弃 bgmapi 旧镜像域，统一直接走官方 apiDomain (api.bgm.tv)。
+    @available(*, deprecated, message: "Use apiDomain instead")
+    static let authMirrorDomain = "https://api.bgm.tv"
     static let setCollection = "/v0/users/-/collections/{0}"
 
     /// 对应 ApiEndpoints.formatUrl。
@@ -623,29 +624,46 @@ enum BangumiAPI {
     // MARK: - 写收藏 / 吐槽
 
     /// 对应 addOrUpdateBangumiEvaluationBySubjectID：把「追番状态 + 吐槽 + 评分」
-    /// 写回 Bangumi。
+    /// 写回 Bangumi（抛错版，供同步引擎与 UI 获取具体失败原因）。
     ///
-    /// 原版的写操作走 bgmapi 认证镜像域，且必须带用户令牌；没有令牌直接返回
-    /// false，让调用方提示先登录，而不是发一个必然 401 的请求。
+    /// 与 Kazumi 2.4.6 一致：直接走官方 apiDomain (api.bgm.tv) 并带 Bearer 令牌。
+    static func updateCollectionThrows(
+        subjectID: Int,
+        type: CollectType,
+        comment: String? = nil,
+        rate: Int? = nil
+    ) async throws {
+        guard let bangumiType = type.bangumiCollectionType else {
+            throw NetworkError.transport(String(localized: "不支持的收藏类型"))
+        }
+        guard accessToken != nil else {
+            throw NetworkError.transport(String(localized: "未配置 Bangumi 访问令牌"))
+        }
+        var body: [String: JSONValue] = ["type": .int(bangumiType)]
+        if let comment { body["comment"] = .string(comment) }
+        if let rate { body["rate"] = .int(rate) }
+        let url = BangumiEndpoints.format(
+            BangumiEndpoints.apiDomain + BangumiEndpoints.setCollection,
+            [subjectID]
+        )
+        _ = try await post(url, body: .object(body), requiresAuth: true)
+        KazumiLog.network.debug("Update bangumi collection: \(subjectID, privacy: .public)")
+    }
+
+    /// 写回 Bangumi，失败时记日志并返回 false。
     static func updateCollection(
         subjectID: Int,
         type: CollectType,
         comment: String? = nil,
         rate: Int? = nil
     ) async -> Bool {
-        guard let bangumiType = type.bangumiCollectionType, accessToken != nil else {
-            return false
-        }
-        var body: [String: JSONValue] = ["type": .int(bangumiType)]
-        if let comment { body["comment"] = .string(comment) }
-        if let rate { body["rate"] = .int(rate) }
-        let url = BangumiEndpoints.format(
-            BangumiEndpoints.authMirrorDomain + BangumiEndpoints.setCollection,
-            [subjectID]
-        )
         do {
-            _ = try await post(url, body: .object(body), requiresAuth: true)
-            KazumiLog.network.debug("Update bangumi collection: \(subjectID, privacy: .public)")
+            try await updateCollectionThrows(
+                subjectID: subjectID,
+                type: type,
+                comment: comment,
+                rate: rate
+            )
             return true
         } catch {
             KazumiLog.network.error(
@@ -1077,7 +1095,7 @@ enum BangumiAPI {
         guard !name.isEmpty else {
             throw NetworkError.transport(String(localized: "还没确认 Bangumi 用户名，无法拉取收藏"))
         }
-        let endpoint = BangumiEndpoints.authMirrorDomain + "/v0/users/\(name)/collections"
+        let endpoint = BangumiEndpoints.apiDomain + "/v0/users/\(name)/collections"
         var collected: [RemoteCollection] = []
         var seen = Set<Int>()
         var offset = 0
@@ -1113,7 +1131,7 @@ enum BangumiAPI {
         return collected
     }
 
-    /// 标记单集的四种结果。对应 bangumi_progress_service.dart 的 MarkResult。
+    /// 标记单集的结果。对应 bangumi_progress_service.dart 的 MarkResult。
     enum MarkOutcome: Sendable {
         case ok
         /// 番剧还没收藏（接口回 400）：要先收成「在看」再重试。
@@ -1121,23 +1139,20 @@ enum BangumiAPI {
         case unauthorized
         /// 这一集在 Bangumi 上不存在（404），重试也没用。
         case rejected
-        case failed
+        case failed(String)
     }
 
     /// 把一集在 Bangumi 上标为「看过」（`type = 2`）。
     ///
-    /// 只给「自动标记看过」用：番剧本身还没收藏时接口会回 400，
-    /// 调用方要先把番剧收成「在看」再试一次。
+    /// 供「自动标记看过」与手动单集标记使用：番剧本身还没收藏时接口会回 400。
     static func markEpisodeWatched(episodeID: Int) async -> MarkOutcome {
         guard accessToken != nil else { return .unauthorized }
         let url = BangumiEndpoints.format(
-            BangumiEndpoints.authMirrorDomain + BangumiEndpoints.setEpisode,
+            BangumiEndpoints.apiDomain + BangumiEndpoints.setEpisode,
             [episodeID]
         )
         do {
             // **必须 PUT**：这条接口只认 PUT，POST 回 404（"This is default response…"）。
-            // 之前写的是 post，于是每次都被当成「这一集不存在」丢掉，
-            // 自动标记看过从来没成功过一次（LP 4744）。
             _ = try await put(url, body: .object(["type": .int(2)]), requiresAuth: true)
             return .ok
         } catch let error as NetworkError {
@@ -1147,18 +1162,18 @@ enum BangumiAPI {
                 case 400: return .notCollected
                 case 401, 403: return .unauthorized
                 case 404: return .rejected
-                default: return .failed
+                default: return .failed("HTTP \(status)")
                 }
             }
             KazumiLog.network.error(
                 "Mark bangumi episode watched failed: \(error.localizedDescription, privacy: .public)"
             )
-            return .failed
+            return .failed(error.localizedDescription)
         } catch {
             KazumiLog.network.error(
                 "Mark bangumi episode watched failed: \(error.localizedDescription, privacy: .public)"
             )
-            return .failed
+            return .failed(error.localizedDescription)
         }
     }
 
