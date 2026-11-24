@@ -371,8 +371,11 @@ final class LibraryStore {
     }
 
     func entry(for bangumiID: Int) -> LibraryEntry? {
-        guard let index = entryIndexByID[bangumiID], index < entries.count else { return nil }
-        return entries[index]
+        // 先触达被观察属性 `entries`，确保目标尚未收藏（索引返回 nil）或异步加载完成前，
+        // SwiftUI 视图仍能注册 Observation 依赖，收藏状态变化时立即刷新（如详情页追番胶囊）。
+        let currentEntries = entries
+        guard let index = entryIndexByID[bangumiID], index < currentEntries.count else { return nil }
+        return currentEntries[index]
     }
 
     /// 这部剧在这条规则上接着看的位置：第几集 + 第几条线路。没有记录就是 nil。
@@ -391,19 +394,23 @@ final class LibraryStore {
     /// 详情页 / 播放器只关心「这部剧看到哪儿了」，规则名不同就比不出来，
     /// 所以这里不限定规则，跟老格式「一部番只有一条记录」时的结果一致。
     func record(for bangumiID: Int) -> WatchRecord? {
-        latestHistoryByBangumiID[bangumiID]
+        // 先触达 `history` 注册 Observation 依赖，避免只读 @ObservationIgnored 索引导致视图不刷新。
+        _ = history
+        return latestHistoryByBangumiID[bangumiID]
     }
 
     /// 这部剧在这条规则上的那一份记录。
     func record(for bangumiID: Int, pluginName: String) -> WatchRecord? {
+        let currentHistory = history
         let key = "\(pluginName)\(bangumiID)::online"
-        guard let index = historyIndexByID[key], index < history.count else { return nil }
-        return history[index]
+        guard let index = historyIndexByID[key], index < currentHistory.count else { return nil }
+        return currentHistory[index]
     }
 
     /// 最近看过的 N 部番剧（与「我的」页观看历史卡片同一口径：按 `updatedAt` 倒序、按 `bangumiID` 去重）。
     /// 单趟 O(M) Top-K 扫描，避免每次访问都全量排序。
     func recentTopRecords(limit: Int = 3) -> [WatchRecord] {
+        _ = history
         guard limit > 0, !latestHistoryByBangumiID.isEmpty else { return [] }
         var picked: [WatchRecord] = []
         picked.reserveCapacity(min(limit, latestHistoryByBangumiID.count))

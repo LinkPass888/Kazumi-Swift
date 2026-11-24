@@ -115,27 +115,34 @@ struct SourceSheet: View {
         .interactiveDismissDisabled(captchaFlow != nil)
         .overlay {
             if let box = captchaFlow {
-                ZStack {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            Task {
-                                switch box.flow.phase {
-                                case .completed: return
-                                case .failed, .cancelled: break
-                                default: await box.flow.cancel()
+                GeometryReader { proxy in
+                    // CaptchaSheet 内部含 NavigationStack + ScrollView，不限高度会垂直撑满全屏；
+                    // 约束在约半屏高度（360–440pt，随键盘/横屏可用空间自动收缩），大字号靠内部 ScrollView 滚动。
+                    let cardMaxHeight = min(
+                        max(proxy.size.height - 32, 240),
+                        min(max(proxy.size.height * 0.52, 360), 440)
+                    )
+                    ZStack {
+                        Color.black.opacity(0.4)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                Task {
+                                    switch box.flow.phase {
+                                    case .completed: return
+                                    case .failed, .cancelled: break
+                                    default: await box.flow.cancel()
+                                    }
+                                    captchaFlow = nil
                                 }
-                                captchaFlow = nil
                             }
-                        }
-                    // 不写死高度（Ato 6521）：卡片按可用空间自己撑，内容装不下由
-                    // 面板内部的 ScrollView 滚，大字号下也不会撑出卡片。
-                    CaptchaSheet(flow: box.flow) { captchaFlow = nil }
-                        .frame(maxWidth: 420)
-                        .background(KazumiPalette.heroBackground(for: colorScheme))
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .shadow(radius: 24)
-                        .padding(24)
+                        CaptchaSheet(flow: box.flow) { captchaFlow = nil }
+                            .frame(maxWidth: 420, maxHeight: cardMaxHeight)
+                            .background(KazumiPalette.heroBackground(for: colorScheme))
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .shadow(radius: 24)
+                            .padding(24)
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
                 }
             }
         }
