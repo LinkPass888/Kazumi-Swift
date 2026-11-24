@@ -835,21 +835,25 @@ final class MPVEngine {
         if let url = raw.url { return (url, raw.note) }
         log(raw.note)
 
-        // 直通硬件帧不一定能由 screenshot-raw 下载成打包 RGB。这个切换只服务
-        // 用户主动截图；PiP 的 33ms feed 从不走本方法，且 PiP 开启的内核本来就
-        // 在创建时固定成 videotoolbox-copy。
-        #if !targetEnvironment(simulator)
-        if effectiveHardwareDecode == HardwareDecodeMode.videotoolbox.rawValue {
-            let viaCopy = await captureRawFrame(usingCopyDecoder: true)
-            if let url = viaCopy.url { return (url, viaCopy.note) }
-            log(viaCopy.note)
-        }
-        #endif
-
-        // 原始帧那条不成再退一步：试 VO 出图（真机上以前一直失败，留着当第二选择）。
+        // 第二选择：临时关闭 screenshot-sw，让 vo=gpu-next 直接在 GPU 侧按片源分辨率
+        // 读回纯视频帧（video 标志，不含字幕与 OSD）。直通硬件帧无需切换解码器、零卡顿。
         let viaVO = await captureFrameViaVO()
         if let url = viaVO.url { return (url, viaVO.note) }
         log(viaVO.note)
+
+        // 第三选择：仅在直通硬解且 GPU VO 出图也失败时，临时切到 videotoolbox-copy +
+        // vd-lavc-dr=no 重取原始帧；PiP 的 33ms feed 从不走本方法。
+        #if !targetEnvironment(simulator)
+        let isPassthrough = effectiveHardwareDecode == HardwareDecodeMode.videotoolbox.rawValue
+            || stringProperty("hwdec-current") == HardwareDecodeMode.videotoolbox.rawValue
+        if isPassthrough {
+            let viaCopy = await captureRawFrame(usingCopyDecoder: true)
+            if let url = viaCopy.url { return (url, viaCopy.note) }
+            log(viaCopy.note)
+            return (nil, "\(raw.note)；\(viaVO.note)；\(viaCopy.note)")
+        }
+        #endif
+
         return (nil, "\(raw.note)；\(viaVO.note)")
     }
 
@@ -858,16 +862,24 @@ final class MPVEngine {
         usingCopyDecoder: Bool = false
     ) async -> (url: URL?, note: String) {
         let started = Date()
+        let restoreDR = effectiveHardwareDecode == HardwareDecodeMode.videotoolboxCopy.rawValue ? "no" : "yes"
         if usingCopyDecoder {
+            setOptionForPlayback("vd-lavc-dr", "no")
             setOptionForPlayback("hwdec", HardwareDecodeMode.videotoolboxCopy.rawValue)
             _ = await waitForDecoder("videotoolbox-copy", timeout: 2)
         }
         defer {
             if usingCopyDecoder {
                 setOptionForPlayback("hwdec", effectiveHardwareDecode)
+                setOptionForPlayback("vd-lavc-dr", restoreDR)
             }
         }
-        let shot = await rawScreenshot()
+        var shot = await rawScreenshot()
+        // 刚切到 videotoolbox-copy 时当前显示帧可能仍是上一帧零拷贝表面，短等一帧再补取一次。
+        if shot.frame == nil, usingCopyDecoder {
+            try? await Task.sleep(for: .milliseconds(120))
+            shot = await rawScreenshot()
+        }
         guard let frame = shot.frame else {
             return (nil, "取帧失败：screenshot-raw 没回帧")
         }
@@ -1073,6 +1085,10 @@ final class MPVEngine {
         // 失败后**不**退回不带标志那条：不带标志时 mpv 默认把字幕烧进图里，而这个引擎
         // 从头到尾没设过 `sid`，流里只要有内嵌字幕轨它就会自动选中——那正是第 1 条
         // 明令不要的（Fuck 4704）。所以失败就报错，让人看见，不偷偷出一张带字幕的图。
+        // 内核启动时设了 screenshot-sw=yes，直通硬件帧走软件路径会直接报 -12；
+        // 这里临时关掉 screenshot-sw 让 vo=gpu-next 走 GPU 离屏读回，结束后恢复。
+        setOptionForPlayback("screenshot-sw", "no")
+        defer { setOptionForPlayback("screenshot-sw", "yes") }
         let result = await runAsyncCommand("screenshot-to-file", [path.path, "video"])
         guard result >= 0 else {
             let note = "截图失败：mpv 出图没成（video 标志，错误码 \(result)），共 \(Int(Date().timeIntervalSince(started) * 1000)) 毫秒"

@@ -428,17 +428,16 @@ enum WebDAVSync {
         var writeBackError: String?
         if needHistory, legacyHistoryRead {
             do {
-                try await WebDAVLegacy.writeHistory(
+                _ = try await WebDAVLegacy.writeHistory(
                     history,
                     existing: legacySnapshot,
                     client: client
-                ) { current, total in
+                ) { _, total in
                     guard let progress else { return }
-                    guard current == 0 || current + 1 >= total || current % 25 == 0 else { return }
                     let event = ProgressEvent(
-                        text: String(localized: "正在写回原版观看记录 · \(current) / \(total)"),
-                        current: current,
-                        total: total
+                        text: String(localized: "正在上传原版观看记录（\(total) 条）…"),
+                        current: 0,
+                        total: 0
                     )
                     Task { @MainActor in
                         progress(event)
@@ -448,8 +447,9 @@ enum WebDAVSync {
                 writeBackError = Self.technicalText(error)
             }
         }
-        if needShield, let mergedShieldState {
-            // 只写本机那一份，别的设备的文件一概不碰。整份状态都要写，墓碑不能丢。
+        if needShield, let mergedShieldState,
+           mergedShieldState.entries != (readShieldSnapshot?.own.entries ?? [:]) {
+            // 只在合并结果与本机已上传文件存在差异时写回，避免无变更二次同步重复上传。
             do {
                 try await WebDAVLegacy.writeShield(
                     mergedShieldState,
