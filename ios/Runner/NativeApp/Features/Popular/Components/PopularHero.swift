@@ -1209,6 +1209,12 @@ struct PopularHero: View {
             scheduleToastClear()
             return
         }
+        if next == .none {
+            applyCollect(poster, .none)
+            withAnimation { toastMessage = String(localized: "Bangumi 不支持在 App 内取消追番，请到网站删除") }
+            scheduleToastClear()
+            return
+        }
         let pushed = await environment.bangumiSync.pushCollectible(bangumiID: poster.id, type: next)
         guard pushed else {
             let reason = environment.bangumiSync.lastError ?? String(localized: "网络或服务异常")

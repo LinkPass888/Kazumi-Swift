@@ -70,6 +70,7 @@ struct SourceSheet: View {
     /// 正在修改检索词的来源；为空表示没有弹出输入框。
     @State private var keywordTarget: String?
     @State private var keywordDraft = ""
+    @State private var didSelectPlay = false
     /// 这一轮检索是不是已经起跑了：起跑点挪到「列表真的画出来之后」，
     /// 见下面 `list` 上的 `.task`。
     @State private var searchStarted = false
@@ -93,6 +94,7 @@ struct SourceSheet: View {
             }
             .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
             .onAppear {
+                didSelectPlay = false
                 if SheetTiming.appear == 0 { SheetTiming.appear = SheetTiming.now }
             }
             .navigationTitle(sheetTitle)
@@ -144,6 +146,7 @@ struct SourceSheet: View {
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                 }
+                .ignoresSafeArea(.keyboard)
             }
         }
         // 修改此来源的检索词（main 的 onSourceSearch）：只重检这一个来源。
@@ -319,6 +322,8 @@ struct SourceSheet: View {
                 Divider().padding(.leading, 14)
                 ForEach(Array(group.results.enumerated()), id: \.offset) { index, result in
                     Button {
+                        guard !didSelectPlay else { return }
+                        didSelectPlay = true
                         onPlay(group.name, result)
                     } label: {
                         HStack(spacing: 8) {

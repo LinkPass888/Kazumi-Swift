@@ -869,6 +869,14 @@ final class DownloadCenter {
         else { return }
 
         // 只更新独立进度对象，不写回值类型 `records`，避免单集进度变化触发整页列表重绘。
+        if let totalSegments = progress.totalSegments, totalSegments > 0,
+           episode.totalSegments != totalSegments,
+           let rIndex = records.firstIndex(where: { $0.id == item.recordKey }),
+           let eIndex = records[rIndex].episodes.firstIndex(where: { $0.number == item.episodeNumber }) {
+            records[rIndex].episodes[eIndex].totalSegments = totalSegments
+            persist()
+        }
+
         let state = progressState(recordKey: item.recordKey, episode: episode)
         if progress.receivedBytes > 0 || state.downloadedBytes == 0 {
             state.downloadedBytes = progress.receivedBytes
@@ -1108,9 +1116,17 @@ final class DownloadCenter {
             let episodeNumber: Int
         }
 
+        struct ReconciledPaused: Sendable {
+            let recordID: String
+            let episodeNumber: Int
+            let progress: Double
+            let downloadedBytes: Int64
+        }
+
         var adoptedDirectories: [AdoptedDirectory] = []
         var recoveredEpisodes: [RecoveredEpisode] = []
         var droppedEpisodes: [DroppedEpisode] = []
+        var reconciledPaused: [ReconciledPaused] = []
     }
 
     private func load() {
@@ -1147,6 +1163,62 @@ final class DownloadCenter {
         var result = MissingFileCheckResult()
         for record in records {
             for episode in record.episodes {
+                if episode.status == .paused {
+                    let candidateFolders = folders(for: record, episode: episode, directoryURL: directoryURL)
+                    let segPrefix = "ep-\(episode.number)-seg-"
+                    let initPrefix = "ep-\(episode.number)-init."
+                    var diskBytes: Int64 = 0
+                    var diskSegments = 0
+                    for folder in candidateFolders {
+                        guard let urls = try? FileManager.default.contentsOfDirectory(
+                            at: folder,
+                            includingPropertiesForKeys: [.fileSizeKey],
+                            options: [.skipsHiddenFiles]
+                        ) else { continue }
+                        var folderBytes: Int64 = 0
+                        var folderSegs = 0
+                        for url in urls {
+                            let name = url.lastPathComponent
+                            let isSeg = name.hasPrefix(segPrefix)
+                            let isInit = name.hasPrefix(initPrefix)
+                            guard isSeg || isInit else { continue }
+                            let size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                            guard size > 0 else { continue }
+                            folderBytes += size
+                            if isSeg { folderSegs += 1 }
+                        }
+                        if folderBytes > diskBytes {
+                            diskBytes = folderBytes
+                            diskSegments = folderSegs
+                        }
+                    }
+                    if diskBytes > 0 {
+                        var reconciledProgress = episode.progress
+                        if let totalSegments = episode.totalSegments, totalSegments > 0, diskSegments > 0 {
+                            reconciledProgress = max(
+                                reconciledProgress,
+                                min(0.99, Double(diskSegments) / Double(totalSegments))
+                            )
+                        } else if episode.progress > 0, episode.downloadedBytes > 0, diskBytes > episode.downloadedBytes {
+                            let estimatedTotal = Double(episode.downloadedBytes) / episode.progress
+                            if estimatedTotal > 0 {
+                                reconciledProgress = max(
+                                    reconciledProgress,
+                                    min(0.99, Double(diskBytes) / estimatedTotal)
+                                )
+                            }
+                        }
+                        if diskBytes > episode.downloadedBytes || reconciledProgress > episode.progress + 0.001 {
+                            result.reconciledPaused.append(.init(
+                                recordID: record.id,
+                                episodeNumber: episode.number,
+                                progress: reconciledProgress,
+                                downloadedBytes: max(episode.downloadedBytes, diskBytes)
+                            ))
+                        }
+                    }
+                    continue
+                }
                 guard episode.status == .completed else { continue }
                 let candidateFolders = folders(for: record, episode: episode, directoryURL: directoryURL)
 
@@ -1269,6 +1341,23 @@ final class DownloadCenter {
         if dropped > 0 {
             KazumiLogBuffer.storage("下载记录：\(dropped) 集的文件不在，按未下载处理")
         }
+        for item in result.reconciledPaused {
+            guard let rIndex = records.firstIndex(where: { $0.id == item.recordID }),
+                  let eIndex = records[rIndex].episodes.firstIndex(where: { $0.number == item.episodeNumber }),
+                  records[rIndex].episodes[eIndex].status == .paused
+            else { continue }
+            records[rIndex].episodes[eIndex].progress = item.progress
+            records[rIndex].episodes[eIndex].downloadedBytes = item.downloadedBytes
+            syncProgressState(
+                recordKey: item.recordID,
+                number: item.episodeNumber,
+                progress: item.progress,
+                downloadedBytes: item.downloadedBytes,
+                totalBytes: records[rIndex].episodes[eIndex].totalBytes
+            )
+            adopted = true
+        }
+
         if dropped > 0 || adopted {
             persist()
         }

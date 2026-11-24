@@ -16,6 +16,7 @@ import SwiftUI
 
 /// 页面里驱动 banner 的那份状态：一条标题、一句可空的说明、变体、怎么收。
 struct KazumiBannerState {
+    var id: UUID = UUID()
     var title: String
     var detail: String? = nil
     var variant: KazumiBanner.Variant = .failure
@@ -34,6 +35,7 @@ struct KazumiBanner: View {
         case info
     }
 
+    var token: UUID = UUID()
     let title: String
     var detail: String? = nil
     var variant: Variant = .failure
@@ -114,7 +116,7 @@ struct KazumiBanner: View {
         .padding(.top, 8)
         .transition(.move(edge: .top).combined(with: .opacity))
         .sensoryFeedback(feedback, trigger: appeared)
-        .task(id: "\(title)|\(detail ?? "")") {
+        .task(id: token) {
             appeared = true
             // 浮层不是控件，读屏不会自己念（Colo 6401 §十二）。
             let announcement = detail.map { "\(title)，\($0)" } ?? title

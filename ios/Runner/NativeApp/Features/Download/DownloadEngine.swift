@@ -71,6 +71,8 @@ struct DownloadProgress: Sendable {
     var totalBytes: Int64
     /// 0…1；总大小未知时是 -1，界面画不确定进度。
     var fraction: Double
+    /// HLS 总分片数（用于强杀重启后按磁盘有效分片精确重建暂停进度）。
+    var totalSegments: Int? = nil
 }
 
 enum DownloadEngineError: LocalizedError, Equatable {
@@ -376,7 +378,8 @@ final class DownloadEngine: @unchecked Sendable {
             onProgress(DownloadProgress(
                 receivedBytes: receivedBytes,
                 totalBytes: 0,
-                fraction: Double(completed) / Double(total)
+                fraction: Double(completed) / Double(total),
+                totalSegments: total
             ))
         }
 
@@ -425,7 +428,8 @@ final class DownloadEngine: @unchecked Sendable {
                     onProgress(DownloadProgress(
                         receivedBytes: receivedBytes,
                         totalBytes: 0,
-                        fraction: total > 0 ? min(1, Double(completed) / Double(total)) : 0
+                        fraction: total > 0 ? min(1, Double(completed) / Double(total)) : 0,
+                        totalSegments: total > 0 ? total : nil
                     ))
                 }
                 if cancellation.isCancelled { throw DownloadEngineError.cancelled }

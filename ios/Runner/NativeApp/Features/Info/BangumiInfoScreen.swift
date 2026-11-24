@@ -255,7 +255,8 @@ struct BangumiInfoScreen: View {
             SourceSheet(
                 controller: current,
                 onPlay: { pluginName, result in
-                    guard router.pendingExternalLink == nil else { return }
+                    // 防连点重入：面板收起动画期间第二次点击时 isShowingSources 已为 false，直接忽略避免堆两个播放页。
+                    guard router.pendingExternalLink == nil, isShowingSources else { return }
                     SourceSheetCoordinator.shared.cacheController(current)
                     sourceNavigationRevision = router.externalNavigationRevision
                     isShowingSources = false
@@ -1058,6 +1059,12 @@ extension BangumiInfoScreen {
         let showToast = settings.bangumiImmediateSyncToastEnable
         guard syncEnabled else {
             applyCollect(controller, type)
+            return
+        }
+        // Bangumi 接口不支持在 App 内取消追番：本地直接落到未追，不回滚，并提示用户去网站删除。
+        if type == .none {
+            applyCollect(controller, .none)
+            toastMessage = String(localized: "Bangumi 不支持在 App 内取消追番，请到网站删除")
             return
         }
         Task {

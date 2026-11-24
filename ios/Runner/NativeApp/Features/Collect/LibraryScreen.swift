@@ -785,6 +785,12 @@ struct LibraryScreen: View {
             commitType(entry, to: type)
             return
         }
+        // Bangumi 接口不支持在 App 内取消追番：本地直接落到未追，不回滚，并提示用户去网站删除。
+        if type == .none {
+            commitType(entry, to: .none)
+            toastMessage = String(localized: "Bangumi 不支持在 App 内取消追番，请到网站删除")
+            return
+        }
         pendingID = entry.id
         Task {
             let pushed = await environment.bangumiSync.pushCollectible(

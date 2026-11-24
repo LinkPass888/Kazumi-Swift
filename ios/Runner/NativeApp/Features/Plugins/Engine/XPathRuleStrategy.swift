@@ -30,10 +30,52 @@ struct XPathRuleStrategy: Sendable {
     private static let captchaRegexCacheLimit = 64
     private static let captchaRegexCache = OSAllocatedUnfairLock<[String: NSRegularExpression]>(initialState: [:])
 
+    private static let attrContainsPattern = try! NSRegularExpression(
+        pattern: #"@([A-Za-z_][\w:.-]*)\s*\*=\s*('[^']*'|"[^"]*")"#
+    )
+    private static let attrPrefixPattern = try! NSRegularExpression(
+        pattern: #"@([A-Za-z_][\w:.-]*)\s*\^=\s*('[^']*'|"[^"]*")"#
+    )
+    private static let attrSuffixPattern = try! NSRegularExpression(
+        pattern: #"@([A-Za-z_][\w:.-]*)\s*\$=\s*('[^']*'|"[^"]*")"#
+    )
+
+    /// 兼容上游 Flutter `xpath_selector` 的扩展属性谓词（`*=` / `^=` / `$=`），
+    /// 改写为 libxml2 原生支持的标准 XPath 1.0 表达式（如 `@class*='foo'` → `contains(@class, 'foo')`）。
+    nonisolated static func normalizeXPath(_ expression: String) -> String {
+        guard expression.contains("*=") || expression.contains("^=") || expression.contains("$=") else {
+            return expression
+        }
+        var result = expression
+        if result.contains("*=") {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = attrContainsPattern.stringByReplacingMatches(
+                in: result, options: [], range: range, withTemplate: "contains(@$1, $2)"
+            )
+        }
+        if result.contains("^=") {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = attrPrefixPattern.stringByReplacingMatches(
+                in: result, options: [], range: range, withTemplate: "starts-with(@$1, $2)"
+            )
+        }
+        if result.contains("$=") {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = attrSuffixPattern.stringByReplacingMatches(
+                in: result,
+                options: [],
+                range: range,
+                withTemplate: "substring(@$1, string-length(@$1) - string-length($2) + 1) = $2"
+            )
+        }
+        return result
+    }
+
     /// 上游 `xpath_selector` 在节点上下文里把 `//x` 解释为当前节点的后代；
     /// Fuzi/libxml2 则会从文档根开始。规则按上游语义编写，只在节点内求值时补成 `.//x`。
     nonisolated static func contextRelativeSelector(_ expression: String) -> String {
-        expression.hasPrefix("//") ? "." + expression : expression
+        let normalized = normalizeXPath(expression)
+        return normalized.hasPrefix("//") ? "." + normalized : normalized
     }
 
     func prepareSearchRequest(_ config: RuleExecutionConfig, keyword: String) throws -> PreparedRuleRequest {
@@ -100,8 +142,9 @@ struct XPathRuleStrategy: Sendable {
         var items: [SearchItem] = []
         var fragments: [String] = []
         var diagnostics: [String] = []
+        let searchListExpr = Self.normalizeXPath(config.searchList)
         let nodes = try runSelector(.searchList, expression: config.searchList) {
-            Array(root.xpath(config.searchList))
+            Array(root.xpath(searchListExpr))
         }
         let searchName = Self.contextRelativeSelector(config.searchName)
         let searchResult = Self.contextRelativeSelector(config.searchResult)
@@ -139,8 +182,9 @@ struct XPathRuleStrategy: Sendable {
         let root = html.root
         var roads: [Road] = []
         var diagnostics: [String] = []
+        let chapterRoadsExpr = Self.normalizeXPath(config.chapterRoads)
         let roadNodes = try runSelector(.chapterRoads, expression: config.chapterRoads) {
-            Array(root.xpath(config.chapterRoads))
+            Array(root.xpath(chapterRoadsExpr))
         }
         let preparedBase = EpisodeURL.prepareBase(config.baseUrl)
         let chapterResult = Self.contextRelativeSelector(config.chapterResult)

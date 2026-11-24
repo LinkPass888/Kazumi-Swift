@@ -659,7 +659,7 @@ enum BangumiAPI {
         rate: Int? = nil
     ) async throws {
         guard let bangumiType = type.bangumiCollectionType else {
-            throw NetworkError.transport(String(localized: "不支持的收藏类型"))
+            throw NetworkError.transport(String(localized: "Bangumi 不支持在 App 内取消追番，请到网站删除"))
         }
         guard accessToken != nil else {
             throw NetworkError.transport(String(localized: "未配置 Bangumi 访问令牌"))

@@ -73,6 +73,7 @@ struct RulesRepositoryScreen: View {
         .overlay(alignment: .top) {
             if let banner {
                 KazumiBanner(
+                    token: banner.id,
                     title: banner.title,
                     detail: banner.detail,
                     variant: banner.variant,

@@ -2465,7 +2465,7 @@ struct PlayerScreen: View {
         let syncEnabled = settings.bangumiSyncEnable
         let showToast = settings.bangumiImmediateSyncToastEnable
         Task {
-            if syncEnabled {
+            if syncEnabled, type != .none {
                 if showToast { surface.toastMessage = String(localized: "正在同步到 Bangumi...") }
                 let pushed = await environment.bangumiSync.pushCollectible(
                     bangumiID: bangumiID,
@@ -2481,6 +2481,9 @@ struct PlayerScreen: View {
                 entry.type = type.rawValue
                 entry.updatedAt = Date()
                 environment.library.upsert(entry)
+                if syncEnabled, type == .none {
+                    surface.toastMessage = String(localized: "Bangumi 不支持在 App 内取消追番，请到网站删除")
+                }
             } else if type == .none {
                 // 本来就没收藏，取消追番就什么也不用改。
             } else if await addToLibrary(type) {
