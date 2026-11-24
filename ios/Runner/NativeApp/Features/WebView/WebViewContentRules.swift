@@ -59,9 +59,7 @@ final class WebViewContentRules {
             return await compileTask.value
         }
         let task = Task { () -> WKContentRuleList? in
-            if let existing = try? await WKContentRuleListStore.default().lookUpContentRuleList(
-                forIdentifier: Self.ruleIdentifier
-            ) {
+            if let existing = await lookUpRuleList(forIdentifier: Self.ruleIdentifier) {
                 return existing
             }
             do {
@@ -79,5 +77,13 @@ final class WebViewContentRules {
         cachedList = list
         compileTask = nil
         return list
+    }
+
+    private static func lookUpRuleList(forIdentifier identifier: String) async -> WKContentRuleList? {
+        await withCheckedContinuation { continuation in
+            WKContentRuleListStore.default().lookUpContentRuleList(forIdentifier: identifier) { list, _ in
+                continuation.resume(returning: list)
+            }
+        }
     }
 }
