@@ -226,6 +226,7 @@ final class PluginSearchService {
             KazumiLog.plugin.warning(
                 "PluginSearchService: \(plugin.name, privacy: .public) timed out after \(Int(Self.sourceTimeout))s"
             )
+            KazumiLogBuffer.plugin("规则检索超时（\(Int(Self.sourceTimeout)) 秒）：\(plugin.name)")
             statuses[plugin.name] = .error
         } catch is CancellationError {
             return
@@ -260,11 +261,13 @@ final class PluginSearchService {
         case RuleError.noResult(let name):
             KazumiLog.plugin.info("PluginSearchService: no results for \(name, privacy: .public)")
             statuses[name] = .noResult
-        case RuleError.searchFailed(let name, _):
+        case RuleError.searchFailed(let name, let message):
             KazumiLog.plugin.warning("PluginSearchService: search error for \(name, privacy: .public)")
+            KazumiLogBuffer.plugin("规则检索失败（\(name)）：\(message)")
             statuses[name] = .error
         default:
             KazumiLog.plugin.warning("PluginSearchService: search error for \(plugin.name, privacy: .public)")
+            KazumiLogBuffer.plugin("规则检索异常（\(plugin.name)）：\(error.localizedDescription)")
             statuses[plugin.name] = .error
         }
     }

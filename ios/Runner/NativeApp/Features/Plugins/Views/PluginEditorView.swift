@@ -190,7 +190,7 @@ struct PluginEditorView: View {
                 EditorTextField(title: String(localized: "条目链接"), text: $draft.searchResult, prompt: ".//a", monospaced: true)
             } else {
                 EditorTextField(title: String(localized: "请求方法"), text: $draft.searchMethod, prompt: "GET")
-                EditorTextField(title: String(localized: "请求地址"), text: $draft.searchURL, prompt: "https://api.example.com/search?q=@keyword", keyboard: .URL)
+                EditorTextField(title: String(localized: "请求地址"), text: $draft.searchAPIURL, prompt: "https://api.example.com/search?q=@keyword", keyboard: .URL)
                 EditorTextField(title: String(localized: "请求头 (JSON)"), text: $draft.searchHeaders, multiline: true, monospaced: true)
                 EditorTextField(title: String(localized: "查询参数 (JSON)"), text: $draft.searchQuery, multiline: true, monospaced: true)
                 Picker("请求体类型", selection: $draft.searchBodyType) {

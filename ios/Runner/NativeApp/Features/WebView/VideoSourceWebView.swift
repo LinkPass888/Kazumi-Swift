@@ -563,11 +563,13 @@ extension VideoSourceWebView: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code == NSURLErrorCancelled { return }
+        KazumiLogBuffer.network("WebView 页面加载失败：\(error.localizedDescription)")
         emit("WebView: error: \(error.localizedDescription)")
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code == NSURLErrorCancelled { return }
+        KazumiLogBuffer.network("WebView 预加载失败：\(error.localizedDescription)")
         emit("WebView: error: \(error.localizedDescription)")
     }
 }

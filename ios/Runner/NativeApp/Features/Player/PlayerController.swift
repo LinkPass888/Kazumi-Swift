@@ -688,6 +688,8 @@ final class PlayerController {
            !text.contains(hint) {
             text += "\n" + hint
         }
+        let sourceLabel = source?.pluginName ?? "未知源"
+        KazumiLogBuffer.player("播放失败（\(sourceLabel) · 第 \(currentEpisode) 集）：\(reason)")
         phase = .failed(text)
     }
 
