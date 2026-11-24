@@ -170,11 +170,9 @@ final class VideoSourceWebView: NSObject {
         if !sessionCookies.isEmpty {
             let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
             let cookies = sessionCookies
-            await withTaskGroup(of: Void.self) { group in
-                for cookie in cookies {
-                    group.addTask { @MainActor in
-                        await cookieStore.setCookie(cookie)
-                    }
+            for cookie in cookies {
+                await withCheckedContinuation { continuation in
+                    cookieStore.setCookie(cookie) { continuation.resume() }
                 }
             }
             guard loadGeneration == generation else { return generation }
