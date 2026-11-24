@@ -63,33 +63,36 @@ struct ApiRuleStrategy: Sendable {
         }
     }
 
-    func parseSearch(_ raw: String, config: ApiSearchConfig) throws -> RuleSearchParseResult {
+    func parseSearch(
+        _ raw: String,
+        config: ApiSearchConfig,
+        includeFragments: Bool = false
+    ) throws -> RuleSearchParseResult {
         try validateSearchConfig(config)
+        let listPath = try RestrictedJSONPath.compile(config.listPath)
+        let namePath = try RestrictedJSONPath.compile(config.namePath)
+        let sourcePath = try RestrictedJSONPath.compile(config.sourcePath)
         let document = try decodeResponse(raw)
-        let nodes = try RestrictedJSONPath.read(document, expression: config.listPath)
+        let nodes = listPath.read(in: document)
         let template = config.sourceTemplate
         var items: [SearchItem] = []
         var fragments: [String] = []
         var diagnostics: [String] = []
 
         for (index, node) in nodes.enumerated() {
-            do {
-                let name = stringValue(try RestrictedJSONPath.readFirst(node, expression: config.namePath))
-                let source = stringValue(try RestrictedJSONPath.readFirst(node, expression: config.sourcePath))
-                if name.isEmpty || source.isEmpty {
-                    diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 缺少名称或来源，已跳过"))
-                    continue
-                }
-                // 纯字符串替换，`@source` 可以紧跟字母（例如 `/GV@source`）。
-                let src = template.isEmpty
-                    ? source
-                    : template.replacingOccurrences(of: "@source", with: encodeComponent(source))
-                items.append(SearchItem(name: name, src: src))
+            let name = stringValue(namePath.readFirst(in: node))
+            let source = stringValue(sourcePath.readFirst(in: node))
+            if name.isEmpty || source.isEmpty {
+                diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 缺少名称或来源，已跳过"))
+                continue
+            }
+            // 纯字符串替换，`@source` 可以紧跟字母（例如 `/GV@source`）。
+            let src = template.isEmpty
+                ? source
+                : template.replacingOccurrences(of: "@source", with: encodeComponent(source))
+            items.append(SearchItem(name: name, src: src))
+            if includeFragments {
                 fragments.append(node.serialized(pretty: false))
-            } catch let error as ApiRuleFormatError {
-                throw error
-            } catch {
-                diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
         }
 
@@ -138,62 +141,58 @@ struct ApiRuleStrategy: Sendable {
         diagnostics: inout [String]
     ) throws -> [Road] {
         let hasRoads = !config.roadsPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let roadNamePath = (hasRoads && !config.roadNamePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ? try RestrictedJSONPath.compile(config.roadNamePath)
+            : nil
+        let episodesPath = try RestrictedJSONPath.compile(config.episodesPath)
+        let episodeNamePath = try RestrictedJSONPath.compile(config.episodeNamePath)
+        let episodeUrlPath = config.episodeUrlPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil
+            : try RestrictedJSONPath.compile(config.episodeUrlPath)
         let roadNodes: [JSONValue] = hasRoads
-            ? try RestrictedJSONPath.read(document, expression: config.roadsPath)
+            ? try RestrictedJSONPath.compile(config.roadsPath).read(in: document)
             : [document]
         var roads: [Road] = []
 
         for (roadIndex, roadNode) in roadNodes.enumerated() {
-            do {
-                let roadName: String = (hasRoads && !config.roadNamePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    ? stringValue(try RestrictedJSONPath.readFirst(roadNode, expression: config.roadNamePath))
-                    : ""
-                let episodeNodes = try RestrictedJSONPath.read(roadNode, expression: config.episodesPath)
-                var urls: [String] = []
-                var names: [String] = []
+            let roadName = roadNamePath.map { stringValue($0.readFirst(in: roadNode)) } ?? ""
+            let episodeNodes = episodesPath.read(in: roadNode)
+            var urls: [String] = []
+            var names: [String] = []
 
-                for (episodeIndex, episodeNode) in episodeNodes.enumerated() {
-                    do {
-                        let episodeName = stringValue(
-                            try RestrictedJSONPath.readFirst(episodeNode, expression: config.episodeNamePath)
-                        )
-                        let rawURL = config.episodeUrlPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? ""
-                            : stringValue(try RestrictedJSONPath.readFirst(episodeNode, expression: config.episodeUrlPath))
-                        let pageURL = try resolveEpisodeURL(
-                            config,
-                            rootVariables: rootVariables,
-                            rawURL: rawURL,
-                            roadIndex: roadIndex,
-                            episodeIndex: episodeIndex,
-                            baseUrl: baseUrl
-                        )
-                        if pageURL.isEmpty {
-                            diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
-                            continue
-                        }
-                        urls.append(pageURL)
-                        names.append(episodeName.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : episodeName)
-                    } catch let error as ApiRuleFormatError {
-                        throw error
-                    } catch {
-                        diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
+            for (episodeIndex, episodeNode) in episodeNodes.enumerated() {
+                do {
+                    let episodeName = stringValue(episodeNamePath.readFirst(in: episodeNode))
+                    let rawURL = episodeUrlPath.map { stringValue($0.readFirst(in: episodeNode)) } ?? ""
+                    let pageURL = try resolveEpisodeURL(
+                        config,
+                        rootVariables: rootVariables,
+                        rawURL: rawURL,
+                        roadIndex: roadIndex,
+                        episodeIndex: episodeIndex,
+                        baseUrl: baseUrl
+                    )
+                    if pageURL.isEmpty {
+                        diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
+                        continue
                     }
+                    urls.append(pageURL)
+                    names.append(episodeName.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : episodeName)
+                } catch let error as ApiRuleFormatError {
+                    throw error
+                } catch {
+                    diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
                 }
-                if urls.isEmpty {
-                    diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 没有有效剧集，已跳过"))
-                    continue
-                }
-                roads.append(Road(
-                    name: roadName.isEmpty ? String(localized: "播放线路\(String(describing: roads.count + 1))") : roadName,
-                    data: urls,
-                    identifier: names
-                ))
-            } catch let error as ApiRuleFormatError {
-                throw error
-            } catch {
-                diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
+            if urls.isEmpty {
+                diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 没有有效剧集，已跳过"))
+                continue
+            }
+            roads.append(Road(
+                name: roadName.isEmpty ? String(localized: "播放线路\(String(describing: roads.count + 1))") : roadName,
+                data: urls,
+                identifier: names
+            ))
         }
         return roads
     }

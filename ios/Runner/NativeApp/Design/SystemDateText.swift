@@ -10,20 +10,67 @@
 import Foundation
 
 enum SystemDateText {
-    /// 手机当前的短日期格式，比如 `M/d/y`、`yyyy.MM.dd`。
-    private static let shortPattern: String = {
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.dateStyle = .short
-        formatter.timeStyle = .none
-        return formatter.dateFormat ?? "y-MM-dd"
-    }()
+    /// 缓存带年/不带年两份 `DateFormatter`，用 `NSLock` 保护并发读写，
+    /// 并监听 `NSLocale.currentLocaleDidChangeNotification` 在系统地区/格式变化时自动重建，
+    /// 消除列表渲染每帧新建 `DateFormatter` 与两次正则替换的开销。
+    private final class FormatterCache: @unchecked Sendable {
+        static let shared = FormatterCache()
+
+        private let lock = NSLock()
+        private var withYearFormatter: DateFormatter?
+        private var withoutYearFormatter: DateFormatter?
+        private var localeObserver: NSObjectProtocol?
+
+        private init() {
+            localeObserver = NotificationCenter.default.addObserver(
+                forName: NSLocale.currentLocaleDidChangeNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                self?.invalidate()
+            }
+        }
+
+        private func invalidate() {
+            lock.lock()
+            withYearFormatter = nil
+            withoutYearFormatter = nil
+            lock.unlock()
+        }
+
+        func string(from date: Date, includeYear: Bool) -> String {
+            lock.lock()
+            defer { lock.unlock() }
+            if withYearFormatter == nil || withoutYearFormatter == nil {
+                rebuildLocked()
+            }
+            let formatter = includeYear ? withYearFormatter! : withoutYearFormatter!
+            return formatter.string(from: date)
+        }
+
+        private func rebuildLocked() {
+            let locale = Locale.current
+            let probe = DateFormatter()
+            probe.locale = locale
+            probe.dateStyle = .short
+            probe.timeStyle = .none
+            let shortPattern = probe.dateFormat ?? "y-MM-dd"
+
+            let withYear = DateFormatter()
+            withYear.locale = locale
+            withYear.dateFormat = shortPattern
+
+            let withoutYear = DateFormatter()
+            withoutYear.locale = locale
+            withoutYear.dateFormat = SystemDateText.withoutYear(shortPattern)
+
+            withYearFormatter = withYear
+            withoutYearFormatter = withoutYear
+        }
+    }
 
     static func date(_ date: Date, includeYear: Bool) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.dateFormat = includeYear ? shortPattern : withoutYear(shortPattern)
-        return formatter.string(from: date)
+        FormatterCache.shared.string(from: date, includeYear: includeYear)
     }
 
     /// 把年份从手机格式里去掉，连带清掉多出来的分隔符：`M/d/y` → `M/d`，
@@ -46,6 +93,6 @@ enum SystemDateText {
         while let last = text.last, !last.isLetter {
             text.removeLast()
         }
-        return text.isEmpty ? shortPattern : text
+        return text.isEmpty ? pattern : text
     }
 }

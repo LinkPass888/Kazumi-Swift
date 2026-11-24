@@ -782,15 +782,34 @@ final class MPVEngine {
     // MARK: - 超分着色器
 
     /// 挂上一整串 Anime4K 着色器，顺序就是数组顺序（照 main 的管线）。
+    /// 通过单次异步 `mpv_set_property_async` 提交 `MPV_FORMAT_NODE_ARRAY`，
+    /// 避免在主线程连续同步下发 7 次 `mpv_command` 阻塞 UI。
     func setShaders(_ paths: [String]) {
-        // 以前这里是 `set` 一整串逗号拼接的路径。mpv 不会把那个逗号当列表分隔符，
-        // 它把整串当成**一个**文件名去打开——真机日志里就是 6 个路径连在一起报
-        // 「Cannot open file …a.glsl,…b.glsl,…」，等于一个着色器都没挂上。
-        // change-list 的语义就是「改这个列表」，所以先清空，再逐个 append：
-        // 一个文件一条记录，顺序就是数组顺序（照 main 的管线）。
-        command("change-list", ["glsl-shaders", "clr", ""])
-        for path in paths {
-            command("change-list", ["glsl-shaders", "append", path])
+        guard let handle else { return }
+        let strings = paths.compactMap { strdup($0) }
+        defer { for pointer in strings { free(pointer) } }
+        var values = strings.map { pointer -> mpv_node in
+            var node = mpv_node()
+            node.format = MPV_FORMAT_STRING
+            node.u.string = pointer
+            return node
+        }
+        var status: Int32 = -1
+        values.withUnsafeMutableBufferPointer { buffer in
+            var list = mpv_node_list(
+                num: Int32(buffer.count),
+                values: buffer.baseAddress,
+                keys: nil
+            )
+            withUnsafeMutablePointer(to: &list) { listStorage in
+                var node = mpv_node()
+                node.format = MPV_FORMAT_NODE_ARRAY
+                node.u.list = listStorage
+                status = mpv_set_property_async(handle, 0, "glsl-shaders", MPV_FORMAT_NODE, &node)
+            }
+        }
+        if status < 0 {
+            log("异步设置 glsl-shaders 失败：\(String(cString: mpv_error_string(status)))")
         }
     }
 
@@ -852,18 +871,24 @@ final class MPVEngine {
         guard let frame = shot.frame else {
             return (nil, "取帧失败：screenshot-raw 没回帧")
         }
-        guard let image = frame.makeCGImage() else {
-            return (nil, "取帧失败：像素格式认不得（\(frame.format)，\(frame.width)×\(frame.height)）")
-        }
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("kazumi-shot-\(UUID().uuidString).png")
-        guard let data = Self.pngData(from: image) else {
-            return (nil, "取帧失败：PNG 编不出来")
-        }
-        do {
-            try data.write(to: path)
-        } catch {
-            return (nil, "取帧失败：临时文件写不出去")
+        let writeError: String? = await Task.detached(priority: .userInitiated) {
+            guard let image = frame.makeCGImage() else {
+                return "取帧失败：像素格式认不得（\(frame.format)，\(frame.width)×\(frame.height)）"
+            }
+            guard let data = Self.pngData(from: image) else {
+                return "取帧失败：PNG 编不出来"
+            }
+            do {
+                try data.write(to: path)
+                return nil
+            } catch {
+                return "取帧失败：临时文件写不出去"
+            }
+        }.value
+        if let writeError {
+            return (nil, writeError)
         }
         let sourceText = lastSnapshot.videoWidth > 0 && lastSnapshot.videoHeight > 0
             ? "，片源 \(Int(lastSnapshot.videoWidth))×\(Int(lastSnapshot.videoHeight))"
@@ -1097,19 +1122,33 @@ final class MPVEngine {
     }
 
     /// CGImage → PNG，走 UIKit 的编码器（Catalyst 同样可用）。
-    static func pngData(from image: CGImage) -> Data? {
+    nonisolated static func pngData(from image: CGImage) -> Data? {
         UIImage(cgImage: image).pngData()
     }
 
     // MARK: - 收尾
 
+    private nonisolated static let teardownQueue = DispatchQueue(
+        label: "kazumi.mpv.teardown",
+        qos: .utility
+    )
+
     func stop() {
-        setPictureInPictureFrameFeedActive(false)
-        // 先作废这一代：挂起的取帧任务恢复时不能认成「新内核还活着」。
+        let wasPiPFeedActive = pictureInPictureFrameFeedActive
+        pictureInPictureFrameFeedActive = false
+        if wasPiPFeedActive {
+            reportPictureInPictureStatistics(final: true)
+            pipRawShotSubmissions.removeAll(keepingCapacity: true)
+        }
+        // 先作废这一代并立即解绑主线程持有的句柄与视图：
+        // 挂起的取帧任务恢复时立即看到 handle == nil，且主线程无需同步等待 mpv 线程退出。
         kernelGeneration &+= 1
         eventPumpGeneration &+= 1
-        pump?.stop()
+        let detachedPump = pump
         pump = nil
+        let detachedHandle = handle.map(SendableMPVHandle.init)
+        handle = nil
+        metalView = nil
         // 引擎要没了，还等着的命令不能继续挂着。
         failPendingCommands(-1)
         pipBGRACommandIDs.removeAll(keepingCapacity: true)
@@ -1117,11 +1156,19 @@ final class MPVEngine {
         // 一开机就走到诊断分支，也不该让迟到的取帧任务接着算。
         pipFrameMissSince = nil
         pipFrameSourceLogged = false
-        if let handle {
-            mpv_terminate_destroy(handle)
+
+        if let detachedPump {
+            detachedPump.stopAsync {
+                guard let detachedHandle else { return }
+                Self.teardownQueue.async {
+                    mpv_terminate_destroy(detachedHandle.pointer)
+                }
+            }
+        } else if let detachedHandle {
+            Self.teardownQueue.async {
+                mpv_terminate_destroy(detachedHandle.pointer)
+            }
         }
-        handle = nil
-        metalView = nil
     }
 
     // MARK: - 小工具
@@ -1342,6 +1389,11 @@ private struct CommandRequest {
     let strings: [UnsafeMutablePointer<CChar>]
 }
 
+/// 跨队列移交已解绑的 `mpv_handle` 仅用于后台销毁。
+private struct SendableMPVHandle: @unchecked Sendable {
+    let pointer: OpaquePointer
+}
+
 /// 在 mpv 自己的线程上收事件，攒成快照再递回主线程。
 final class MPVEventPump: @unchecked Sendable {
     private static let queueKey = DispatchSpecificKey<ObjectIdentifier>()
@@ -1457,6 +1509,14 @@ final class MPVEventPump: @unchecked Sendable {
             stopOnQueue()
         } else {
             queue.sync { stopOnQueue() }
+        }
+    }
+
+    /// 异步在事件队列上停泵并在完成后回调，避免阻塞主线程。
+    func stopAsync(completion: (@Sendable () -> Void)? = nil) {
+        queue.async {
+            self.stopOnQueue()
+            completion?()
         }
     }
 

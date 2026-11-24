@@ -71,24 +71,25 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
         }
     }
 
-    /// 尺寸稳定后分段重配视频输出，确保转屏过渡完成后拿到最终正确的全屏物理尺寸。
+    /// 上一次已触发 VO 重建时的物理 drawable 尺寸：避免转屏途中连续重建多次 VO。
+    private var committedDrawableSize: CGSize = .zero
+    /// 尺寸稳定后去抖重配视频输出（180ms），确保转屏过渡完成后仅重建 1 次。
     private var pendingSizeCommit: Task<Void, Never>?
 
     private func scheduleSizeCommit() {
         pendingSizeCommit?.cancel()
         pendingSizeCommit = Task { @MainActor [weak self] in
-            // iOS 转屏动画通常持续 300~400ms。分段多次校验同步，
-            // 确保转屏中段与动画最终稳态落定时都能拿到准确的全屏目标物理尺寸并重构 swapchain。
-            for delay in [100, 250, 200] {
-                try? await Task.sleep(for: .milliseconds(delay))
-                guard let self, !Task.isCancelled else { return }
-                self.metalView.setNeedsLayout()
-                self.metalView.updateDrawableSize()
-                if self.videoSize.width > 0, self.videoSize.height > 0 {
-                    self.engine?.reconfigureVideoOutputForSurfaceResize()
-                }
-            }
-            self?.pendingSizeCommit = nil
+            try? await Task.sleep(for: .milliseconds(180))
+            guard let self, !Task.isCancelled else { return }
+            self.pendingSizeCommit = nil
+            self.metalView.setNeedsLayout()
+            self.metalView.updateDrawableSize()
+            let targetDrawableSize = self.metalView.metalLayer.drawableSize
+            guard targetDrawableSize.width > 1, targetDrawableSize.height > 1 else { return }
+            guard targetDrawableSize != self.committedDrawableSize else { return }
+            guard self.videoSize.width > 0, self.videoSize.height > 0 else { return }
+            self.committedDrawableSize = targetDrawableSize
+            self.engine?.reconfigureVideoOutputForSurfaceResize()
         }
     }
 
@@ -111,6 +112,10 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
         if geometryChanged {
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
+            if videoSize.width > 0, videoSize.height > 0,
+               metalView.metalLayer.drawableSize != committedDrawableSize {
+                scheduleSizeCommit()
+            }
         }
     }
 
@@ -135,12 +140,8 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
             lastLayoutSize = bounds.size
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
-            // 还没拿到这一集的画面尺寸（起播 / 换集中）时不要重建 VO：
-            // 这时 drawable 只是在跟着转屏变，旧画面不该被当成新尺寸去重配。
-            if videoSize.width > 0, videoSize.height > 0 {
-                engine?.reconfigureVideoOutputForSurfaceResize()
-            }
-            // 转屏途中尺寸会连抖几次，等动画稳步落定后再分批补发确认。
+            // 转屏途中 bounds 会连续抖动多次；仅在尺寸稳定后去抖 180ms 重建 1 次 VO，
+            // 消除连建多次 swapchain 造成的卡顿与闪屏。
             scheduleSizeCommit()
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)

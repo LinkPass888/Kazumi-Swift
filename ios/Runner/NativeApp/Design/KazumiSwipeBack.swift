@@ -75,7 +75,7 @@ struct KazumiSwipeBackEnabler: UIViewRepresentable {
     func updateUIView(_ uiView: ProbeView, context: Context) {
         uiView.isEnabled = isEnabled
         uiView.excludedWindowRect = excludedWindowRect
-        uiView.installAndSync()
+        uiView.syncIfNeeded()
     }
 
     /// 挂在页面背景里的零拦截探针视图：
@@ -85,6 +85,8 @@ struct KazumiSwipeBackEnabler: UIViewRepresentable {
     final class ProbeView: UIView {
         var isEnabled: Bool = true
         var excludedWindowRect: CGRect = .zero
+        private weak var cachedNavigation: UINavigationController?
+        private weak var cachedCoordinator: SwipeBackCoordinator?
         private weak var hookedTransitionCoordinator: (any UIViewControllerTransitionCoordinator)?
 
         override init(frame: CGRect) {
@@ -98,37 +100,53 @@ struct KazumiSwipeBackEnabler: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
         override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-            installAndSync()
+            // 轻量快路径：直接复用已缓存的 navigation/coordinator 恢复手势开关，
+            // 不再每次命中测试都遍历响应链或重建协调器字典。
+            if let navigation = cachedNavigation, let coordinator = cachedCoordinator {
+                coordinator.attachIfNeeded(to: navigation)
+            }
             return false
         }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
+            guard window != nil else {
+                cachedNavigation = nil
+                cachedCoordinator = nil
+                hookedTransitionCoordinator = nil
+                return
+            }
             installAndSync()
-            guard window != nil else { return }
             // push 动画结束时 UINavigationController 会关一次 isEnabled，这里跨帧补两次确保常开。
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(80))
-                self?.installAndSync()
+                self?.syncIfNeeded()
                 try? await Task.sleep(for: .milliseconds(350))
-                self?.installAndSync()
+                self?.syncIfNeeded()
             }
         }
 
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            installAndSync()
+        func syncIfNeeded() {
+            guard window != nil else { return }
+            if let navigation = cachedNavigation, let coordinator = cachedCoordinator {
+                coordinator.attachIfNeeded(to: navigation)
+            } else {
+                installAndSync()
+            }
         }
 
         func installAndSync() {
-            guard window != nil, let navigation = resolveNavigationController() else { return }
-            KazumiSwipeBack.install(on: navigation, probe: self)
-            if let coordinator = navigation.transitionCoordinator,
-               coordinator !== hookedTransitionCoordinator {
-                hookedTransitionCoordinator = coordinator
-                coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard window != nil else { return }
+            guard let navigation = cachedNavigation ?? resolveNavigationController() else { return }
+            cachedNavigation = navigation
+            let coordinator = KazumiSwipeBack.install(on: navigation, probe: self)
+            cachedCoordinator = coordinator
+            if let transition = navigation.transitionCoordinator,
+               transition !== hookedTransitionCoordinator {
+                hookedTransitionCoordinator = transition
+                transition.animate(alongsideTransition: nil) { [weak self] _ in
                     Task { @MainActor [weak self] in
-                        self?.installAndSync()
+                        self?.syncIfNeeded()
                     }
                 }
             }
@@ -174,10 +192,11 @@ struct KazumiSwipeBackEnabler: UIViewRepresentable {
 enum KazumiSwipeBack {
     private static var coordinators: [ObjectIdentifier: SwipeBackCoordinator] = [:]
 
+    @discardableResult
     static func install(
         on navigation: UINavigationController,
         probe: KazumiSwipeBackEnabler.ProbeView? = nil
-    ) {
+    ) -> SwipeBackCoordinator {
         coordinators = coordinators.filter { $0.value.navigation != nil }
 
         let key = ObjectIdentifier(navigation)
@@ -194,6 +213,7 @@ enum KazumiSwipeBack {
             coordinator.register(probe)
         }
         coordinator.attachIfNeeded(to: navigation)
+        return coordinator
     }
 }
 

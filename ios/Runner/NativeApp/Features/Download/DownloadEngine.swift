@@ -107,20 +107,26 @@ final class DownloadEngine: @unchecked Sendable {
         self.cookieForURL = cookieForURL
     }
 
-    private func applyCookie(to request: inout URLRequest, url: URL) {
-        guard let cookie = cookieForURL?(url), !cookie.isEmpty else { return }
+    private func applyCookie(
+        to request: inout URLRequest,
+        url: URL,
+        cookieForURL: (@Sendable (URL) -> String?)?
+    ) {
+        guard let cookie = (cookieForURL ?? self.cookieForURL)?(url), !cookie.isEmpty else { return }
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
     }
 
     /// 下一集到 `directory`，返回能播的那个本地文件。
     ///
     /// - Parameters:
+    ///   - cookieForURL: 按任务传入的 Cookie 提供方（复用单个 `DownloadEngine` 实例时按规则隔离）。
     ///   - baseName: 这一集的名字前缀（`ep-3`），分片与播放列表都按它开头。
     ///   - segmentConcurrency: 一集内部同时拉几个分片。
     func download(
         mediaURL: String,
         referer: String?,
         userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)? = nil,
         to directory: URL,
         baseName: String,
         segmentConcurrency: Int,
@@ -130,8 +136,10 @@ final class DownloadEngine: @unchecked Sendable {
         guard let url = URL(string: mediaURL) else { throw DownloadEngineError.notMedia }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
+        let cookieProvider = cookieForURL ?? self.cookieForURL
+
         // 先取前 2KB 看一眼：是播放列表还是整份文件。
-        let probe = try await probeKind(url, referer: referer, userAgent: userAgent)
+        let probe = try await probeKind(url, referer: referer, userAgent: userAgent, cookieForURL: cookieProvider)
         if cancellation.isCancelled { throw DownloadEngineError.cancelled }
 
         switch probe.kind {
@@ -140,6 +148,7 @@ final class DownloadEngine: @unchecked Sendable {
                 playlistURL: playlistURL,
                 referer: referer,
                 userAgent: userAgent,
+                cookieForURL: cookieProvider,
                 to: directory,
                 baseName: baseName,
                 segmentConcurrency: segmentConcurrency,
@@ -152,6 +161,7 @@ final class DownloadEngine: @unchecked Sendable {
                 expectedBytes: expectedBytes,
                 referer: referer,
                 userAgent: userAgent,
+                cookieForURL: cookieProvider,
                 to: directory,
                 baseName: baseName,
                 cancellation: cancellation,
@@ -175,13 +185,18 @@ final class DownloadEngine: @unchecked Sendable {
         var prefixText: String
     }
 
-    private func probeKind(_ url: URL, referer: String?, userAgent: String?) async throws -> Probe {
+    private func probeKind(
+        _ url: URL,
+        referer: String?,
+        userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)?
+    ) async throws -> Probe {
         var request = URLRequest(url: url)
         request.setValue("bytes=0-2047", forHTTPHeaderField: "Range")
         apply(headers: request, referer: referer, userAgent: userAgent)
         if let referer, !referer.isEmpty { request.setValue(referer, forHTTPHeaderField: "Referer") }
         if let userAgent, !userAgent.isEmpty { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
-        applyCookie(to: &request, url: url)
+        applyCookie(to: &request, url: url, cookieForURL: cookieForURL)
 
         // 用流式请求只读开头：有的服务器不理 Range，直接回整个文件，
         // 用 data(for:) 会把几百 MB 全塞进内存。
@@ -232,13 +247,14 @@ final class DownloadEngine: @unchecked Sendable {
         playlistURL: URL,
         referer: String?,
         userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)?,
         to directory: URL,
         baseName: String,
         segmentConcurrency: Int,
         cancellation: CancellationFlag,
         onProgress: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> URL {
-        var text = try await fetchText(playlistURL, referer: referer, userAgent: userAgent)
+        var text = try await fetchText(playlistURL, referer: referer, userAgent: userAgent, cookieForURL: cookieForURL)
         var baseURL = playlistURL
 
         // 主列表：挑码率最高的一条子列表。用户是「下载」，不是「省流量」。
@@ -246,20 +262,27 @@ final class DownloadEngine: @unchecked Sendable {
             guard let variant = HLSPlaylist.bestVariant(from: text, baseURL: playlistURL) else {
                 throw DownloadEngineError.emptyPlaylist
             }
-            text = try await fetchText(variant, referer: referer, userAgent: userAgent)
+            text = try await fetchText(variant, referer: referer, userAgent: userAgent, cookieForURL: cookieForURL)
             baseURL = variant
         }
 
         let plan = try HLSPlaylist.localPlan(from: text, baseURL: baseURL, prefix: baseName)
         guard !plan.segmentURLs.isEmpty else { throw DownloadEngineError.emptyPlaylist }
 
-        // 初始化段（fMP4 少了它不能播）。
+        // 初始化段（fMP4 少了它不能播），与短分片一起走复用的 ProxyAwareURLSession。
         var initName: String?
         if let initURL = plan.initURL {
             let name = "\(baseName)-init.mp4"
             let target = directory.appending(path: name)
             if !FileManager.default.fileExists(atPath: target.path) {
-                try await fetchToFile(initURL, referer: referer, userAgent: userAgent, target: target, cancellation: cancellation)
+                _ = try await fetchSegmentToFile(
+                    initURL,
+                    referer: referer,
+                    userAgent: userAgent,
+                    cookieForURL: cookieForURL,
+                    target: target,
+                    cancellation: cancellation
+                )
             }
             initName = name
         }
@@ -295,6 +318,7 @@ final class DownloadEngine: @unchecked Sendable {
         }
 
         let limit = max(1, segmentConcurrency)
+        var lastProgressUptime: TimeInterval = !existingNames.isEmpty ? ProcessInfo.processInfo.systemUptime : 0
         try await withThrowingTaskGroup(of: (bytes: Int64, wasExisting: Bool).self) { group in
             var iterator = zip(plan.segmentURLs, plan.segmentFileNames).makeIterator()
             var running = 0
@@ -312,6 +336,7 @@ final class DownloadEngine: @unchecked Sendable {
                         segmentURL,
                         referer: referer,
                         userAgent: userAgent,
+                        cookieForURL: cookieForURL,
                         target: target,
                         cancellation: cancellation
                     )
@@ -328,12 +353,18 @@ final class DownloadEngine: @unchecked Sendable {
                 running -= 1
                 receivedBytes += result.bytes
                 if !result.wasExisting { completed += 1 }
-                // 进度只报 0…1；切片数算出来的已经是比例，别让调用方再除一次。
-                onProgress(DownloadProgress(
-                    receivedBytes: receivedBytes,
-                    totalBytes: 0,
-                    fraction: total > 0 ? min(1, Double(completed) / Double(total)) : 0
-                ))
+                // 0.25s 时间节流：最后一个分片或距上次回调 >= 0.25s 时才上报进度，避免高频切换主线程。
+                let now = ProcessInfo.processInfo.systemUptime
+                let isLastSegment = completed >= total
+                if isLastSegment || now - lastProgressUptime >= 0.25 {
+                    lastProgressUptime = now
+                    // 进度只报 0…1；切片数算出来的已经是比例，别让调用方再除一次。
+                    onProgress(DownloadProgress(
+                        receivedBytes: receivedBytes,
+                        totalBytes: 0,
+                        fraction: total > 0 ? min(1, Double(completed) / Double(total)) : 0
+                    ))
+                }
                 if cancellation.isCancelled { throw DownloadEngineError.cancelled }
                 _ = addNext()
             }
@@ -357,6 +388,7 @@ final class DownloadEngine: @unchecked Sendable {
         expectedBytes: Int64,
         referer: String?,
         userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)?,
         to directory: URL,
         baseName: String,
         cancellation: CancellationFlag,
@@ -381,6 +413,7 @@ final class DownloadEngine: @unchecked Sendable {
                     url,
                     referer: referer,
                     userAgent: userAgent,
+                    cookieForURL: cookieForURL,
                     target: target,
                     cancellation: cancellation,
                     expectedBytes: expectedBytes,
@@ -417,6 +450,7 @@ final class DownloadEngine: @unchecked Sendable {
         _ url: URL,
         referer: String?,
         userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)?,
         target: URL,
         cancellation: CancellationFlag,
         expectedBytes: Int64 = -1,
@@ -428,7 +462,7 @@ final class DownloadEngine: @unchecked Sendable {
         apply(headers: request, referer: referer, userAgent: userAgent)
         if let referer, !referer.isEmpty { request.setValue(referer, forHTTPHeaderField: "Referer") }
         if let userAgent, !userAgent.isEmpty { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
-        applyCookie(to: &request, url: url)
+        applyCookie(to: &request, url: url, cookieForURL: cookieForURL)
 
         let size = try await runDownloadTask(
             request: request,
@@ -444,7 +478,7 @@ final class DownloadEngine: @unchecked Sendable {
         }
     }
 
-    /// 交给系统级后台 `URLSession`（`BackgroundDownloadSession.shared`）执行下载：
+    /// 交给系统级后台 `URLSession`（`BackgroundDownloadSession.shared`）执行大文件直链下载：
     /// App 退后台或锁屏后由系统 `nsurlsessiond` 接管续传，并在会话级 delegate 里实时回传字节进度与保存续传数据。
     private func runDownloadTask(
         request: URLRequest,
@@ -466,25 +500,27 @@ final class DownloadEngine: @unchecked Sendable {
         )
     }
 
-    /// 分片下来直接写盘，不报进度（一集的总进度按片数算，由调用方汇总）。
+    /// HLS 短分片与初始化段下载：走复用的 `ProxyAwareURLSession` 以绕开 `nsurlsessiond` 高频 XPC 瓶颈，
+    /// 并即时响应代理热切换。分片下来直接写盘，不报单片进度（一集的总进度按片数汇总）。
     private func fetchSegmentToFile(
         _ url: URL,
         referer: String?,
         userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)?,
         target: URL,
         cancellation: CancellationFlag
     ) async throws -> Int64 {
         var lastError: Error = DownloadEngineError.notMedia
         for _ in 0..<maxRetries {
             do {
-                try await fetchToFile(
+                return try await fetchSegmentViaProxySession(
                     url,
                     referer: referer,
                     userAgent: userAgent,
+                    cookieForURL: cookieForURL,
                     target: target,
                     cancellation: cancellation
                 )
-                return (try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? Int64) ?? 0
             } catch let error as DownloadEngineError where error == .cancelled {
                 throw error
             } catch {
@@ -495,12 +531,135 @@ final class DownloadEngine: @unchecked Sendable {
         throw lastError
     }
 
-    private func fetchText(_ url: URL, referer: String?, userAgent: String?) async throws -> String {
+    /// 单次通过复用的 `ProxyAwareURLSession` 拉取一个短分片并原子落盘，支持 `CancellationFlag` 与 Task 取消即时中断。
+    private func fetchSegmentViaProxySession(
+        _ url: URL,
+        referer: String?,
+        userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)?,
+        target: URL,
+        cancellation: CancellationFlag
+    ) async throws -> Int64 {
+        if cancellation.isCancelled || Task.isCancelled {
+            throw DownloadEngineError.cancelled
+        }
+
         var request = URLRequest(url: url)
         apply(headers: request, referer: referer, userAgent: userAgent)
         if let referer, !referer.isEmpty { request.setValue(referer, forHTTPHeaderField: "Referer") }
         if let userAgent, !userAgent.isEmpty { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
-        applyCookie(to: &request, url: url)
+        applyCookie(to: &request, url: url, cookieForURL: cookieForURL)
+
+        final class SegmentTaskState: @unchecked Sendable {
+            private let lock = NSLock()
+            private var continuation: CheckedContinuation<Int64, Error>?
+            private var cancelToken: UUID?
+            private var task: URLSessionDownloadTask?
+
+            func attach(
+                task: URLSessionDownloadTask,
+                continuation: CheckedContinuation<Int64, Error>,
+                cancelToken: UUID
+            ) {
+                lock.lock()
+                self.task = task
+                self.continuation = continuation
+                self.cancelToken = cancelToken
+                lock.unlock()
+            }
+
+            func cancelTask() {
+                lock.lock()
+                let currentTask = task
+                lock.unlock()
+                currentTask?.cancel()
+            }
+
+            func finish(
+                with result: Result<Int64, Error>,
+                cancellation: CancellationFlag
+            ) {
+                lock.lock()
+                let pending = continuation
+                let token = cancelToken
+                continuation = nil
+                cancelToken = nil
+                task = nil
+                lock.unlock()
+
+                if let token {
+                    cancellation.removeCancelHandler(token)
+                }
+                pending?.resume(with: result)
+            }
+        }
+
+        let state = SegmentTaskState()
+        let currentSession = session
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = currentSession.downloadTask(with: request) { location, response, error in
+                    if let error {
+                        if cancellation.isCancelled || (error as? URLError)?.code == .cancelled {
+                            state.finish(with: .failure(DownloadEngineError.cancelled), cancellation: cancellation)
+                        } else {
+                            state.finish(with: .failure(error), cancellation: cancellation)
+                        }
+                        return
+                    }
+                    if let http = response as? HTTPURLResponse,
+                       !(200..<300).contains(http.statusCode) {
+                        if let location { try? FileManager.default.removeItem(at: location) }
+                        state.finish(with: .failure(DownloadEngineError.badStatus(http.statusCode)), cancellation: cancellation)
+                        return
+                    }
+                    if cancellation.isCancelled {
+                        if let location { try? FileManager.default.removeItem(at: location) }
+                        state.finish(with: .failure(DownloadEngineError.cancelled), cancellation: cancellation)
+                        return
+                    }
+                    guard let location else {
+                        state.finish(with: .failure(URLError(.cannotWriteToFile)), cancellation: cancellation)
+                        return
+                    }
+                    let size = (try? FileManager.default.attributesOfItem(atPath: location.path)[.size] as? Int64) ?? 0
+                    do {
+                        try? FileManager.default.removeItem(at: target)
+                        try FileManager.default.moveItem(at: location, to: target)
+                        state.finish(with: .success(size), cancellation: cancellation)
+                    } catch {
+                        try? FileManager.default.removeItem(at: location)
+                        state.finish(with: .failure(error), cancellation: cancellation)
+                    }
+                }
+
+                let token = cancellation.addCancelHandler {
+                    state.cancelTask()
+                }
+                state.attach(task: task, continuation: continuation, cancelToken: token)
+
+                task.resume()
+                if cancellation.isCancelled || Task.isCancelled {
+                    task.cancel()
+                }
+            }
+        } onCancel: {
+            state.cancelTask()
+        }
+    }
+
+    private func fetchText(
+        _ url: URL,
+        referer: String?,
+        userAgent: String?,
+        cookieForURL: (@Sendable (URL) -> String?)?
+    ) async throws -> String {
+        var request = URLRequest(url: url)
+        apply(headers: request, referer: referer, userAgent: userAgent)
+        if let referer, !referer.isEmpty { request.setValue(referer, forHTTPHeaderField: "Referer") }
+        if let userAgent, !userAgent.isEmpty { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
+        applyCookie(to: &request, url: url, cookieForURL: cookieForURL)
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw DownloadEngineError.badStatus(http.statusCode)
@@ -519,8 +678,8 @@ final class DownloadEngine: @unchecked Sendable {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60 * 60
-        // 并发由我们自己的信号量控制，别让系统的每主机上限再压一层。
-        config.httpMaximumConnectionsPerHost = 10
+        // 并发由我们自己的任务组控制，提高每主机连接上限以支撑多集高并发 HLS 短分片下载。
+        config.httpMaximumConnectionsPerHost = 24
         KazumiNetworkPolicy.applyProxy(to: config)
         return config
     }
@@ -868,15 +1027,16 @@ final class BackgroundDownloadSession: NSObject, URLSessionDownloadDelegate, @un
         var wasCancelled = false
         var cancelToken: UUID?
         var cancellation: CancellationFlag?
+        var resumeDataToWrite: (data: Data, url: URL)?
 
         lock.lock()
         if let entry = entries[task.taskIdentifier] {
-            // 若因系统中断或网络错误附带了续传数据，顺手落盘避免丢进度。
+            // 若因系统中断或网络错误附带了续传数据，取出后在锁外落盘避免持锁执行磁盘 I/O。
             if let saveURL = entry.resumeSaveURL,
                let nsError = error as NSError?,
                let extracted = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data,
                !extracted.isEmpty {
-                try? extracted.write(to: saveURL, options: .atomic)
+                resumeDataToWrite = (extracted, saveURL)
             }
             entry.didComplete = true
             entry.pendingCompletionError = error
@@ -892,6 +1052,9 @@ final class BackgroundDownloadSession: NSObject, URLSessionDownloadDelegate, @un
         }
         lock.unlock()
 
+        if let resumeDataToWrite {
+            try? resumeDataToWrite.data.write(to: resumeDataToWrite.url, options: .atomic)
+        }
         if let cancelToken, let cancellation {
             cancellation.removeCancelHandler(cancelToken)
         }

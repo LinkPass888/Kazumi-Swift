@@ -21,9 +21,36 @@ import Foundation
 import Observation
 import UIKit
 
+private actor DownloadPersistenceActor {
+    func writeSnapshot(_ snapshot: [DownloadRecord], to storeURL: URL) {
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? FileManager.default.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: storeURL, options: .atomic)
+    }
+}
+
 @MainActor
 @Observable
 final class DownloadCenter {
+    /// 单集实时下载进度状态：独立于值类型 `records`，仅由对应行视图观察，
+    /// 避免单集高频进度刷新触发整页重绘。
+    @MainActor
+    @Observable
+    final class EpisodeProgressState {
+        var progress: Double
+        var downloadedBytes: Int64
+        var totalBytes: Int64
+
+        init(progress: Double = 0, downloadedBytes: Int64 = 0, totalBytes: Int64 = 0) {
+            self.progress = progress
+            self.downloadedBytes = downloadedBytes
+            self.totalBytes = totalBytes
+        }
+    }
+
     /// 所有记录，最近下的在前面。
     private(set) var records: [DownloadRecord] = []
 
@@ -33,6 +60,10 @@ final class DownloadCenter {
     /// 最近一次失败的一句话，给界面弹一下（LP 5115：失败要说，不能只画个红点）。
     /// 界面拿来当 toast 显示完就把 `notice` 清掉，所以它不会自己一直在。
     var failureNotice: String?
+
+    @ObservationIgnored private var progressStates: [String: EpisodeProgressState] = [:]
+    @ObservationIgnored private let persistenceActor = DownloadPersistenceActor()
+    @ObservationIgnored private let engine = DownloadEngine()
 
     private let resolver = EpisodeMediaResolver()
     private let directory: DownloadDirectoryStore
@@ -104,6 +135,25 @@ final class DownloadCenter {
         Set(queue.filter { $0.recordKey == recordKey }.map(\.episodeNumber))
     }
 
+    nonisolated static func episodeKey(recordKey: String, number: Int) -> String {
+        "\(recordKey)#\(number)"
+    }
+
+    /// 取某一集独立的实时进度观察对象（供 `DownloadEpisodeRowView` 精准订阅）。
+    func progressState(recordKey: String, episode: DownloadEpisode) -> EpisodeProgressState {
+        let key = Self.episodeKey(recordKey: recordKey, number: episode.number)
+        if let existing = progressStates[key] {
+            return existing
+        }
+        let state = EpisodeProgressState(
+            progress: episode.progress,
+            downloadedBytes: episode.downloadedBytes,
+            totalBytes: episode.totalBytes
+        )
+        progressStates[key] = state
+        return state
+    }
+
     /// 一集的显示状态，界面按这个画格子。
     func liteStatus(recordKey: String, number: Int) -> DownloadLiteStatus {
         if let episode = episode(recordKey: recordKey, number: number) {
@@ -112,7 +162,9 @@ final class DownloadCenter {
             // 记录说下完、文件却不在：当没下过，让格子回到初始样子、允许重下。
             if episode.status == .completed && episode.fileName == nil { return .normal }
             // LP 5193：只要加进下载就给「在下载」那个符号，不管是在下、排队还是暂停。
-            return .downloading(episode.progress)
+            let key = Self.episodeKey(recordKey: recordKey, number: number)
+            let liveProgress = progressStates[key]?.progress ?? episode.progress
+            return .downloading(liveProgress)
         }
         // 还在队列里没建记录的同理。
         if queuedNumbers(recordKey: recordKey).contains(number) { return .downloading(0) }
@@ -159,6 +211,9 @@ final class DownloadCenter {
                 cancelledBeforeStart.remove("\(key)#\(item.number)")
                 if existing.status != .paused {
                     record.episodes[index].progress = 0
+                    record.episodes[index].downloadedBytes = 0
+                    record.episodes[index].totalBytes = 0
+                    syncProgressState(recordKey: key, number: item.number, progress: 0, downloadedBytes: 0, totalBytes: 0)
                 }
                 record.episodes[index].status = .pending
                 record.episodes[index].errorMessage = nil
@@ -266,9 +321,11 @@ final class DownloadCenter {
 
         var modified = false
         for recordIndex in records.indices {
+            let recordKey = records[recordIndex].id
             var episodes = records[recordIndex].episodes
             var recordChanged = false
             for index in episodes.indices where episodes[index].status.isActive {
+                syncProgressToEpisode(&episodes[index], recordKey: recordKey)
                 episodes[index].status = .paused
                 recordChanged = true
             }
@@ -298,6 +355,7 @@ final class DownloadCenter {
         updateMany(recordKey: recordKey, numbers: targets) { episodes, number in
             guard let index = episodes.firstIndex(where: { $0.number == number }) else { return }
             if episodes[index].status.isActive {
+                syncProgressToEpisode(&episodes[index], recordKey: recordKey)
                 episodes[index].status = .paused
             }
         }
@@ -309,9 +367,10 @@ final class DownloadCenter {
     /// 失败的那几集根本不存在可播的文件，直接从记录里描掉，格子回到「没下过」。
     func clearFailures(recordKey: String) {
         guard let index = records.firstIndex(where: { $0.id == recordKey }) else { return }
-        let before = records[index].episodes.count
+        let failedNumbers = Set(records[index].episodes.filter { $0.status == .failed }.map(\.number))
+        guard !failedNumbers.isEmpty else { return }
         records[index].episodes.removeAll { $0.status == .failed }
-        guard records[index].episodes.count != before else { return }
+        removeProgressStates(recordKey: recordKey, numbers: failedNumbers)
         // 一集都没剩就别留个空壳。
         if records[index].episodes.isEmpty {
             records.remove(at: index)
@@ -319,15 +378,24 @@ final class DownloadCenter {
         persist()
     }
 
-    /// 删掉一份记录连同它的文件。
+    /// 删掉一份记录连同它的文件：先更新内存并持久化，再把文件删除丢到后台执行。
     func removeRecord(_ record: DownloadRecord) {
         cancel(recordKey: record.id, numbers: record.episodes.map(\.number))
-        for folder in recordFolders(for: record) where !isFolderReferenced(folder, excluding: record.id) {
-            try? FileManager.default.removeItem(at: folder)
+        let foldersToRemove = recordFolders(for: record).filter {
+            !isFolderReferenced($0, excluding: record.id)
         }
         records.removeAll { $0.id == record.id }
         activeNumbers[record.id] = nil
+        removeProgressStates(recordKey: record.id)
         persist()
+
+        if !foldersToRemove.isEmpty {
+            Task.detached(priority: .utility) {
+                for folder in foldersToRemove {
+                    try? FileManager.default.removeItem(at: folder)
+                }
+            }
+        }
     }
 
     /// 删掉某一集。
@@ -346,14 +414,19 @@ final class DownloadCenter {
         records.removeAll()
         activeNumbers.removeAll()
         cancelledBeforeStart.removeAll()
+        progressStates.removeAll()
         persist()
     }
 
-    /// 离线下载总共占了多少字节（文件真的在盘上的才算）。
-    func totalBytes() -> Int64 {
-        records.reduce(Int64(0)) { total, record in
-            var sum: Int64 = 0
-            for folder in recordFolders(for: record) {
+    /// 离线下载总共占了多少字节（文件真的在盘上的才算），在后台线程枚举文件大小。
+    func totalBytes() async -> Int64 {
+        var seen = Set<String>()
+        let uniqueFolders = records
+            .flatMap { recordFolders(for: $0) }
+            .filter { seen.insert($0.path).inserted }
+        return await Task.detached(priority: .utility) {
+            var total: Int64 = 0
+            for folder in uniqueFolders {
                 let url = URL(filePath: folder.path)
                 guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey]),
                       values.isDirectory == true,
@@ -365,51 +438,63 @@ final class DownloadCenter {
                 else { continue }
                 for file in files {
                     guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize else { continue }
-                    sum += Int64(size)
+                    total += Int64(size)
                 }
             }
-            return total + sum
-        }
+            return total
+        }.value
     }
 
-    /// 一次删多集（多选删除用）。
+    /// 一次删多集（多选删除用）：先更新内存并持久化，再把文件删除丢到后台执行。
     func removeEpisodes(recordKey: String, numbers: [Int]) {
         guard let record = records.first(where: { $0.id == recordKey }), !numbers.isEmpty else { return }
-        let targets = record.episodes.filter { numbers.contains($0.number) }
-        cancel(recordKey: recordKey, numbers: numbers)
-        var listings: [String: [URL]] = [:]
-        for episode in targets {
-            for folder in folders(for: record, episode: episode) {
-                let items: [URL]
-                if let cached = listings[folder.path] {
-                    items = cached
-                } else {
-                    items = (try? FileManager.default.contentsOfDirectory(
-                        at: folder,
-                        includingPropertiesForKeys: nil
-                    )) ?? []
-                    listings[folder.path] = items
-                }
-                if let file = episode.fileName {
-                    // 分片一起删：本地播放列表指向它们，留下就是垃圾。
-                    try? FileManager.default.removeItem(at: folder.appending(path: file))
-                }
-                let danmakuURL = folder.appending(path: "ep-\(episode.number).danmaku.json")
-                try? FileManager.default.removeItem(at: danmakuURL)
-                removeSegments(in: folder, prefix: "ep-\(episode.number)", items: items)
-            }
+        let targetSet = Set(numbers)
+        let targets = record.episodes.filter { targetSet.contains($0.number) }
+        let deletionTasks: [(folders: [URL], fileName: String?, number: Int)] = targets.map { episode in
+            (folders: folders(for: record, episode: episode), fileName: episode.fileName, number: episode.number)
         }
-        updateMany(recordKey: recordKey, numbers: Set(numbers)) { episodes, number in
+
+        cancel(recordKey: recordKey, numbers: numbers)
+        updateMany(recordKey: recordKey, numbers: targetSet, persistNow: false) { episodes, number in
             episodes.removeAll { $0.number == number }
         }
+        removeProgressStates(recordKey: recordKey, numbers: targetSet)
+
         // 集全删光了就整条记录一起走（LP 5482）：不然下载管理里留一个空番剧名，
         // 点进去什么都没有，删也删不掉。
         if let updated = records.first(where: { $0.id == recordKey }), updated.episodes.isEmpty {
             // `removeRecord` 自己会停任务、删文件夹、落盘。
             removeRecord(updated)
-            return
+        } else {
+            persist()
         }
-        persist()
+
+        if !deletionTasks.isEmpty {
+            Task.detached(priority: .utility) {
+                var listings: [String: [URL]] = [:]
+                for task in deletionTasks {
+                    for folder in task.folders {
+                        let items: [URL]
+                        if let cached = listings[folder.path] {
+                            items = cached
+                        } else {
+                            items = (try? FileManager.default.contentsOfDirectory(
+                                at: folder,
+                                includingPropertiesForKeys: nil
+                            )) ?? []
+                            listings[folder.path] = items
+                        }
+                        if let file = task.fileName {
+                            // 分片一起删：本地播放列表指向它们，留下就是垃圾。
+                            try? FileManager.default.removeItem(at: folder.appending(path: file))
+                        }
+                        let danmakuURL = folder.appending(path: "ep-\(task.number).danmaku.json")
+                        try? FileManager.default.removeItem(at: danmakuURL)
+                        Self.removeSegments(in: folder, prefix: "ep-\(task.number)", items: items)
+                    }
+                }
+            }
+        }
     }
 
     /// 离线播放用的本地地址。
@@ -529,10 +614,12 @@ final class DownloadCenter {
                 || (error as? DownloadError).map { if case .cancelled = $0 { return true } else { return false } } == true
             if wasCancelled {
                 update(item) { episode in
+                    syncProgressToEpisode(&episode, recordKey: item.recordKey)
                     episode.status = .paused
                 }
             } else {
                 update(item) { episode in
+                    syncProgressToEpisode(&episode, recordKey: item.recordKey)
                     episode.status = .failed
                     episode.errorMessage = error.localizedDescription
                 }
@@ -582,16 +669,17 @@ final class DownloadCenter {
         let loginUA = PluginCookieStore.shared.userAgent(for: record.pluginName)
         let userAgent = (loginUA?.isEmpty == false ? loginUA! : plugin.userAgent)
         let pluginName = record.pluginName
-        let engine = DownloadEngine(cookieForURL: { url in
-            let header = PluginCookieStore.shared.cookieHeader(pluginName: pluginName, url: url.absoluteString)
-            return header.isEmpty ? nil : header
-        })
+        let epPrefix = "ep-\(item.episodeNumber)"
         let target = try await engine.download(
             mediaURL: mediaURL,
             referer: referer,
             userAgent: userAgent,
+            cookieForURL: { url in
+                let header = PluginCookieStore.shared.cookieHeader(pluginName: pluginName, url: url.absoluteString)
+                return header.isEmpty ? nil : header
+            },
             to: folder,
-            baseName: "ep-\(item.episodeNumber)",
+            baseName: epPrefix,
             segmentConcurrency: settings.downloadParallelSegments,
             cancellation: cancellation,
             onProgress: { [weak self] progress in
@@ -602,8 +690,17 @@ final class DownloadCenter {
         )
 
         // HLS 的 `target` 只是那份指向本地分片的播放列表（几百字节到几 KB），
-        // 真正的体积在分片里。只算播放列表会显示成「11 KB」（LP 5112 看到的那样）。
-        let size = Self.episodeBytes(folder: folder, prefix: "ep-\(item.episodeNumber)", target: target)
+        // 真正的体积在分片里。只算播放列表会显示成「11 KB」（LP 5112 看到的那样），统计移出主线程执行。
+        let size = await Task.detached(priority: .utility) {
+            Self.episodeBytes(folder: folder, prefix: epPrefix, target: target)
+        }.value
+        syncProgressState(
+            recordKey: item.recordKey,
+            number: item.episodeNumber,
+            progress: 1,
+            downloadedBytes: size,
+            totalBytes: size
+        )
         update(item) { episode in
             episode.status = .completed
             episode.progress = 1
@@ -635,7 +732,7 @@ final class DownloadCenter {
 
     /// 一集真正占了多少地方：本地播放列表 + 它的全部分片。
     /// 直链下载那就只有一份文件，跟播放列表同名规则也适用。
-    private static func episodeBytes(folder: URL, prefix: String, target: URL) -> Int64 {
+    nonisolated private static func episodeBytes(folder: URL, prefix: String, target: URL) -> Int64 {
         let targetSize = (try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? Int64) ?? 0
         guard target.pathExtension == "m3u8" else { return targetSize }
         let items = (try? FileManager.default.contentsOfDirectory(
@@ -653,23 +750,78 @@ final class DownloadCenter {
 
     private func applyProgress(item: QueueItem, progress: DownloadProgress) {
         // 已经跑完 / 被取消的那几集，晚到的进度回调不要覆盖状态。
-        guard activeNumbers[item.recordKey]?.contains(item.episodeNumber) == true else { return }
-        update(item, persistNow: false) { episode in
-            guard episode.status == .downloading || episode.status == .resolving else { return }
-            episode.status = .downloading
-            if progress.receivedBytes > 0 || episode.downloadedBytes == 0 {
-                episode.downloadedBytes = progress.receivedBytes
-            }
-            if progress.totalBytes > 0 { episode.totalBytes = progress.totalBytes }
-            if progress.fraction >= 0 {
-                episode.progress = min(1, progress.fraction)
-            }
+        guard activeNumbers[item.recordKey]?.contains(item.episodeNumber) == true,
+              let episode = episode(recordKey: item.recordKey, number: item.episodeNumber),
+              episode.status == .downloading || episode.status == .resolving
+        else { return }
+
+        // 只更新独立进度对象，不写回值类型 `records`，避免单集进度变化触发整页列表重绘。
+        let state = progressState(recordKey: item.recordKey, episode: episode)
+        if progress.receivedBytes > 0 || state.downloadedBytes == 0 {
+            state.downloadedBytes = progress.receivedBytes
         }
+        if progress.totalBytes > 0 {
+            state.totalBytes = progress.totalBytes
+        }
+        if progress.fraction >= 0 {
+            state.progress = min(1, progress.fraction)
+        }
+
         // 每 2 秒节流落盘一次进度，避免强杀 App 后重启回退到上次暂停/继续前的旧进度。
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastProgressPersistUptime >= 2.0 {
             lastProgressPersistUptime = now
             persist()
+        }
+    }
+
+    private func syncProgressToEpisode(_ episode: inout DownloadEpisode, recordKey: String) {
+        let key = Self.episodeKey(recordKey: recordKey, number: episode.number)
+        guard let state = progressStates[key] else { return }
+        episode.progress = state.progress
+        episode.downloadedBytes = state.downloadedBytes
+        episode.totalBytes = state.totalBytes
+    }
+
+    private func syncProgressState(
+        recordKey: String,
+        number: Int,
+        progress: Double,
+        downloadedBytes: Int64,
+        totalBytes: Int64
+    ) {
+        let key = Self.episodeKey(recordKey: recordKey, number: number)
+        guard let state = progressStates[key] else { return }
+        state.progress = progress
+        state.downloadedBytes = downloadedBytes
+        state.totalBytes = totalBytes
+    }
+
+    private func removeProgressStates(recordKey: String, numbers: Set<Int>? = nil) {
+        if let numbers {
+            for number in numbers {
+                progressStates.removeValue(forKey: Self.episodeKey(recordKey: recordKey, number: number))
+            }
+        } else {
+            let prefix = "\(recordKey)#"
+            progressStates = progressStates.filter { !$0.key.hasPrefix(prefix) }
+        }
+    }
+
+    /// 持久化前将内存中的实时 `progressStates` 合并进快照副本，不回写 `self.records`。
+    private func snapshotRecordsWithLiveProgress() -> [DownloadRecord] {
+        guard !progressStates.isEmpty else { return records }
+        return records.map { record in
+            var copy = record
+            for index in copy.episodes.indices {
+                let key = Self.episodeKey(recordKey: copy.id, number: copy.episodes[index].number)
+                if let state = progressStates[key] {
+                    copy.episodes[index].progress = state.progress
+                    copy.episodes[index].downloadedBytes = state.downloadedBytes
+                    copy.episodes[index].totalBytes = state.totalBytes
+                }
+            }
+            return copy
         }
     }
 
@@ -703,21 +855,21 @@ final class DownloadCenter {
         if persistNow { persist() }
     }
 
-    private func folderURL(for record: DownloadRecord) -> URL {
+    nonisolated private static func folderURL(for record: DownloadRecord, directoryURL: URL) -> URL {
         let name = "\(record.bangumiID)-\(record.pluginName)-\(record.road)"
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
-        return directory.directoryURL.appending(path: name, directoryHint: .isDirectory)
+        return directoryURL.appending(path: name, directoryHint: .isDirectory)
     }
 
-    private func legacyFolderURL(for record: DownloadRecord) -> URL {
+    nonisolated private static func legacyFolderURL(for record: DownloadRecord, directoryURL: URL) -> URL {
         let name = "\(record.bangumiID)-\(record.pluginName)"
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
-        return directory.directoryURL.appending(path: name, directoryHint: .isDirectory)
+        return directoryURL.appending(path: name, directoryHint: .isDirectory)
     }
 
-    private func rebaseSandboxPath(_ path: String) -> URL? {
+    nonisolated private static func rebaseSandboxPath(_ path: String) -> URL? {
         let docMarker = "/Documents/"
         if let range = path.range(of: docMarker) {
             let rel = String(path[range.upperBound...])
@@ -732,20 +884,11 @@ final class DownloadCenter {
         return nil
     }
 
-    private func folderURL(for record: DownloadRecord, episode: DownloadEpisode) -> URL {
-        if let path = episode.directoryPath, !path.isEmpty {
-            let original = URL(fileURLWithPath: path, isDirectory: true)
-            if FileManager.default.fileExists(atPath: original.path) {
-                return original
-            }
-            if let rebased = rebaseSandboxPath(path), FileManager.default.fileExists(atPath: rebased.path) {
-                return rebased
-            }
-        }
-        return folderURL(for: record)
-    }
-
-    private func folders(for record: DownloadRecord, episode: DownloadEpisode) -> [URL] {
+    nonisolated private static func folders(
+        for record: DownloadRecord,
+        episode: DownloadEpisode,
+        directoryURL: URL
+    ) -> [URL] {
         var candidates: [URL] = []
         if let path = episode.directoryPath, !path.isEmpty {
             let exact = URL(fileURLWithPath: path, isDirectory: true)
@@ -754,8 +897,8 @@ final class DownloadCenter {
                 candidates.append(rebased)
             }
         }
-        let currentFolder = folderURL(for: record)
-        let legacyFolder = legacyFolderURL(for: record)
+        let currentFolder = folderURL(for: record, directoryURL: directoryURL)
+        let legacyFolder = legacyFolderURL(for: record, directoryURL: directoryURL)
         candidates.append(currentFolder)
         if currentFolder.path != legacyFolder.path {
             candidates.append(legacyFolder)
@@ -770,6 +913,31 @@ final class DownloadCenter {
         }
         var seen = Set<String>()
         return candidates.filter { seen.insert($0.path).inserted }
+    }
+
+    private func folderURL(for record: DownloadRecord) -> URL {
+        Self.folderURL(for: record, directoryURL: directory.directoryURL)
+    }
+
+    private func legacyFolderURL(for record: DownloadRecord) -> URL {
+        Self.legacyFolderURL(for: record, directoryURL: directory.directoryURL)
+    }
+
+    private func folderURL(for record: DownloadRecord, episode: DownloadEpisode) -> URL {
+        if let path = episode.directoryPath, !path.isEmpty {
+            let original = URL(fileURLWithPath: path, isDirectory: true)
+            if FileManager.default.fileExists(atPath: original.path) {
+                return original
+            }
+            if let rebased = Self.rebaseSandboxPath(path), FileManager.default.fileExists(atPath: rebased.path) {
+                return rebased
+            }
+        }
+        return folderURL(for: record)
+    }
+
+    private func folders(for record: DownloadRecord, episode: DownloadEpisode) -> [URL] {
+        Self.folders(for: record, episode: episode, directoryURL: directory.directoryURL)
     }
 
     private func recordFolders(for record: DownloadRecord) -> [URL] {
@@ -791,7 +959,7 @@ final class DownloadCenter {
     }
 
     /// 删掉一集的所有分片（`ep-3-seg-00000.ts`、`ep-3.m3u8`、`ep-3-init.mp4` 之类）。
-    private func removeSegments(in folder: URL, prefix: String, items: [URL]? = nil) {
+    nonisolated private static func removeSegments(in folder: URL, prefix: String, items: [URL]? = nil) {
         guard let items = items ?? (try? FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: nil
@@ -803,8 +971,33 @@ final class DownloadCenter {
 
     // MARK: - 持久化
 
-    private static var storeURL: URL {
+    nonisolated private static var storeURL: URL {
         AppEnvironment.storageRoot.appending(path: "downloads.json")
+    }
+
+    private struct MissingFileCheckResult: Sendable {
+        struct AdoptedDirectory: Sendable {
+            let recordID: String
+            let episodeNumber: Int
+            let directoryPath: String
+        }
+
+        struct RecoveredEpisode: Sendable {
+            let recordID: String
+            let episodeNumber: Int
+            let fileName: String
+            let directoryPath: String
+            let size: Int64
+        }
+
+        struct DroppedEpisode: Sendable {
+            let recordID: String
+            let episodeNumber: Int
+        }
+
+        var adoptedDirectories: [AdoptedDirectory] = []
+        var recoveredEpisodes: [RecoveredEpisode] = []
+        var droppedEpisodes: [DroppedEpisode] = []
     }
 
     private func load() {
@@ -824,29 +1017,37 @@ final class DownloadCenter {
         // 不清的话是一套自相矛盾的状态：下载管理页按 `isPlayableOffline` 算它已下完
         // （勾还在、存储页数着它），点进去 `localURL` 查了文件返回 nil、退回在线解析，
         // 想重下又被 `enqueue` 的同一个判据挡住——勾还在、放不了、也重下不了
-        // （Fuck 5263）。清掉文件名之后，勾、计数、重下三处一起回到真话。
-        dropMissingFiles()
+        // （Fuck 5263）。将磁盘文件校验移入后台线程执行，完成后再回主线程应用。
+        let snapshot = records
+        let directoryURL = directory.directoryURL
+        Task.detached(priority: .utility) { [weak self] in
+            let result = Self.scanMissingFiles(records: snapshot, directoryURL: directoryURL)
+            await self?.applyMissingFileCheckResult(result)
+        }
     }
 
-    /// 把「记录说下完、文件却不在」的集清成没下过。返回清掉了多少集。
-    @discardableResult
-    private func dropMissingFiles() -> Int {
-        var dropped = 0
-        var adopted = false
-        for recordIndex in records.indices {
-            let record = records[recordIndex]
-            for index in record.episodes.indices {
-                let episode = record.episodes[index]
+    /// 在后台线程核对磁盘上的已下载文件，收集目录修正、自动恢复和缺失清理项。
+    nonisolated private static func scanMissingFiles(
+        records: [DownloadRecord],
+        directoryURL: URL
+    ) -> MissingFileCheckResult {
+        var result = MissingFileCheckResult()
+        for record in records {
+            for episode in record.episodes {
                 guard episode.status == .completed else { continue }
+                let candidateFolders = folders(for: record, episode: episode, directoryURL: directoryURL)
 
                 // 1. 若带有文件名，先在候选文件夹中查找
                 if let fileName = episode.fileName {
-                    if let folder = folders(for: record, episode: episode).first(where: {
+                    if let folder = candidateFolders.first(where: {
                         FileManager.default.fileExists(atPath: $0.appending(path: fileName).path)
                     }) {
-                        if records[recordIndex].episodes[index].directoryPath != folder.path {
-                            records[recordIndex].episodes[index].directoryPath = folder.path
-                            adopted = true
+                        if episode.directoryPath != folder.path {
+                            result.adoptedDirectories.append(.init(
+                                recordID: record.id,
+                                episodeNumber: episode.number,
+                                directoryPath: folder.path
+                            ))
                         }
                         continue
                     }
@@ -857,7 +1058,7 @@ final class DownloadCenter {
                 let epPrefix = "ep-\(episode.number)"
                 var recoveredTarget: URL?
                 var recoveredFolder: URL?
-                for folder in folders(for: record, episode: episode) {
+                for folder in candidateFolders {
                     let mp4 = folder.appending(path: "\(epPrefix).mp4")
                     let m3u8 = folder.appending(path: "\(epPrefix).m3u8")
                     if FileManager.default.fileExists(atPath: mp4.path) {
@@ -872,65 +1073,120 @@ final class DownloadCenter {
                 }
 
                 if let target = recoveredTarget, let folder = recoveredFolder {
-                    let size = Self.episodeBytes(folder: folder, prefix: epPrefix, target: target)
-                    records[recordIndex].episodes[index].status = .completed
-                    records[recordIndex].episodes[index].progress = 1
-                    records[recordIndex].episodes[index].fileName = target.lastPathComponent
-                    records[recordIndex].episodes[index].directoryPath = folder.path
-                    records[recordIndex].episodes[index].downloadedBytes = size
-                    records[recordIndex].episodes[index].totalBytes = size
-                    records[recordIndex].episodes[index].updatedAt = Date()
-                    adopted = true
-                    KazumiLogBuffer.storage("下载记录：自动恢复第 \(episode.number) 集文件 \(target.lastPathComponent)")
+                    let size = episodeBytes(folder: folder, prefix: epPrefix, target: target)
+                    result.recoveredEpisodes.append(.init(
+                        recordID: record.id,
+                        episodeNumber: episode.number,
+                        fileName: target.lastPathComponent,
+                        directoryPath: folder.path,
+                        size: size
+                    ))
                     continue
                 }
 
                 // 3. 所有候选目录确实都找不到该集文件，才按未下载处理
                 guard episode.directoryPath?.isEmpty == false || episode.fileName != nil else { continue }
-                records[recordIndex].episodes[index].fileName = nil
-                records[recordIndex].episodes[index].directoryPath = nil
-                records[recordIndex].episodes[index].downloadedBytes = 0
-                records[recordIndex].episodes[index].updatedAt = Date()
-                dropped += 1
+                result.droppedEpisodes.append(.init(
+                    recordID: record.id,
+                    episodeNumber: episode.number
+                ))
             }
         }
+        return result
+    }
+
+    /// 将后台 `scanMissingFiles` 校验结果回主线程应用到 `records`。
+    private func applyMissingFileCheckResult(_ result: MissingFileCheckResult) {
+        var dropped = 0
+        var adopted = false
+
+        for item in result.adoptedDirectories {
+            guard let rIndex = records.firstIndex(where: { $0.id == item.recordID }),
+                  let eIndex = records[rIndex].episodes.firstIndex(where: { $0.number == item.episodeNumber }),
+                  records[rIndex].episodes[eIndex].status == .completed
+            else { continue }
+            if records[rIndex].episodes[eIndex].directoryPath != item.directoryPath {
+                records[rIndex].episodes[eIndex].directoryPath = item.directoryPath
+                adopted = true
+            }
+        }
+
+        for item in result.recoveredEpisodes {
+            guard let rIndex = records.firstIndex(where: { $0.id == item.recordID }),
+                  let eIndex = records[rIndex].episodes.firstIndex(where: { $0.number == item.episodeNumber }),
+                  records[rIndex].episodes[eIndex].status == .completed
+            else { continue }
+            records[rIndex].episodes[eIndex].status = .completed
+            records[rIndex].episodes[eIndex].progress = 1
+            records[rIndex].episodes[eIndex].fileName = item.fileName
+            records[rIndex].episodes[eIndex].directoryPath = item.directoryPath
+            records[rIndex].episodes[eIndex].downloadedBytes = item.size
+            records[rIndex].episodes[eIndex].totalBytes = item.size
+            records[rIndex].episodes[eIndex].updatedAt = Date()
+            syncProgressState(
+                recordKey: item.recordID,
+                number: item.episodeNumber,
+                progress: 1,
+                downloadedBytes: item.size,
+                totalBytes: item.size
+            )
+            adopted = true
+            KazumiLogBuffer.storage("下载记录：自动恢复第 \(item.episodeNumber) 集文件 \(item.fileName)")
+        }
+
+        for item in result.droppedEpisodes {
+            guard let rIndex = records.firstIndex(where: { $0.id == item.recordID }),
+                  let eIndex = records[rIndex].episodes.firstIndex(where: { $0.number == item.episodeNumber }),
+                  records[rIndex].episodes[eIndex].status == .completed
+            else { continue }
+            records[rIndex].episodes[eIndex].fileName = nil
+            records[rIndex].episodes[eIndex].directoryPath = nil
+            records[rIndex].episodes[eIndex].downloadedBytes = 0
+            records[rIndex].episodes[eIndex].updatedAt = Date()
+            syncProgressState(
+                recordKey: item.recordID,
+                number: item.episodeNumber,
+                progress: records[rIndex].episodes[eIndex].progress,
+                downloadedBytes: 0,
+                totalBytes: records[rIndex].episodes[eIndex].totalBytes
+            )
+            dropped += 1
+        }
+
         if dropped > 0 {
             KazumiLogBuffer.storage("下载记录：\(dropped) 集的文件不在，按未下载处理")
         }
         if dropped > 0 || adopted {
             persist()
         }
-        return dropped
     }
 
     private var saveTask: Task<Void, Never>?
 
-    /// 切出前台 / 进入多任务视图时立即同步刷盘，确保强杀 App 前最新下载进度已写入 `downloads.json`。
+    /// 切出前台 / 进入多任务视图时立即派发后台串行刷盘，确保强杀 App 前最新下载进度已写入 `downloads.json`。
     private func flushPersistIfDownloading() {
         guard activeEpisodeCount > 0 || saveTask != nil else { return }
         saveTask?.cancel()
         saveTask = nil
         lastProgressPersistUptime = ProcessInfo.processInfo.systemUptime
-        writeSnapshot(records)
+        let snapshot = snapshotRecordsWithLiveProgress()
+        let storeURL = Self.storeURL
+        let actor = persistenceActor
+        Task {
+            await actor.writeSnapshot(snapshot, to: storeURL)
+        }
     }
 
-    private func writeSnapshot(_ snapshot: [DownloadRecord]) {
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? FileManager.default.createDirectory(
-            at: Self.storeURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? data.write(to: Self.storeURL, options: .atomic)
-    }
-
-    /// 落盘。进度回调很密，攒一下再写，别把主线程拖住。
+    /// 落盘。进度回调很密，攒一下再交由后台串行 `DownloadPersistenceActor` 编码写盘，不阻塞主线程。
     private func persist() {
         saveTask?.cancel()
-        let snapshot = records
-        saveTask = Task { @MainActor in
+        let snapshot = snapshotRecordsWithLiveProgress()
+        let storeURL = Self.storeURL
+        let actor = persistenceActor
+        saveTask = Task {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
-            self.writeSnapshot(snapshot)
+            await actor.writeSnapshot(snapshot, to: storeURL)
         }
     }
 }

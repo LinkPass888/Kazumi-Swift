@@ -70,7 +70,13 @@ struct XPathRuleStrategy: Sendable {
         return PreparedRuleRequest(method: "GET", url: url)
     }
 
-    func parseSearch(_ raw: String, config: RuleExecutionConfig) throws -> RuleSearchParseResult {
+    /// 直接调用策略时默认保留 `matchedFragments`（兼容单元测试），
+    /// 生产搜索经由 `RuleEngine.search` 显式传入 `includeFragments: false` 跳过 `rawXML` 序列化。
+    func parseSearch(
+        _ raw: String,
+        config: RuleExecutionConfig,
+        includeFragments: Bool = true
+    ) throws -> RuleSearchParseResult {
         let html = try documentElement(raw)
         // Fuzi 的节点用 unowned 指向所属文档：文档必须先于节点活着。
         // 若文档只是 documentElement 里的局部变量，它会在函数返回时释放，
@@ -87,14 +93,14 @@ struct XPathRuleStrategy: Sendable {
         let nodes = try runSelector(.searchList, expression: config.searchList) {
             Array(root.xpath(config.searchList))
         }
+        let searchName = Self.contextRelativeSelector(config.searchName)
+        let searchResult = Self.contextRelativeSelector(config.searchResult)
 
         for (index, node) in nodes.enumerated() {
             do {
-                let searchName = Self.contextRelativeSelector(config.searchName)
                 let name = try runSelector(.searchName, expression: config.searchName) { () -> Fuzi.XMLElement? in
                     node.xpath(searchName).first
                 }?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let searchResult = Self.contextRelativeSelector(config.searchResult)
                 let source = try runSelector(.searchResult, expression: config.searchResult) { () -> Fuzi.XMLElement? in
                     node.xpath(searchResult).first
                 }?.attr("href")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -103,7 +109,9 @@ struct XPathRuleStrategy: Sendable {
                     continue
                 }
                 items.append(SearchItem(name: name, src: source))
-                fragments.append(fragment(node))
+                if includeFragments {
+                    fragments.append(fragment(node))
+                }
             } catch let error as XPathRuleFormatError {
                 throw error
             } catch {

@@ -10,8 +10,7 @@
 
 import Foundation
 
-@MainActor
-struct WebDAVClient {
+struct WebDAVClient: Sendable {
     /// 与 Flutter 版一致的同步根目录。
     ///
     /// 原版的服务端布局（见 lib/services/sync/webdav.dart:16-20）：
@@ -125,7 +124,7 @@ struct WebDAVClient {
         }
     }
 
-    enum WebDAVError: Error, LocalizedError {
+    enum WebDAVError: Error, LocalizedError, Sendable {
         case notConfigured
         case invalidURL(String)
         case unauthorized
@@ -170,10 +169,54 @@ struct WebDAVClient {
         }
     }
 
-    private let settings: SettingsStore
+    /// 缓存 HTTP 日期解析器（RFC 1123），避免每次 PROPFIND 解析条目时重复创建 `DateFormatter`。
+    private final class HTTPDateParser: @unchecked Sendable {
+        static let shared = HTTPDateParser()
 
+        private let lock = NSLock()
+        private let primary: DateFormatter
+        private let fallback: DateFormatter
+
+        private init() {
+            let locale = Locale(identifier: "en_US_POSIX")
+            let gmt = TimeZone(secondsFromGMT: 0)
+
+            let primary = DateFormatter()
+            primary.locale = locale
+            primary.timeZone = gmt
+            primary.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+            self.primary = primary
+
+            let fallback = DateFormatter()
+            fallback.locale = locale
+            fallback.timeZone = gmt
+            fallback.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
+            self.fallback = fallback
+        }
+
+        func parse(_ text: String) -> Date? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let date = primary.date(from: text) { return date }
+            return fallback.date(from: text)
+        }
+    }
+
+    private let baseURLString: String
+    private let user: String
+    private let password: String
+
+    @MainActor
     init(settings: SettingsStore) {
-        self.settings = settings
+        self.baseURLString = settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.user = settings.webDAVUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.password = settings.webDAVPassword
+    }
+
+    init(url: String, user: String, password: String) {
+        self.baseURLString = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.user = user.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.password = password
     }
 
     func upload(_ payload: Payload) async throws {
@@ -355,13 +398,7 @@ struct WebDAVClient {
 
     /// HTTP 头里那种时间：`Wed, 28 Oct 2026 03:49:00 GMT`。读不出来就是 nil。
     private static func httpDate(_ text: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-        if let date = formatter.date(from: text) { return date }
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
-        return formatter.date(from: text)
+        HTTPDateParser.shared.parse(text)
     }
 
         /// 云盘上那两处旧文件的修改时间（PROPFIND 里的 getlastmodified）。
@@ -434,7 +471,7 @@ struct WebDAVClient {
     /// 只做一次根目录的 PROPFIND，不发任何写请求，
     /// 用来在填完地址后先确认「地址 / 账号 / 密码」这三样是对的。
     func ping() async throws {
-        let raw = settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = baseURLString
         guard !raw.isEmpty else { throw WebDAVError.notConfigured }
         guard var url = URL(string: raw) else { throw WebDAVError.invalidURL(raw) }
         if !url.absoluteString.hasSuffix("/") {
@@ -450,7 +487,7 @@ struct WebDAVClient {
     // MARK: - 内部
 
     private func folderURL() throws -> URL {
-        let raw = settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = baseURLString
         guard !raw.isEmpty else { throw WebDAVError.notConfigured }
         guard var base = URL(string: raw) else { throw WebDAVError.invalidURL(raw) }
         if !base.absoluteString.hasSuffix("/") {
@@ -481,9 +518,8 @@ struct WebDAVClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 20
-        let user = settings.webDAVUser.trimmingCharacters(in: .whitespacesAndNewlines)
         if !user.isEmpty {
-            let token = Data("\(user):\(settings.webDAVPassword)".utf8).base64EncodedString()
+            let token = Data("\(user):\(password)".utf8).base64EncodedString()
             request.setValue("Basic \(token)", forHTTPHeaderField: "authorization")
         }
         return request

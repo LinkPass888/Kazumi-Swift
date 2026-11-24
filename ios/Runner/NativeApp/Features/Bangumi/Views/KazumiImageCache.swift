@@ -150,10 +150,6 @@ final class KazumiImageLoader: @unchecked Sendable {
         max(120, (pixelSize / 100) * 100)
     }
 
-    private static func memoryKey(_ key: String, bucket: Int) -> String {
-        "\(key)#\(bucket)"
-    }
-
     /// 够用的档位：命中比需要的略小一档（差 100 像素以内）也认，避免
     /// 300 档的图服务不了 400 档的视图、白解一次。
     private static func satisfies(_ entry: Entry, bucket: Int) -> Bool {
@@ -162,26 +158,15 @@ final class KazumiImageLoader: @unchecked Sendable {
 
     // MARK: - 同步读内存
 
-    /// 已解码好的图片，命中时视图可以直接当首帧画出来。
+    /// 已解码好的图片，命中时视图可以直接当首帧画出来（O(1) 单次查找）。
     func cachedImage(for url: String, pixelSize: Int) -> UIImage? {
         let key = Self.cacheKey(for: url)
         guard !key.isEmpty else { return nil }
         let bucket = Self.bucket(pixelSize)
-        let exact = memory.object(forKey: Self.memoryKey(key, bucket: bucket) as NSString)
-        if let exact { return exact.image }
-        // 档位不同：看看有没有更大的一份（一直查到上限 1600，让小图秒命中已缓存大图），或者略小一点还能用的。
-        for candidate in stride(from: bucket + 100, through: 1600, by: 100) {
-            if let entry = memory.object(forKey: Self.memoryKey(key, bucket: candidate) as NSString) {
-                return entry.image
-            }
-        }
-        for candidate in stride(from: bucket - 100, through: max(100, bucket - 300), by: -100) {
-            if let entry = memory.object(forKey: Self.memoryKey(key, bucket: candidate) as NSString),
-               Self.satisfies(entry, bucket: bucket) {
-                return entry.image
-            }
-        }
-        return nil
+        guard let entry = memory.object(forKey: key as NSString),
+              Self.satisfies(entry, bucket: bucket)
+        else { return nil }
+        return entry.image
     }
 
     /// 把一个远端地址换算成缓存键（同时做 http -> https 的归一）。
@@ -270,15 +255,9 @@ final class KazumiImageLoader: @unchecked Sendable {
         lock.withLock { if inFlight[key] === box { inFlight[key] = nil } }
         if cachedImage(for: url, pixelSize: pixelSize) != nil { return true }
 
-        // 那个任务按别的档位解的（例如预取用的是 600，这张要 800）：再解一次。
-        //
-        // LP 3457：这一步原来无条件用高优先级，于是**预取失败也会升级成三条
-        // 高优先级的重试**。换一天要预取一百多张，网络一抖就有上百个高优先级
-        // 请求排在闸门里，屏幕里要显示的封面全被压在后面——表现就是「封面一直
-        // 不出来、也不重新加载」。预取就让它失败，别抢屏幕的队。
-        guard highPriority else { return false }
-        await fetch(key: key, bucket: bucket, highPriority: true)
-        return cachedImage(for: url, pixelSize: pixelSize) != nil
+        // 仅当在途任务已成功落盘但档位偏低时从本地按目标档位重解；失败不再二次无条件网络 fetch。
+        guard highPriority, memory.object(forKey: key as NSString) != nil else { return false }
+        return await loadFromDisk(key: key, bucket: bucket)
     }
 
     /// 预取：给列表里即将出现的图片预热缓存，不阻塞调用方。
@@ -291,21 +270,29 @@ final class KazumiImageLoader: @unchecked Sendable {
     /// 现在预取**不登记在途、也不占名额**：只有闸门空着（没有高优先级在等、
     /// 还有空位）才下下一张，屏幕里的请求随时能插到前面。URL 按显示顺序传进来，
     /// 屏幕上那几张就先取。
-    func prefetch(_ urls: [String], pixelSize: Int = defaultPixelSize) {
-        guard !urls.isEmpty else { return }
+    private func isInFlight(_ key: String) -> Bool {
+        lock.withLock { inFlight[key] != nil }
+    }
+
+    @discardableResult
+    func prefetch(_ urls: [String], pixelSize: Int = defaultPixelSize) -> Task<Void, Never> {
+        guard !urls.isEmpty else { return Task {} }
         let bucket = Self.bucket(pixelSize)
-        Task(priority: .utility) { [weak self] in
+        return Task(priority: .utility) { [weak self] in
             guard let self else { return }
             for url in urls {
                 if Task.isCancelled { return }
                 let key = Self.cacheKey(for: url)
                 guard !key.isEmpty else { continue }
                 if self.cachedImage(for: url, pixelSize: pixelSize) != nil { continue }
+                if self.isInFlight(key) { continue }
                 // 屏幕里有东西在等，就先让路；别自己先占满名额再让屏幕排后面。
                 while await self.gate.shouldHoldPrefetch() {
                     if Task.isCancelled { return }
                     try? await Task.sleep(for: .milliseconds(150))
                 }
+                if Task.isCancelled { return }
+                if self.cachedImage(for: url, pixelSize: pixelSize) != nil || self.isInFlight(key) { continue }
                 await self.fetch(key: key, bucket: bucket, highPriority: false)
             }
         }
@@ -319,22 +306,38 @@ final class KazumiImageLoader: @unchecked Sendable {
         guard let logical = URL(string: key) else { return }
         let remote = BangumiImageRewriter.rewritten(logical)
 
-        // 屏幕里要显示的多给两次机会并退避；预取的只试一次，把连接让出来。
+        // 屏幕里要显示的最多重试 2 次（共 3 次尝试）并退避；4xx 客户端错误不重试；预取只试一次。
         let attempts = highPriority ? 3 : 1
         for attempt in 0..<attempts {
+            if !highPriority, Task.isCancelled { return }
             // 下载前先过闸门：同时最多 6 条，屏幕内的先拿。
             await gate.acquire(high: highPriority)
-            let outcome: (Data?, Bool)
+            let downloadedData: Data?
+            let shouldRetry: Bool
             do {
                 let (data, response) = try await session.data(from: remote)
-                let ok = (response as? HTTPURLResponse).map { (200...299).contains($0.statusCode) } ?? true
-                outcome = (ok ? data : nil, ok)
+                if let http = response as? HTTPURLResponse {
+                    if (200...299).contains(http.statusCode) {
+                        downloadedData = data
+                        shouldRetry = false
+                    } else if (400...499).contains(http.statusCode) {
+                        downloadedData = nil
+                        shouldRetry = false
+                    } else {
+                        downloadedData = nil
+                        shouldRetry = true
+                    }
+                } else {
+                    downloadedData = data
+                    shouldRetry = false
+                }
             } catch {
-                outcome = (nil, false)
+                downloadedData = nil
+                shouldRetry = true
             }
             await gate.release()
 
-            if let data = outcome.0 {
+            if let data = downloadedData {
                 guard let image = await Self.decode(data, pixelSize: bucket) else { return }
                 store(image, key: key, bucket: bucket)
                 do {
@@ -347,7 +350,7 @@ final class KazumiImageLoader: @unchecked Sendable {
                 }
                 return
             }
-            guard attempt < attempts - 1 else { return }
+            guard shouldRetry, attempt < attempts - 1 else { return }
             try? await Task.sleep(for: .milliseconds(400 * (attempt + 1)))
         }
     }
@@ -395,9 +398,14 @@ final class KazumiImageLoader: @unchecked Sendable {
     }
 
     private func store(_ image: UIImage, key: String, bucket: Int) {
+        let cacheKey = key as NSString
+        // 同一 URL 只保留一份 Entry，高档位覆写低档位，低档位不覆盖已有的高档位。
+        if let existing = memory.object(forKey: cacheKey), existing.bucket > bucket {
+            return
+        }
         let scale = image.scale
         let cost = Int(image.size.width * image.size.height * scale * scale * 4)
-        memory.setObject(Entry(image: image, bucket: bucket), forKey: Self.memoryKey(key, bucket: bucket) as NSString, cost: cost)
+        memory.setObject(Entry(image: image, bucket: bucket), forKey: cacheKey, cost: cost)
     }
 
     /// 按显示尺寸解码（对应原版的 memCacheWidth / memCacheHeight）：

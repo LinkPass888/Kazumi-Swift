@@ -48,8 +48,27 @@ settings:
     ENABLE_DEBUG_DYLIB: NO
     GCC_C_LANGUAGE_STANDARD: gnu17
     ENABLE_BITCODE: NO
-    # mpv / FFmpeg 库体积较大，保留完整的调试符号映射。
-    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+  configs:
+    Debug:
+      DEBUG_INFORMATION_FORMAT: dwarf
+      ENABLE_PREVIEWS: YES
+      SWIFT_OPTIMIZATION_LEVEL: -Onone
+    Release:
+      # mpv / FFmpeg 库体积较大，Release 保留完整的 dSYM 调试符号映射并启用全量体积与运行时优化。
+      DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+      ENABLE_PREVIEWS: NO
+      ENABLE_TESTABILITY: NO
+      SWIFT_OPTIMIZATION_LEVEL: -O
+      SWIFT_COMPILATION_MODE: wholemodule
+      GCC_OPTIMIZATION_LEVEL: s
+      LLVM_LTO: YES_THIN
+      DEAD_CODE_STRIPPING: YES
+      DEPLOYMENT_POSTPROCESSING: YES
+      STRIP_INSTALLED_PRODUCT: YES
+      STRIP_STYLE: non-global
+      STRIP_SWIFT_SYMBOLS: YES
+      COPY_PHASE_STRIP: YES
+      ASSETCATALOG_COMPILER_OPTIMIZATION: space
 
 packages:
   Fuzi:
@@ -215,7 +234,6 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         DEVELOPMENT_ASSET_PATHS: ""
         CODE_SIGN_STYLE: Automatic
-        ENABLE_PREVIEWS: YES
         # Mac Catalyst：同一份 iOS 工程 / UIKit 界面直接编出 Mac App。
         # MPVKit 1.1.0-n9.0.2 的 xcframework 带 ios-arm64_x86_64-maccatalyst 切片
         #（Libmpv / Libavdevice 的 Info.plist 里实测有），播放器不用换内核。

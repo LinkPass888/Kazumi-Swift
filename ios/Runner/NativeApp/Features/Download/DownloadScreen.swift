@@ -91,7 +91,45 @@ struct DownloadScreen: View {
                     header(record)
                     if !collapsed.contains(record.id) {
                         ForEach(record.episodes) { episode in
-                            episodeRow(record: record, episode: episode)
+                            let key = selectionKey(record: record, number: episode.number)
+                            DownloadEpisodeRowView(
+                                episode: episode,
+                                progressState: downloads.progressState(recordKey: record.id, episode: episode),
+                                isSelecting: isSelecting,
+                                isSelected: selection.contains(key),
+                                onTap: {
+                                    if isSelecting {
+                                        toggleSelection(key)
+                                    } else {
+                                        // 点任意一集都能进播放器（Colo v3）：本地有文件就放本地，
+                                        // 没有就走在线解析，不会点了没动静。
+                                        play(record: record, episode: episode)
+                                    }
+                                },
+                                onLongPress: {
+                                    guard !isSelecting else { return }
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        isSelecting = true
+                                        selection = [key]
+                                    }
+                                },
+                                onDelete: {
+                                    downloads.removeEpisode(recordKey: record.id, number: episode.number)
+                                },
+                                onRetryOrResume: {
+                                    downloads.enqueue(
+                                        bangumiID: record.bangumiID,
+                                        title: record.title,
+                                        coverURL: record.coverURL,
+                                        pluginName: record.pluginName,
+                                        road: record.road,
+                                        episodes: [(number: episode.number, title: episode.title, pageURL: episode.pageURL)]
+                                    )
+                                },
+                                onCancel: {
+                                    downloads.cancel(recordKey: record.id, numbers: [episode.number])
+                                }
+                            )
                         }
                     }
                 }
@@ -292,207 +330,6 @@ struct DownloadScreen: View {
         return body
     }
 
-    // MARK: - 一集
-
-    @ViewBuilder
-    private func episodeRow(record: DownloadRecord, episode: DownloadEpisode) -> some View {
-        let key = selectionKey(record: record, number: episode.number)
-        let isSelected = selection.contains(key)
-
-        HStack(spacing: 10) {
-            if isSelecting {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-            } else {
-                statusIcon(episode)
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(episode.displayTitle)
-                    .font(.subheadline)
-                    .lineLimit(1)
-                Text(statusText(episode))
-                    .font(.caption)
-                    .foregroundStyle(episode.status == .failed ? Color.red : .secondary)
-                    .lineLimit(2)
-                if episode.status == .downloading || episode.status == .resolving {
-                    if episode.status == .downloading,
-                       episode.totalBytes <= 0,
-                       episode.progress <= 0,
-                       episode.downloadedBytes > 0 {
-                        ProgressView()
-                            .progressViewStyle(.linear)
-                            .tint(KazumiPalette.accent(for: colorScheme))
-                            .padding(.top, 1)
-                    } else {
-                        ProgressView(value: max(0, min(1, episode.progress)))
-                            .tint(KazumiPalette.accent(for: colorScheme))
-                            .padding(.top, 1)
-                    }
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            // 多选时行尾动作全隐藏，免得跟勾选打架（Colo 5176）。
-            // 已下载那行不放播放按钮：点整行就是播（Colo v3），行尾只留下载相关的动作。
-            if !isSelecting {
-                trailingAction(record: record, episode: episode)
-            }
-        }
-        .padding(.vertical, 2)
-        .contentShape(.rect)
-        .onTapGesture {
-            if isSelecting {
-                toggleSelection(key)
-            } else {
-                // 点任意一集都能进播放器（Colo v3）：本地有文件就放本地，
-                // 没有就走在线解析，不会点了没动静。
-                play(record: record, episode: episode)
-            }
-        }
-        .onLongPressGesture(minimumDuration: 0.35) {
-            guard !isSelecting else { return }
-            withAnimation(.easeOut(duration: 0.15)) {
-                isSelecting = true
-                selection = [key]
-            }
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if !isSelecting {
-                Button(role: .destructive) {
-                    downloads.removeEpisode(recordKey: record.id, number: episode.number)
-                } label: {
-                    Label("删除", systemImage: "trash")
-                }
-                // LP 5189：删除用系统删的红，不要跟主题色。
-                .tint(.red)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func statusIcon(_ episode: DownloadEpisode) -> some View {
-        // LP 5196：下载中、排队、暂停都是「加进下载但没下完」，统一用虚线下箭头；
-        // 下完的实心，失败一颗感叹号。行下方那行小字仍然写清具体状态。
-        // LP 5213：符号不用主题色，跟文字一个色。
-        switch episode.status {
-        case .downloading, .resolving, .paused, .pending:
-            Image(systemName: "arrow.down.circle.dotted")
-                .foregroundStyle(.primary)
-        case .completed where episode.fileName != nil:
-            Image(systemName: "arrow.down.circle.fill")
-                .foregroundStyle(.primary)
-        // 记录说下完、文件却不在：跟其他没下完的一个符号，别让行里留一个放不了的实心勾。
-        case .completed:
-            Image(systemName: "arrow.down.circle.dotted")
-                .foregroundStyle(.primary)
-        case .failed:
-            Image(systemName: "exclamationmark.circle")
-                .foregroundStyle(.red)
-        }
-    }
-
-    private func statusText(_ episode: DownloadEpisode) -> String {
-        switch episode.status {
-        case .pending:
-            return String(localized: "排队中")
-        case .resolving:
-            return String(localized: "正在解析播放地址")
-        case .downloading:
-            let percent = Int((episode.progress * 100).rounded())
-            if episode.totalBytes > 0 {
-                let totalSize = ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
-                if episode.downloadedBytes > 0 {
-                    let downloadedSize = ByteCountFormatter.string(fromByteCount: episode.downloadedBytes, countStyle: .file)
-                    return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize)) / \(String(describing: totalSize))")
-                }
-                return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: totalSize))")
-            }
-            if episode.downloadedBytes > 0 {
-                let downloadedSize = ByteCountFormatter.string(fromByteCount: episode.downloadedBytes, countStyle: .file)
-                return percent > 0
-                    ? String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize))")
-                    : String(localized: "下载中 · 已下 \(String(describing: downloadedSize))")
-            }
-            return String(localized: "下载中 \(String(describing: percent))%")
-        case .paused:
-            let percent = Int((episode.progress * 100).rounded())
-            return percent > 0
-                ? String(localized: "已暂停 · \(String(describing: percent))%")
-                : String(localized: "已暂停")
-        case .completed:
-            // 文件不在时大小是假的，写清楚能重下，别只写一个数。
-            guard episode.fileName != nil else { return String(localized: "文件不在，可重新下载") }
-            return ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
-        case .failed:
-            // 失败原因直接说，不再只画个红点。
-            return episode.errorMessage ?? String(localized: "下载失败")
-        }
-    }
-
-    /// 一集能做的事：失败了重试、跑着暂停、暂停继续。删除在左滑里。
-    @ViewBuilder
-    private func trailingAction(record: DownloadRecord, episode: DownloadEpisode) -> some View {
-        switch episode.status {
-        case .failed:
-            Button("重试") {
-                downloads.enqueue(
-                    bangumiID: record.bangumiID,
-                    title: record.title,
-                    coverURL: record.coverURL,
-                    pluginName: record.pluginName,
-                    road: record.road,
-                    episodes: [(number: episode.number, title: episode.title, pageURL: episode.pageURL)]
-                )
-            }
-            .font(.footnote.weight(.medium))
-            .buttonStyle(.plain)
-            .foregroundStyle(KazumiPalette.accent(for: colorScheme))
-        case .downloading, .resolving, .pending:
-            Button {
-                downloads.cancel(recordKey: record.id, numbers: [episode.number])
-            } label: {
-                Image(systemName: "stop.circle")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-        case .paused:
-            Button {
-                downloads.enqueue(
-                    bangumiID: record.bangumiID,
-                    title: record.title,
-                    coverURL: record.coverURL,
-                    pluginName: record.pluginName,
-                    road: record.road,
-                    episodes: [(number: episode.number, title: episode.title, pageURL: episode.pageURL)]
-                )
-            } label: {
-                Image(systemName: "play.circle")
-                    .foregroundStyle(KazumiPalette.accent(for: colorScheme))
-            }
-            .buttonStyle(.plain)
-        case .completed where episode.fileName == nil:
-            // 文件不在了：给一条重下的路，不然这集只能看着、既放不了也重下不了。
-            Button("重下") {
-                downloads.enqueue(
-                    bangumiID: record.bangumiID,
-                    title: record.title,
-                    coverURL: record.coverURL,
-                    pluginName: record.pluginName,
-                    road: record.road,
-                    episodes: [(number: episode.number, title: episode.title, pageURL: episode.pageURL)]
-                )
-            }
-            .font(.footnote.weight(.medium))
-            .buttonStyle(.plain)
-            .foregroundStyle(KazumiPalette.accent(for: colorScheme))
-        case .completed:
-            EmptyView()
-        }
-    }
-
     // MARK: - 播放
 
     /// 放本地那份文件（Colo 5174）。播放器里先看本地，有就跳过解析。
@@ -598,6 +435,174 @@ struct DownloadScreen: View {
         withAnimation(.easeOut(duration: 0.15)) {
             selection.removeAll()
             isSelecting = false
+        }
+    }
+}
+
+/// 单集下载行：只订阅该集独立的 `EpisodeProgressState`，避免单集高频进度刷新触发整页 `DownloadScreen` 重绘。
+struct DownloadEpisodeRowView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let episode: DownloadEpisode
+    let progressState: DownloadCenter.EpisodeProgressState
+    let isSelecting: Bool
+    let isSelected: Bool
+    let onTap: () -> Void
+    let onLongPress: () -> Void
+    let onDelete: () -> Void
+    let onRetryOrResume: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if isSelecting {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            } else {
+                statusIcon
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(episode.displayTitle)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(episode.status == .failed ? Color.red : .secondary)
+                    .lineLimit(2)
+                if episode.status == .downloading || episode.status == .resolving {
+                    if episode.status == .downloading,
+                       progressState.totalBytes <= 0,
+                       progressState.progress <= 0,
+                       progressState.downloadedBytes > 0 {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                            .tint(KazumiPalette.accent(for: colorScheme))
+                            .padding(.top, 1)
+                    } else {
+                        ProgressView(value: max(0, min(1, progressState.progress)))
+                            .tint(KazumiPalette.accent(for: colorScheme))
+                            .padding(.top, 1)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // 多选时行尾动作全隐藏，免得跟勾选打架（Colo 5176）。
+            // 已下载那行不放播放按钮：点整行就是播（Colo v3），行尾只留下载相关的动作。
+            if !isSelecting {
+                trailingAction
+            }
+        }
+        .padding(.vertical, 2)
+        .contentShape(.rect)
+        .onTapGesture(perform: onTap)
+        .onLongPressGesture(minimumDuration: 0.35, perform: onLongPress)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if !isSelecting {
+                Button(role: .destructive, action: onDelete) {
+                    Label("删除", systemImage: "trash")
+                }
+                // LP 5189：删除用系统删的红，不要跟主题色。
+                .tint(.red)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        // LP 5196：下载中、排队、暂停都是「加进下载但没下完」，统一用虚线下箭头；
+        // 下完的实心，失败一颗感叹号。行下方那行小字仍然写清具体状态。
+        // LP 5213：符号不用主题色，跟文字一个色。
+        switch episode.status {
+        case .downloading, .resolving, .paused, .pending:
+            Image(systemName: "arrow.down.circle.dotted")
+                .foregroundStyle(.primary)
+        case .completed where episode.fileName != nil:
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(.primary)
+        // 记录说下完、文件却不在：跟其他没下完的一个符号，别让行里留一个放不了的实心勾。
+        case .completed:
+            Image(systemName: "arrow.down.circle.dotted")
+                .foregroundStyle(.primary)
+        case .failed:
+            Image(systemName: "exclamationmark.circle")
+                .foregroundStyle(.red)
+        }
+    }
+
+    private var statusText: String {
+        switch episode.status {
+        case .pending:
+            return String(localized: "排队中")
+        case .resolving:
+            return String(localized: "正在解析播放地址")
+        case .downloading:
+            let progress = progressState.progress
+            let totalBytes = progressState.totalBytes
+            let downloadedBytes = progressState.downloadedBytes
+            let percent = Int((progress * 100).rounded())
+            if totalBytes > 0 {
+                let totalSize = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
+                if downloadedBytes > 0 {
+                    let downloadedSize = ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)
+                    return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize)) / \(String(describing: totalSize))")
+                }
+                return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: totalSize))")
+            }
+            if downloadedBytes > 0 {
+                let downloadedSize = ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)
+                return percent > 0
+                    ? String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize))")
+                    : String(localized: "下载中 · 已下 \(String(describing: downloadedSize))")
+            }
+            return String(localized: "下载中 \(String(describing: percent))%")
+        case .paused:
+            let percent = Int((progressState.progress * 100).rounded())
+            return percent > 0
+                ? String(localized: "已暂停 · \(String(describing: percent))%")
+                : String(localized: "已暂停")
+        case .completed:
+            // 文件不在时大小是假的，写清楚能重下，别只写一个数。
+            guard episode.fileName != nil else { return String(localized: "文件不在，可重新下载") }
+            return ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
+        case .failed:
+            // 失败原因直接说，不再只画个红点。
+            return episode.errorMessage ?? String(localized: "下载失败")
+        }
+    }
+
+    /// 一集能做的事：失败了重试、跑着暂停、暂停继续。删除在左滑里。
+    @ViewBuilder
+    private var trailingAction: some View {
+        switch episode.status {
+        case .failed:
+            Button("重试", action: onRetryOrResume)
+                .font(.footnote.weight(.medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+        case .downloading, .resolving, .pending:
+            Button(action: onCancel) {
+                Image(systemName: "stop.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        case .paused:
+            Button(action: onRetryOrResume) {
+                Image(systemName: "play.circle")
+                    .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+            }
+            .buttonStyle(.plain)
+        case .completed where episode.fileName == nil:
+            // 文件不在了：给一条重下的路，不然这集只能看着、既放不了也重下不了。
+            Button("重下", action: onRetryOrResume)
+                .font(.footnote.weight(.medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(KazumiPalette.accent(for: colorScheme))
+        case .completed:
+            EmptyView()
         }
     }
 }

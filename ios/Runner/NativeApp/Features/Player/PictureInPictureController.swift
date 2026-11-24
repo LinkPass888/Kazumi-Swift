@@ -1062,8 +1062,16 @@ private final class PiPHostView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
+private struct SendablePixelBuffer: @unchecked Sendable {
+    let value: CVPixelBuffer
+}
+
 @MainActor
 private final class PiPFrameCopier {
+    private nonisolated static let pixelConversionQueue = DispatchQueue(
+        label: "kazumi.pip.pixelbuffer",
+        qos: .userInitiated
+    )
     fileprivate weak var engine: MPVEngine?
     private let renderer: AVSampleBufferVideoRenderer
     private let synchronizer = AVSampleBufferRenderSynchronizer()
@@ -1338,11 +1346,25 @@ private final class PiPFrameCopier {
                 return
             }
             self.captureCounts["raw-frame", default: 0] += 1
-            self.enqueue(captured)
+            let rawFrame = captured.frame
+            let pixelBufferBox = await Self.convertToPixelBuffer(rawFrame)
+            guard self.captureGeneration == generation, self.isCapturing else { return }
+            self.enqueue(captured, pixelBuffer: pixelBufferBox?.value)
         }
     }
 
-    private func enqueue(_ captured: PiPCapturedFrame) {
+    private nonisolated static func convertToPixelBuffer(
+        _ frame: MPVRawFrame
+    ) async -> SendablePixelBuffer? {
+        await withCheckedContinuation { continuation in
+            pixelConversionQueue.async {
+                let boxed = frame.makePixelBuffer().map(SendablePixelBuffer.init)
+                continuation.resume(returning: boxed)
+            }
+        }
+    }
+
+    private func enqueue(_ captured: PiPCapturedFrame, pixelBuffer: CVPixelBuffer?) {
         guard let engine else { return }
         let frame = captured.frame
         // 媒体时间固定用「命令下发前」那一拍：回执后再读 time-pos 会把相邻两拍
@@ -1389,7 +1411,7 @@ private final class PiPFrameCopier {
             lastReportedAspect = aspect
             onVideoAspectChanged?(aspect)
         }
-        guard let pixelBuffer = frame.makePixelBuffer() else {
+        guard let pixelBuffer else {
             captureCounts["pixel-failure", default: 0] += 1
             logOnce("原始帧转 CVPixelBuffer 失败（\(frame.format)，\(frame.width)×\(frame.height)）")
             driveSynchronizer(engine: engine)

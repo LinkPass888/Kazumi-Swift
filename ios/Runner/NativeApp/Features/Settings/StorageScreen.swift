@@ -237,7 +237,7 @@ struct StorageScreen: View {
     private func refreshSize() async {
         cacheBytes = await KazumiImageLoader.shared.diskSizeInBytes()
         airTimeCache = BangumiAirTimeService.shared.cacheDiagnostics()
-        offlineBytes = environment.downloads.totalBytes()
+        offlineBytes = await environment.downloads.totalBytes()
         offlineEpisodes = environment.downloads.records.reduce(0) {
             $0 + $1.episodes.filter(\.isPlayableOffline).count
         }

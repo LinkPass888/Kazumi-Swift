@@ -140,6 +140,7 @@ final class KazumiSceneDelegate: UIResponder, UIWindowSceneDelegate {
     private var isWaitingForLinkRoot = false
     private var preparedRequestRevision: UInt?
     private weak var retiringSurface: PlayerSurfaceModel?
+    private var libraryFlushBackgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         receive(URLContexts)
@@ -298,12 +299,34 @@ final class KazumiSceneDelegate: UIResponder, UIWindowSceneDelegate {
         PlaybackLifecycleDiagnostics.log("scene.willEnterForeground", scene: scene)
     }
 
+    private func endLibraryFlushBackgroundTask() {
+        guard libraryFlushBackgroundTask != .invalid else { return }
+        let taskID = libraryFlushBackgroundTask
+        libraryFlushBackgroundTask = .invalid
+        UIApplication.shared.endBackgroundTask(taskID)
+    }
+
     func sceneDidEnterBackground(_ scene: UIScene) {
         PlaybackLifecycleDiagnostics.log("scene.didEnterBackground", scene: scene)
+        guard let library = environment?.library else { return }
+        library.flush()
+        endLibraryFlushBackgroundTask()
+        libraryFlushBackgroundTask = UIApplication.shared.beginBackgroundTask(
+            withName: "KazumiLibraryFlush"
+        ) { [weak self] in
+            Task { @MainActor in
+                self?.endLibraryFlushBackgroundTask()
+            }
+        }
+        Task { @MainActor [weak self] in
+            await library.flushAndWait()
+            self?.endLibraryFlushBackgroundTask()
+        }
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
         PlaybackLifecycleDiagnostics.log("scene.willResignActive", scene: scene)
+        environment?.library.flush()
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {

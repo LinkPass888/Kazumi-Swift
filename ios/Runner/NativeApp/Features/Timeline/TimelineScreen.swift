@@ -70,22 +70,41 @@ struct TimelineScreen: View {
         }
     }
 
-    // MARK: - 派生数据
+    // MARK: - 派生数据缓存
 
-    private var watchingIDs: Set<Int> {
-        Set(library.entries.filter { $0.collectType == .watching }.map(\.id))
+    private struct HorizontalInsets: Equatable {
+        var leading: CGFloat = 0
+        var trailing: CGFloat = 0
     }
 
-    private var watchedIDs: Set<Int> {
-        Set(library.entries.filter { $0.collectType == .watched }.map(\.id))
+    /// 缓存追番状态集合与 7 天过滤结果，避免单帧重复过滤与逐卡重建 Set。
+    @State private var watchingIDs: Set<Int> = []
+    @State private var watchedIDs: Set<Int> = []
+    @State private var droppedIDs: Set<Int> = []
+    @State private var filteredCalendar: [[BangumiItem]] = []
+    /// 缓存窗口级水平安全区，仅在出现或几何尺寸变化时刷新。
+    @State private var cachedWindowInsets = HorizontalInsets()
+
+    private func rebuildLibraryIDs() {
+        var watching = Set<Int>()
+        var watched = Set<Int>()
+        var dropped = Set<Int>()
+        for entry in library.entries {
+            switch entry.collectType {
+            case .watching: watching.insert(entry.id)
+            case .watched: watched.insert(entry.id)
+            case .dropped: dropped.insert(entry.id)
+            default: break
+            }
+        }
+        watchingIDs = watching
+        watchedIDs = watched
+        droppedIDs = dropped
+        rebuildFilteredCalendar()
     }
 
-    private var droppedIDs: Set<Int> {
-        Set(library.entries.filter { $0.collectType == .dropped }.map(\.id))
-    }
-
-    private var filteredCalendar: [[BangumiItem]] {
-        controller.filterCalendar(
+    private func rebuildFilteredCalendar() {
+        filteredCalendar = controller.filterCalendar(
             watchingIDs: watchingIDs,
             watchedIDs: watchedIDs,
             droppedIDs: droppedIDs
@@ -126,10 +145,20 @@ struct TimelineScreen: View {
         .task {
             await loadInitialSeason()
         }
+        .onChange(of: library.entries, initial: true) { _, _ in
+            rebuildLibraryIDs()
+        }
+        .onChange(of: controller.bangumiCalendar, initial: true) { _, _ in
+            rebuildFilteredCalendar()
+        }
+        .onChange(of: filterScrollKey) { _, _ in
+            rebuildFilteredCalendar()
+        }
         // 详情页改完放送星期 / 点亮「在时间表展示」后，回到这里立刻重排。
         .onChange(of: BangumiTimelineStore.shared.revision) { _, _ in
             Task {
                 await controller.refreshCustomEntries(collectTypes: collectTypes)
+                rebuildFilteredCalendar()
                 prepareWeekdayMove()
             }
         }
@@ -539,7 +568,7 @@ struct TimelineScreen: View {
                 // 页宽 = 安全区内宽 + 左右安全区：横屏 750 + 62 + 62 = 874，正好一屏。
                 // 之前页宽取安全区内宽 750，视口却铺到屏幕边，右边 62 点就永远露着下一天，
                 // 翻页步长和页宽也不一致，每换一天攒 31 点。
-                let windowInsets = Self.windowHorizontalSafeArea(for: pageProxy)
+                let windowInsets = cachedWindowInsets
                 let leadingInset = max(pageProxy.safeAreaInsets.leading, windowInsets.leading)
                 let trailingInset = max(pageProxy.safeAreaInsets.trailing, windowInsets.trailing)
                 let pageW = max(pageProxy.size.width
@@ -581,9 +610,19 @@ struct TimelineScreen: View {
                 .onScrollGeometryChange(for: CGFloat.self, of: { geo in
                     geo.contentOffset.x
                 }, action: { _, new in
+                    guard settings.timelineShowCount else { return }
                     pageOffsetX = new
                 })
-                .onAppear { pageViewportWidth = pageW }
+                .onAppear {
+                    pageViewportWidth = pageW
+                    cachedWindowInsets = Self.windowHorizontalSafeArea(for: pageProxy)
+                }
+                .onChange(of: pageProxy.size) { _, _ in
+                    cachedWindowInsets = Self.windowHorizontalSafeArea(for: pageProxy)
+                }
+                .onChange(of: pageProxy.safeAreaInsets) { _, _ in
+                    cachedWindowInsets = Self.windowHorizontalSafeArea(for: pageProxy)
+                }
                 .onChange(of: pageW) { _, new in
                     pageViewportWidth = max(new, 1)
                     // 转屏会换页宽（402 → 874），旧偏移按旧页宽算，必须重新落到选中的那天，
@@ -608,16 +647,16 @@ struct TimelineScreen: View {
     }
 
     /// 读取窗口级水平安全区中未被当前 GeometryProxy 扣掉的部分（兼容 iPhone Duo 竖栏）。
-    private static func windowHorizontalSafeArea(for proxy: GeometryProxy) -> (leading: CGFloat, trailing: CGFloat) {
+    private static func windowHorizontalSafeArea(for proxy: GeometryProxy) -> HorizontalInsets {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
         guard let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.windows.first else {
-            return (0, 0)
+            return HorizontalInsets()
         }
         let frame = proxy.frame(in: .global)
         let leading = max(0, window.safeAreaInsets.left - frame.minX)
         let trailing = max(0, frame.maxX - (window.bounds.width - window.safeAreaInsets.right))
-        return (leading, trailing)
+        return HorizontalInsets(leading: leading, trailing: trailing)
     }
 
     @ViewBuilder

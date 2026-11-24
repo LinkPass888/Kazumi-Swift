@@ -45,8 +45,8 @@ struct LibraryScreen: View {
     @State private var updateTimes: [Int: Date] = [:]
     /// 季度时刻表是否已经跑完一轮。没跑完之前先按「最近变更」排，不转圈。
     @State private var updateTimesLoaded = false
-    /// 网格封面按左到右、上到下完成一次回源后递增，让对应卡片重新查缓存。
-    @State private var coverLoadRevision = 0
+    /// 可视区之后 15 张封面的可取消预取任务。
+    @State private var coverPrefetchTask: Task<Void, Never>?
 
     @FocusState private var searchFocused: Bool
 
@@ -171,8 +171,9 @@ struct LibraryScreen: View {
             .task {
                 sort = CollectSort(rawValue: settings.librarySort) ?? .updateTime
             }
-            .task(id: coverLoadKey) {
-                await loadLibraryCovers()
+            .onDisappear {
+                coverPrefetchTask?.cancel()
+                coverPrefetchTask = nil
             }
             // 追番条目变化时补齐时刻表：新加入「在看」的番也要拿到时刻。
             .task(id: library.watchingEntries.map(\.id)) {
@@ -691,7 +692,8 @@ struct LibraryScreen: View {
 
     @ViewBuilder
     private var contentBody: some View {
-        if filteredEntries.isEmpty {
+        let entries = filteredEntries
+        if entries.isEmpty {
             if !trimmedQuery.isEmpty {
                 searchEmptyState
             } else {
@@ -710,17 +712,19 @@ struct LibraryScreen: View {
                         columns: gridColumns(width: libraryContentWidth),
                         spacing: 14
                     ) {
-                        ForEach(filteredEntries) { entry in
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                             LibraryPosterCard(
                                 entry: entry,
                                 isPending: pendingID == entry.id,
-                                coverReloadToken: coverLoadRevision,
                                 zoomNamespace: zoomNamespace,
                                 onOpen: { router.push(.bangumiInfo(bangumiID: entry.id)) },
                                 onChangeType: { type in changeType(entry, to: type) }
                             )
                             // 取消追番时这张卡淡出并缩到 0.92，其余卡片靠同一次动画补位。
                             .transition(cardRemovalTransition)
+                            .onAppear {
+                                schedulePrefetchAhead(from: index, in: entries)
+                            }
                         }
                     }
                     .padding(.horizontal, 16)
@@ -863,34 +867,16 @@ struct LibraryScreen: View {
             )
     }
 
-    /// 追番页封面并发按可视区加载；加载完成后统一通知卡片刷新，避免逐张刷 revision 导致网格反复重绘（P2 优化）。
-    private func loadLibraryCovers() async {
+    /// 对当前卡片之后的 15 张封面发起可取消预取，可视区卡片自身按需加载。
+    private func schedulePrefetchAhead(from index: Int, in entries: [LibraryEntry]) {
         guard libraryContainerSize.width > 0 else { return }
-        let pixelSize = libraryCoverPixelSize
-        let uncached = filteredEntries.map(\.imageURL).filter {
-            !$0.isEmpty && KazumiImageLoader.shared.cachedImage(for: $0, pixelSize: pixelSize) == nil
-        }
-        guard !uncached.isEmpty else { return }
-        await withTaskGroup(of: Void.self) { group in
-            var active = 0
-            for url in uncached {
-                if active >= 6 {
-                    _ = await group.next()
-                    active -= 1
-                }
-                guard !Task.isCancelled else { break }
-                active += 1
-                group.addTask {
-                    _ = await KazumiImageLoader.shared.load(url, pixelSize: pixelSize)
-                }
-            }
-        }
-        guard !Task.isCancelled else { return }
-        coverLoadRevision &+= 1
-    }
-
-    private var coverLoadKey: [String] {
-        ["px:\(libraryCoverPixelSize)"] + filteredEntries.map { "\($0.id)|\($0.imageURL)" }
+        let start = index + 1
+        guard start < entries.count else { return }
+        let end = min(entries.count, start + 15)
+        let urls = entries[start..<end].map(\.imageURL).filter { !$0.isEmpty }
+        guard !urls.isEmpty else { return }
+        coverPrefetchTask?.cancel()
+        coverPrefetchTask = KazumiImageLoader.shared.prefetch(urls, pixelSize: libraryCoverPixelSize)
     }
 
     private var libraryCoverPixelSize: Int {

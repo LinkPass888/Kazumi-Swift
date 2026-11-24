@@ -14,10 +14,11 @@ import WebKit
 
 @MainActor
 final class WebViewContentRules {
+    private static let ruleIdentifier = "KazumiVideoSourceBlocker.v2"
     private static var cachedList: WKContentRuleList?
     private static var compileTask: Task<WKContentRuleList?, Never>?
 
-    /// 规则 JSON：resource-type 与 load-type 语义与 ContentBlockers 等价。
+    /// 规则 JSON：resource-type 与 load-type 语义与 ContentBlockers 等价；额外拦截字体减少嗅探开销。
     static let json = """
     [
       {
@@ -25,7 +26,7 @@ final class WebViewContentRules {
         "action": { "type": "block" }
       },
       {
-        "trigger": { "url-filter": ".*", "resource-type": ["image"] },
+        "trigger": { "url-filter": ".*", "resource-type": ["image", "font"] },
         "action": { "type": "block" }
       },
       {
@@ -58,9 +59,14 @@ final class WebViewContentRules {
             return await compileTask.value
         }
         let task = Task { () -> WKContentRuleList? in
+            if let existing = try? await WKContentRuleListStore.default().lookUpContentRuleList(
+                forIdentifier: Self.ruleIdentifier
+            ) {
+                return existing
+            }
             do {
                 return try await WKContentRuleListStore.default().compileContentRuleList(
-                    forIdentifier: "KazumiVideoSourceBlocker",
+                    forIdentifier: Self.ruleIdentifier,
                     encodedContentRuleList: json
                 )
             } catch {

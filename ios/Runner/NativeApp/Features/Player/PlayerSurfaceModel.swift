@@ -62,8 +62,6 @@ final class PlayerSurfaceModel {
     /// 上一帧内核报的 `pause` / `core-idle`：只在真的变了的时候写一行日志。
     private var lastCorePaused = false
     private var lastCoreIdle = false
-    /// 缓冲段刷新的节拍：状态快照 4Hz，这里 1Hz 就够。
-    private var bufferedRefreshTick = 0
     /// 这次加载走到哪一步（由 mpv 事件推，见 `MPVLoadPhase`）。
     private(set) var loadPhase: MPVLoadPhase = .idle
 
@@ -175,7 +173,7 @@ final class PlayerSurfaceModel {
     var hudToastMessage: String?
 
     /// 同播（Syncplay 等）状态广播回调：(isPaused, position, isSeek)
-    var onPlayStateBroadcast: ((_ isPaused: Bool, _ position: Double, _ isSeek: Bool) -> Void)?
+    @ObservationIgnored var onPlayStateBroadcast: ((_ isPaused: Bool, _ position: Double, _ isSeek: Bool) -> Void)?
 
     func play() {
         autoPlayPending = false
@@ -296,14 +294,6 @@ final class PlayerSurfaceModel {
         seek(to: target)
     }
 
-    /// 从内核读一次已缓冲位置（进度条的缓冲段用）；读不到就保持原值。
-    func refreshBufferedTime() {
-        guard let engine else { return }
-        let value = engine.playableTime
-        guard value.isFinite, value > 0 else { return }
-        bufferedTime = value
-    }
-
     /// 当前文件的编码规格（「播放信息」半屏页用）。引擎还没建好时返回 nil。
     func playbackInfo() -> PlaybackInfo? {
         engine?.playbackInfo()
@@ -330,25 +320,40 @@ final class PlayerSurfaceModel {
     /// 都经过这里，避免只有 PiP 自己按「跳过」时才知道时基要重置。
     @ObservationIgnored var onPlaybackDiscontinuity: (@MainActor (Double, Bool) -> Void)?
 
+    /// 写前判等：避免 4Hz 稳态/暂停快照在值未变化时反复触发 `@Observable` 广播。
+    @inline(__always)
+    private func setIfChanged<Value: Equatable>(
+        _ keyPath: ReferenceWritableKeyPath<PlayerSurfaceModel, Value>,
+        to newValue: Value
+    ) {
+        if self[keyPath: keyPath] != newValue {
+            self[keyPath: keyPath] = newValue
+        }
+    }
+
     /// 内核推来的一帧状态。
     func handle(snapshot: MPVSnapshot) {
         if snapshot.loadID != activeLoadID {
             activeLoadID = snapshot.loadID
-            hasFirstFrame = false
-            hasStartedPlayback = false
+            setIfChanged(\.hasFirstFrame, to: false)
+            setIfChanged(\.hasStartedPlayback, to: false)
             didReportPlaybackStarted = false
-            isReady = false
-            loadPhase = .opening
+            setIfChanged(\.isReady, to: false)
+            setIfChanged(\.loadPhase, to: .opening)
             autoPlayPending = wantsPlaying
         }
-        currentTime = max(0, snapshot.time)
-        if snapshot.duration.isFinite, snapshot.duration > 0 {
+        let clampedTime = max(0, snapshot.time)
+        if abs(currentTime - clampedTime) >= 0.05 || (clampedTime == 0 && currentTime != 0) {
+            currentTime = clampedTime
+        }
+        if snapshot.duration.isFinite, snapshot.duration > 0,
+           abs(duration - snapshot.duration) >= 0.1 {
             duration = snapshot.duration
         }
         // 内核没在走有三种：正在缓冲/卡住（idle 但没暂停）、被暂停（用户或系统）、
         // 还没起播。只有第二种才算暂停，第一种要留给界面转加载圈。
-        corePaused = snapshot.isPaused
-        isSeeking = snapshot.isSeeking
+        setIfChanged(\.corePaused, to: snapshot.isPaused)
+        setIfChanged(\.isSeeking, to: snapshot.isSeeking)
         // 内核自己停下来（或者自己进 idle）也要留一行：真机上「回前台停着、
         // 又不转圈」这种，圈不转就说明 `isStalled` 是 false，也就是内核的
         // `pause` 或 `idle` 为真——而这两件事都不是我们主动做的。
@@ -367,8 +372,8 @@ final class PlayerSurfaceModel {
             // 圈重新转。seek 不经过这里（相位还是 playing），所以不会误触发
             // 首帧逻辑（LP 4818 第 7 条）。
             if snapshot.loadPhase == .opening {
-                hasFirstFrame = false
-                hasStartedPlayback = false
+                setIfChanged(\.hasFirstFrame, to: false)
+                setIfChanged(\.hasStartedPlayback, to: false)
                 didReportPlaybackStarted = false
             }
             loadPhase = snapshot.loadPhase
@@ -386,15 +391,19 @@ final class PlayerSurfaceModel {
         // 网卡住）内核本来就是 idle，可那正是用户最想看网速的时候，按 idle 归零
         // 会让「正在缓冲…」下面那行速度直接消失（LP 2026-11-08 第 2 条）。
         // 真断流时 `raw-input-rate` 自己会掉到 0，不需要额外兜。
+        let nextDownloadSpeed: Double
         if snapshot.downloadSpeed > 0 {
-            downloadSpeed = downloadSpeed > 0
+            nextDownloadSpeed = downloadSpeed > 0
                 ? downloadSpeed * 0.6 + snapshot.downloadSpeed * 0.4
                 : snapshot.downloadSpeed
         } else {
-            downloadSpeed = 0
+            nextDownloadSpeed = 0
+        }
+        if abs(downloadSpeed - nextDownloadSpeed) >= 1 || (nextDownloadSpeed == 0 && downloadSpeed != 0) {
+            downloadSpeed = nextDownloadSpeed
         }
         if hasFirstFrame, snapshot.time > 0.15 {
-            hasStartedPlayback = true
+            setIfChanged(\.hasStartedPlayback, to: true)
             // 只报一次：这条回调是「该做一件事了」的信号，不是每帧的状态。
             if !didReportPlaybackStarted {
                 didReportPlaybackStarted = true
@@ -407,28 +416,24 @@ final class PlayerSurfaceModel {
             }
         }
         let coreRunning = !snapshot.isPaused && !snapshot.isIdle
+        let nextIsPlaying: Bool
         if coreRunning {
-            isPlaying = true
+            nextIsPlaying = true
         } else if snapshot.isPaused {
-            isPlaying = false
+            nextIsPlaying = false
         } else {
             // 没暂停却没走：意图还在就仍然算「在播」（画中画、正在播放都用这个口径）。
             // 缓冲那一下由 `coreIdle` + `isStalled` 单独表达，不改 `isPlaying`（Fuck 5538）。
-            isPlaying = wantsPlaying
+            nextIsPlaying = wantsPlaying
         }
+        setIfChanged(\.isPlaying, to: nextIsPlaying)
         // 内核「没暂停但也没在走」= 缓冲/等数据。`isStalled` 靠它算，
         // 不能靠 `isPlaying`：上面那一档会把缓冲态的 isPlaying 也设成 true。
-        coreIdle = snapshot.isIdle
+        setIfChanged(\.coreIdle, to: snapshot.isIdle)
         evaluateStallRecovery(snapshot: snapshot)
         if snapshot.videoWidth > 0, snapshot.videoHeight > 0 {
             let size = CGSize(width: snapshot.videoWidth, height: snapshot.videoHeight)
             if videoSize != size { videoSize = size }
-        }
-        // 缓冲段不需要跟着 4Hz 的状态快照走：每 4 拍读一次 mpv 属性就够，
-        // 少一次主线程的同步属性查询，播放中更不容易被 UI 抢时间。
-        bufferedRefreshTick &+= 1
-        if bufferedRefreshTick % 4 == 0 {
-            refreshBufferedTime()
         }
         // 只有当前 loadID 的新文件视频参数才允许把界面置为就绪、补一次 play()。
         // 旧文件残留的 hasVideo 不能消耗 autoPlayPending，也不能把缓存提前拉到 36000 秒。
@@ -438,14 +443,14 @@ final class PlayerSurfaceModel {
                 // 用户在命令下发后按了暂停就作废，不再把内核拉起来。
                 if wantsPlaying {
                     engine?.play()
-                    isPlaying = true
+                    setIfChanged(\.isPlaying, to: true)
                 }
             }
-            isReady = true
-            errorMessage = nil
+            setIfChanged(\.isReady, to: true)
+            setIfChanged(\.errorMessage, to: nil)
         } else if let loadError = snapshot.loadError {
             // 源挂了 / 404 / 403：不留一块黑屏装死，把原因说给用户。
-            errorMessage = loadError
+            setIfChanged(\.errorMessage, to: loadError)
         }
         if isReady {
             applyPendingResume()

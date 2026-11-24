@@ -59,6 +59,7 @@ final class VideoSourceWebView: NSObject {
     private var webView: WKWebView?
     private var injectedLegacyParserMode: Bool?
     private var retryCount = 0
+    private var retryTask: Task<Void, Never>?
     private var offset = 0
     private var isIframeLoaded = false
     private var isVideoSourceLoaded = false
@@ -136,13 +137,15 @@ final class VideoSourceWebView: NSObject {
     func load(url: String, useLegacyParser: Bool, offset: Int = 0) async -> Int {
         await initialize()
         guard let webView else { return loadGeneration }
-        // 第一次加载时没有旧页面，别先空跑一次 about:blank（会多等一次导航）。
+        retryTask?.cancel()
+        retryTask = nil
+        // 复用已有 WebView 时直接中断旧导航，省去多余的 about:blank 往返。
         if webView.url != nil {
-            await unloadPage()
+            webView.stopLoading()
         }
         loadGeneration &+= 1
         let generation = loadGeneration
-        // 代号先发出去，调用方马上对上号：下面还要卸旧页、写 Cookie，
+        // 代号先发出去，调用方马上对上号：下面还要写 Cookie，
         // 这段等待里旧页面迟到的回调也会被贴上这个代号（见 onLoadStarted 注释）。
         onLoadStarted?(generation)
         self.useLegacyParser = useLegacyParser
@@ -166,12 +169,16 @@ final class VideoSourceWebView: NSObject {
         webView.customUserAgent = sessionUserAgent ?? userAgent
         if !sessionCookies.isEmpty {
             let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
-            for cookie in sessionCookies {
-                await withCheckedContinuation { continuation in
-                    cookieStore.setCookie(cookie) { continuation.resume() }
+            let cookies = sessionCookies
+            await withTaskGroup(of: Void.self) { group in
+                for cookie in cookies {
+                    group.addTask { @MainActor in
+                        await cookieStore.setCookie(cookie)
+                    }
                 }
             }
-            emit("applied \(sessionCookies.count) login cookies")
+            guard loadGeneration == generation else { return generation }
+            emit("applied \(cookies.count) login cookies")
         }
         emit("started loading: \(url)")
         webView.load(URLRequest(url: target))
@@ -192,6 +199,8 @@ final class VideoSourceWebView: NSObject {
     }
 
     func unloadPage() async {
+        retryTask?.cancel()
+        retryTask = nil
         guard let webView, let blank = URL(string: "about:blank") else { return }
         isLoading = false
         webView.load(URLRequest(url: blank))
@@ -218,6 +227,8 @@ final class VideoSourceWebView: NSObject {
     }
 
     func dispose() {
+        retryTask?.cancel()
+        retryTask = nil
         if let webView {
             webView.stopLoading()
             webView.navigationDelegate = nil
@@ -330,7 +341,11 @@ final class VideoSourceWebView: NSObject {
         guard !message.isEmpty, !isVideoSourceLoaded else { return }
         emit("Loading video source: \(message)")
         isIframeLoaded = true
-        Task { @MainActor in await self.unloadPage() }
+        let generation = loadGeneration
+        Task { @MainActor [weak self] in
+            guard let self, self.loadGeneration == generation else { return }
+            await self.unloadPage()
+        }
         resolveVideoSource(message)
     }
 
@@ -494,6 +509,7 @@ extension VideoSourceWebView: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if webView.url?.absoluteString == "about:blank" { return }
         emit("loading completed: \(webView.url?.absoluteString ?? "")")
         onPageLoaded?()
         guard isLoading, !isVideoSourceLoaded else { return }
@@ -502,10 +518,17 @@ extension VideoSourceWebView: WKNavigationDelegate {
         retryCount += 1
         let message = "No video source found, retrying (\(retryCount))"
         emit(message)
-        Task { @MainActor in
+        let generation = loadGeneration
+        retryTask?.cancel()
+        retryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(4))
             // 不捕获参数里的 WKWebView（非 Sendable），统一走自身的 webView 引用。
-            guard self.isLoading, !self.isVideoSourceLoaded, let target = self.webView?.url else { return }
+            guard !Task.isCancelled,
+                  let self,
+                  self.loadGeneration == generation,
+                  self.isLoading,
+                  !self.isVideoSourceLoaded,
+                  let target = self.webView?.url else { return }
             self.isLoading = true
             self.onVideoLoading?(true)
             self.webView?.load(URLRequest(url: target))
@@ -543,8 +566,8 @@ extension VideoSourceWebView: WKScriptMessageHandler {
     }
 }
 
-/// 弱引用转发桥：避免 `WKUserContentController.add(_:name:)` 强持有 `VideoSourceWebView` 形成泄漏环。
-private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+/// 弱引用转发桥：避免 `WKUserContentController.add(_:name:)` 强持有 WebView 控制器形成泄漏环。
+final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
     weak var target: WKScriptMessageHandler?
 
     init(_ target: WKScriptMessageHandler) {

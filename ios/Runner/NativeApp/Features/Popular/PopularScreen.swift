@@ -13,8 +13,10 @@ struct PopularScreen: View {
     @State private var controller = PopularController()
     @Environment(AppRouter.self) private var router
 
-    /// 滚动内容上沿在滚动空间里的 y：0 是原位，负数是上拉过界（下拉出来的那段）。
-    @State private var scrollY: CGFloat = 0
+    /// 焦点区是否仍在屏幕内（低频布尔状态，上滑期间不触发逐帧整页重算）。
+    @State private var isHeroOnScreen = true
+    /// 下拉过界位移：仅下拉过界时更新，上滑期间保持为 0。
+    @State private var overPull: CGFloat = 0
     /// 顶部那条模糊开没开：只有真的上滑才开，回弹和手抖不算（LP 3145 / 3147）。
     @State private var showsTopBlur = false
     /// 滚动区顶部实际生效的 inset（含安全区）：下拉补偿归零起点用（LP 2887 的量法）。
@@ -22,6 +24,8 @@ struct PopularScreen: View {
     /// iPad 竖屏两栏：封面拖动量外提（Colo 7139）——封面块和右栏货架从同一个状态算偏移，
     /// 同一个弹簧、零延迟；窄档不用它。
     @State private var heroDragPull: CGFloat = 0
+    /// 缓存浮动 tab 条左缘，仅在出现或容器尺寸变化时遍历窗口层级读取。
+    @State private var cachedTabBarLeadingEdge: CGFloat?
 
     var body: some View {
         GeometryReader { proxy in
@@ -217,7 +221,7 @@ struct PopularScreen: View {
     /// 而浮动 tab 条占 y 342…385——一屏只剩 17 点，等于没有货架。
     private func compactTwoColumnBody(size: CGSize, insets: EdgeInsets) -> some View {
         // 封面右缘 = 浮动 tab 条左缘 − 1（Colo 6947）；量不到回落 272。
-        let slotWidth = Self.tabBarLeadingEdge().map { max(200, $0 - 1 - insets.leading) } ?? Self.compactCoverWidth
+        let slotWidth = cachedTabBarLeadingEdge.map { max(200, $0 - 1 - insets.leading) } ?? Self.compactCoverWidth
         // 封面框 x 0..272、y 0..402（Ato 6939 / Colo 6940）：向左铺进安全区、向下铺到屏底。
         let bleed = insets.leading
         // 底安全区只取 home 条那一段（横屏 21）：proxy 里的底内边距把浮动 tab 条也算进去了（实测 64），
@@ -271,8 +275,12 @@ struct PopularScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
+            cachedTabBarLeadingEdge = Self.tabBarLeadingEdge()
             controller.paintFromCache()
             Task { await controller.load() }
+        }
+        .onChange(of: size) { _, _ in
+            cachedTabBarLeadingEdge = Self.tabBarLeadingEdge()
         }
     }
 
@@ -298,7 +306,7 @@ struct PopularScreen: View {
                 PopularHero(
                     items: controller.heroItems,
                     zoomNamespace: zoomNamespace,
-                    isOnScreen: scrollY < coverHeight,
+                    isOnScreen: isHeroOnScreen,
                     pullScale: pullScale,
                     pullOffset: overPull,
                     coverHeightOverride: coverHeight,
@@ -324,7 +332,14 @@ struct PopularScreen: View {
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
         } action: { _, newValue in
-            scrollY = newValue
+            let onScreen = newValue < coverHeight
+            if onScreen != isHeroOnScreen {
+                isHeroOnScreen = onScreen
+            }
+            let nextOverPull = max(0, -newValue)
+            if nextOverPull != overPull {
+                overPull = nextOverPull
+            }
         }
         // 封面铺到屏幕最顶（Colo 6687 §3.1 / §4.2）：跟单栏那条一样忽略顶部安全区。
         .ignoresSafeArea(edges: .top)
@@ -354,10 +369,6 @@ struct PopularScreen: View {
         // 封面高度 = 屏高 × 0.70（Ato 7175 / LP 7173：不再用 0.90×宽；440 宽机 ≈669，
         // 接近 2:3 海报）；特窄窗口炤旧兜底（宽 ÷ 0.45，Colo 6683）。
         let coverHeight = Self.coverHeight(forWidth: size.width)
-        // 下拉补偿以「内容顶」为原点（LP 2887）：滚动区尊重顶部安全区时静止 offset = −顶部 inset，
-        // 减掉再判过界。现在滚动区忽略顶部安全区，静止 offset 归 0，这段照常兜住回弹。
-        let overPullNarrow = max(0, -(scrollY + topInset))
-        let pullScaleNarrow = 1 + min(overPullNarrow, 120) / 550
         let isPad = UIDevice.current.userInterfaceIdiom == .pad
         return ScrollView {
             LazyVStack(spacing: 0) {
@@ -366,9 +377,9 @@ struct PopularScreen: View {
                         items: controller.heroItems,
                         zoomNamespace: zoomNamespace,
                         // 封面整块滚出屏幕就停掉自动切换（Colo 3047）。
-                        isOnScreen: scrollY < coverHeight,
-                        pullScale: pullScaleNarrow,
-                        pullOffset: overPullNarrow,
+                        isOnScreen: isHeroOnScreen,
+                        pullScale: pullScale,
+                        pullOffset: overPull,
                         coverHeightOverride: coverHeight,
                         coverWidth: coverWidth,
                         // 信息块走 hero 默认旧结构 textPlacement .overlay
@@ -379,7 +390,7 @@ struct PopularScreen: View {
                     )
                     narrowTopControls(safeTop: safeTop, isPad: isPad)
                 }
-                .offset(y: -overPullNarrow)
+                .offset(y: -overPull)
 
                 // 封面底边下留 8（HEAD 旧版同一条：渐隐到封面底边已是页面底色，不用再留一层）。
                 shelves()
@@ -406,7 +417,15 @@ struct PopularScreen: View {
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
         } action: { _, newValue in
-            scrollY = newValue
+            let onScreen = newValue < coverHeight
+            if onScreen != isHeroOnScreen {
+                isHeroOnScreen = onScreen
+            }
+            // 下拉补偿以「内容顶」为原点（LP 2887）：仅下拉过界时更新，上滑期间保持为 0。
+            let nextOverPull = max(0, -(newValue + topInset))
+            if nextOverPull != overPull {
+                overPull = nextOverPull
+            }
             // 真的滚上去一段才开、回落到很浅才关（LP 3147）：中间留出这一段差，
             // 系统自己回弹、手抖出来的那几点的位移就不算数了。
             if newValue > 12, !showsTopBlur {
@@ -536,37 +555,15 @@ struct PopularScreen: View {
         .padding(.top, 160)
     }
 
-    /// 下拉出来的那段：只在过界时为正，上滑时是 0（Colo 2847）。
-    private var overPull: CGFloat {
-        max(0, -scrollY)
-    }
-
     /// 下拉过界时封面的放大倍数：下拉 d 放大 1 + d/550，封顶 1.22（LP 2938 / Colo 2939）。
     /// 只放大封面那张图，块和文字都不动。
     private var pullScale: CGFloat {
         1 + min(overPull, 120) / 550
     }
 
-
-    /// 为每行货架计算需要抑制缩放源的重复番剧 ID（只保留首次出现的那张，避免同 Namespace 冲突）。
-    private var shelfSuppressedZoomIDs: [String: Set<Int>] {
-        var seen = Set<Int>()
-        var result: [String: Set<Int>] = [:]
-        for row in controller.rows {
-            var suppressed = Set<Int>()
-            for poster in row.items {
-                if !seen.insert(poster.id).inserted {
-                    suppressed.insert(poster.id)
-                }
-            }
-            result[row.id] = suppressed
-        }
-        return result
-    }
-
     /// 下面那几行横向海报架。
     private func shelves(tileWidth: CGFloat? = nil) -> some View {
-        let suppressedMap = shelfSuppressedZoomIDs
+        let suppressedMap = controller.shelfSuppressedZoomIDs
         return LazyVStack(spacing: 24) {
             ForEach(controller.rows) { row in
                 PopularShelf(

@@ -109,23 +109,14 @@ struct BangumiRemoteImage: View {
             }
             return
         }
-        // 还在屏幕上就还有两次机会：首屏几十张一起出来时，偶发失败
-        // 不该让这张封面永远停在灰块上（LP 3446「总有封面加载不出来」）。
-        // 视图滚走时 `.task` 会被取消，这个循环也就停了。
-        for attempt in 0..<3 {
-            _ = await KazumiImageLoader.shared.load(url, pixelSize: pixelSize)
-            // 即使这个任务被取消（视图复用 / 尺寸变化），只要图已经在缓存里就画出来，
-            // 否则会白白丢掉一次已经完成的下载。
-            if let cached = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixelSize) {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    image = cached
-                }
-                return
+        // 重试统一收口在 KazumiImageLoader.fetch 内部，这里只发起一次加载。
+        _ = await KazumiImageLoader.shared.load(url, pixelSize: pixelSize)
+        // 即使这个任务被取消（视图复用 / 尺寸变化），只要图已经在缓存里就画出来，
+        // 否则会白白丢掉一次已经完成的下载。
+        if let cached = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixelSize) {
+            withAnimation(.easeOut(duration: 0.15)) {
+                image = cached
             }
-            guard attempt < 2 else { return }
-            guard !Task.isCancelled else { return }
-            try? await Task.sleep(for: .milliseconds(700 * (attempt + 1)))
-            guard !Task.isCancelled else { return }
         }
     }
 }
@@ -184,19 +175,13 @@ struct KazumiAvatar: View {
     private func loadIfNeeded() async {
         guard !key.isEmpty, image == nil else { return }
         let pixels = KazumiImageLoader.pixelSize(for: CGSize(width: size, height: size))
-        // 头像同样是「一屏几十张一起出来」，失败也留两次重试。
-        for attempt in 0..<3 {
-            _ = await KazumiImageLoader.shared.load(url, pixelSize: pixels)
-            guard !Task.isCancelled else { return }
-            if let cached = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixels) {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    image = cached
-                }
-                return
+        // 重试统一收口在 KazumiImageLoader.fetch 内部，这里只发起一次加载。
+        _ = await KazumiImageLoader.shared.load(url, pixelSize: pixels)
+        guard !Task.isCancelled else { return }
+        if let cached = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixels) {
+            withAnimation(.easeOut(duration: 0.15)) {
+                image = cached
             }
-            guard attempt < 2 else { return }
-            try? await Task.sleep(for: .milliseconds(700 * (attempt + 1)))
-            guard !Task.isCancelled else { return }
         }
     }
 }

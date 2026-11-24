@@ -115,6 +115,14 @@ final class UpdateNotificationScheduler {
         await task.value
     }
 
+    private struct CandidateMeta: Sendable {
+        let fireAt: Date
+        let bangumiID: Int
+        let displayName: String
+        let identifier: String
+        let coverURLString: String
+    }
+
     private func performReschedule(watching entries: [LibraryEntry], now: Date) async {
         guard !entries.isEmpty else {
             await removeManagedPendingRequests()
@@ -127,14 +135,8 @@ final class UpdateNotificationScheduler {
             return
         }
 
-        let calendar = Calendar.current
-        var candidates: [(fireAt: Date, request: UNNotificationRequest)] = []
-        var tempURLsToClean: [URL] = []
-        defer {
-            for tempURL in tempURLsToClean {
-                try? FileManager.default.removeItem(at: tempURL)
-            }
-        }
+        var candidates: [CandidateMeta] = []
+        candidates.reserveCapacity(entries.count * Self.maxEpisodesPerBangumi)
 
         for entry in entries {
             let airing = AniListClient.shared.staleCached(entry.id, now: now)
@@ -164,47 +166,77 @@ final class UpdateNotificationScheduler {
             while scheduled < Self.maxEpisodesPerBangumi,
                   fireAt.timeIntervalSince(now) > 0,
                   fireAt.timeIntervalSince(now) <= Self.maxLead {
-                let content = UNMutableNotificationContent()
-                content.title = String(localized: "番剧更新")
-                content.body = String(localized: "「\(String(describing: entry.displayName))」已更新")
-                content.sound = .default
-                content.userInfo = ["bangumiID": entry.id, "fireAt": fireAt.timeIntervalSince1970]
-
                 // 同一部番的两集要各自成条，id 用「番 + 集序号」，否则后一条盖掉前一条。
                 let identifier = "\(Self.identifier(for: entry.id))-\(scheduled)"
-                if let (attachment, tempURL) = makeCoverAttachment(
-                    coverURLString: coverURL,
-                    attachmentIdentifier: "cover-\(identifier)"
-                ) {
-                    content.attachments = [attachment]
-                    tempURLsToClean.append(tempURL)
-                }
-
-                let components = calendar.dateComponents(
-                    [.year, .month, .day, .hour, .minute],
-                    from: fireAt
+                candidates.append(
+                    CandidateMeta(
+                        fireAt: fireAt,
+                        bangumiID: entry.id,
+                        displayName: entry.displayName,
+                        identifier: identifier,
+                        coverURLString: coverURL
+                    )
                 )
-                let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-                let request = UNNotificationRequest(
-                    identifier: identifier,
-                    content: content,
-                    trigger: trigger
-                )
-                candidates.append((fireAt, request))
                 scheduled += 1
                 fireAt = firstFireAt.addingTimeInterval(Double(scheduled) * period)
             }
         }
 
-        // 按触发时刻从近到远排序并截断在系统上限之内，优先保住最近即将更新的剧集。
+        // 先按触发时刻从近到远排序并截断至前 60 条候选元数据，再在后台按 coverURLString 去重准备封面附件。
         candidates.sort { $0.fireAt < $1.fireAt }
-        let selected = candidates.prefix(Self.maxPendingRequests)
+        let selected = Array(candidates.prefix(Self.maxPendingRequests))
+
+        let preparedCoverURLs: [String: URL] = await Task.detached(priority: .utility) {
+            Self.prepareCoverAttachmentFiles(for: selected)
+        }.value
+
+        var tempURLsToClean = Array(preparedCoverURLs.values)
+        defer {
+            for tempURL in tempURLsToClean {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+        }
+
+        let calendar = Calendar.current
+        var requests: [UNNotificationRequest] = []
+        requests.reserveCapacity(selected.count)
+        for meta in selected {
+            let content = UNMutableNotificationContent()
+            content.title = String(localized: "番剧更新")
+            content.body = String(localized: "「\(String(describing: meta.displayName))」已更新")
+            content.sound = .default
+            content.userInfo = ["bangumiID": meta.bangumiID, "fireAt": meta.fireAt.timeIntervalSince1970]
+
+            if let tempURL = preparedCoverURLs[meta.identifier],
+               let attachment = try? UNNotificationAttachment(
+                   identifier: "cover-\(meta.identifier)",
+                   url: tempURL,
+                   options: nil
+               ) {
+                content.attachments = [attachment]
+            }
+
+            let components = calendar.dateComponents(
+                [.year, .month, .day, .hour, .minute],
+                from: meta.fireAt
+            )
+            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            requests.append(
+                UNNotificationRequest(
+                    identifier: meta.identifier,
+                    content: content,
+                    trigger: trigger
+                )
+            )
+        }
 
         // 先算完新队列再一次性替换旧通知，避免耗时计算期间把排程清空。
         await removeManagedPendingRequests()
-        for item in selected {
-            try? await center.add(item.request)
+        for request in requests {
+            try? await center.add(request)
         }
+        // 已成功添加的通知附件会被系统移走；剩余未被移走的临时文件由 defer 统一清理。
+        tempURLsToClean = tempURLsToClean.filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
     }
 
     private func removeManagedPendingRequests() async {
@@ -277,48 +309,66 @@ final class UpdateNotificationScheduler {
 
     // MARK: - 封面附件
 
-    /// 为本地通知创建临时封面附件（仅从本地缓存读取，无缓存则返回 nil，绝不发起任何网络请求）。
-    /// 返回生成的附件以及需要清理的临时文件 URL。
-    private func makeCoverAttachment(
-        coverURLString: String,
-        attachmentIdentifier: String
-    ) -> (attachment: UNNotificationAttachment, tempURL: URL)? {
-        guard !coverURLString.isEmpty,
-              let data = KazumiImageLoader.shared.cachedDiskData(for: coverURLString)
-        else {
+    /// 在后台按 `coverURLString` 去重读取本地缓存与转码（如 WebP → JPEG），
+    /// 再为每条待排程通知写出独立的临时附件文件（系统 add 时会移动各自文件）。
+    private enum CachedCover {
+        case hit(data: Data, ext: String)
+        case miss
+    }
+
+    private nonisolated static func prepareCoverAttachmentFiles(
+        for candidates: [CandidateMeta]
+    ) -> [String: URL] {
+        var encodedCache: [String: CachedCover] = [:]
+        var result: [String: URL] = [:]
+        let tempDir = FileManager.default.temporaryDirectory
+
+        for candidate in candidates where !candidate.coverURLString.isEmpty {
+            let key = candidate.coverURLString
+            let entry: CachedCover
+            if let cached = encodedCache[key] {
+                entry = cached
+            } else if let loaded = loadEncodedCoverData(for: key) {
+                entry = .hit(data: loaded.data, ext: loaded.ext)
+                encodedCache[key] = entry
+            } else {
+                entry = .miss
+                encodedCache[key] = entry
+            }
+            guard case let .hit(data, ext) = entry else { continue }
+
+            let tempURL = tempDir
+                .appendingPathComponent("notif_cover_\(UUID().uuidString)")
+                .appendingPathExtension(ext)
+            do {
+                try data.write(to: tempURL, options: .atomic)
+                result[candidate.identifier] = tempURL
+            } catch {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+        }
+        return result
+    }
+
+    private nonisolated static func loadEncodedCoverData(
+        for coverURLString: String
+    ) -> (data: Data, ext: String)? {
+        guard let data = KazumiImageLoader.shared.cachedDiskData(for: coverURLString) else {
             return nil
         }
-
         // 识别图片魔数，确认为标准 JPEG 或 PNG；其他格式（如 WebP）转为 JPEG 以便 iOS 通知服务原生显示。
         let isJPEG = data.count >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF
         let isPNG = data.count >= 4 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47
-
-        let ext = isJPEG ? "jpg" : (isPNG ? "png" : "jpg")
-        let finalData: Data
-        if isJPEG || isPNG {
-            finalData = data
-        } else if let image = UIImage(data: data),
-                  let converted = image.jpegData(compressionQuality: 0.85) {
-            finalData = converted
-        } else {
+        if isJPEG {
+            return (data, "jpg")
+        }
+        if isPNG {
+            return (data, "png")
+        }
+        guard let image = UIImage(data: data),
+              let converted = image.jpegData(compressionQuality: 0.85) else {
             return nil
         }
-
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("notif_cover_\(UUID().uuidString)")
-            .appendingPathExtension(ext)
-
-        do {
-            try finalData.write(to: tempURL, options: .atomic)
-            let attachment = try UNNotificationAttachment(
-                identifier: attachmentIdentifier,
-                url: tempURL,
-                options: nil
-            )
-            return (attachment, tempURL)
-        } catch {
-            try? FileManager.default.removeItem(at: tempURL)
-            return nil
-        }
+        return (converted, "jpg")
     }
 }

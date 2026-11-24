@@ -31,7 +31,8 @@ struct RuleEngine: Sendable {
     func search(
         _ config: RuleExecutionConfig,
         keyword: String,
-        cancelToken: RuleCancelToken? = nil
+        cancelToken: RuleCancelToken? = nil,
+        includeFragments: Bool = false
     ) async throws -> RuleSearchTrace {
         let request: PreparedRuleRequest
         do {
@@ -68,8 +69,8 @@ struct RuleEngine: Sendable {
 
         do {
             let parsed = config.searchMode == .api
-                ? try apiStrategy.parseSearch(raw, config: config.searchApiConfig)
-                : try xpathStrategy.parseSearch(raw, config: config)
+                ? try apiStrategy.parseSearch(raw, config: config.searchApiConfig, includeFragments: includeFragments)
+                : try xpathStrategy.parseSearch(raw, config: config, includeFragments: includeFragments)
             if parsed.items.isEmpty {
                 throw RuleError.noResult(plugin: config.pluginName)
             }
@@ -90,23 +91,26 @@ struct RuleEngine: Sendable {
     }
 
     /// 解析验证码 WebView 抓到的 HTML 作为搜索结果，省掉验证后的一轮网络请求。
+    /// 在后台任务中执行 Fuzi HTML 解析，避免阻塞主线程；
     /// 不适用（API / POST 规则）或无法解析时返回 nil，调用方回退到重新搜索。
-    func tryParseHarvestedSearch(_ config: RuleExecutionConfig, raw: String) -> PluginSearchResponse? {
+    func tryParseHarvestedSearch(_ config: RuleExecutionConfig, raw: String) async -> PluginSearchResponse? {
         if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
         if config.searchMode == .api || config.usePost { return nil }
-        do {
-            let parsed = try xpathStrategy.parseSearch(raw, config: config)
-            if parsed.items.isEmpty { return nil }
-            logDiagnostics(config, "harvested search", parsed.diagnostics)
-            return PluginSearchResponse(pluginName: config.pluginName, data: parsed.items)
-        } catch {
-            if logFailures {
-                KazumiLog.plugin.info(
-                    "Plugin: \(config.pluginName, privacy: .public) harvested page not parseable, falling back to re-search"
-                )
+        return await Task.detached(priority: .userInitiated) {
+            do {
+                let parsed = try self.xpathStrategy.parseSearch(raw, config: config, includeFragments: false)
+                if parsed.items.isEmpty { return nil }
+                self.logDiagnostics(config, "harvested search", parsed.diagnostics)
+                return PluginSearchResponse(pluginName: config.pluginName, data: parsed.items)
+            } catch {
+                if self.logFailures {
+                    KazumiLog.plugin.info(
+                        "Plugin: \(config.pluginName, privacy: .public) harvested page not parseable, falling back to re-search"
+                    )
+                }
+                return nil
             }
-            return nil
-        }
+        }.value
     }
 
     func queryChapters(

@@ -65,6 +65,9 @@ final class PluginSearchService {
     private let engine: RuleEngine
     private var cancelToken = RuleCancelToken()
     private var querySessions: [String: AsyncSessionOwner] = [:]
+    private var activeSearchTask: Task<Void, Never>?
+
+    private struct SourceSearchTimeoutError: Error {}
 
     /// 整轮检索的代号。每开一轮加一，旧的轮次回来时只认代号、不写状态。
     ///
@@ -103,10 +106,10 @@ final class PluginSearchService {
 
     /// 发布验证码 WebView 抓到的结果页，省掉一次网络往返。
     /// HTML 解析不出结果时返回 false，调用方回退到 querySource。
-    func applyHarvestedSearchResult(pluginName: String, html: String) -> Bool {
+    func applyHarvestedSearchResult(pluginName: String, html: String) async -> Bool {
         guard let plugin = plugins.plugin(named: pluginName) else { return false }
         let config = RuleExecutionConfig(plugin: plugin)
-        guard let result = engine.tryParseHarvestedSearch(config, raw: html) else { return false }
+        guard let result = await engine.tryParseHarvestedSearch(config, raw: html) else { return false }
         responses.removeAll { $0.pluginName == pluginName }
         statuses[pluginName] = .success
         plugins.validityTracker.markSearchValid(pluginName)
@@ -115,6 +118,8 @@ final class PluginSearchService {
     }
 
     func queryAllSource(_ keyword: String) async {
+        activeSearchTask?.cancel()
+        activeSearchTask = nil
         searchGeneration += 1
         let generation = searchGeneration
         responses.removeAll()
@@ -125,28 +130,17 @@ final class PluginSearchService {
         for plugin in snapshot {
             statuses[plugin.name] = .pending
         }
-        await withTaskGroup(of: Void.self) { group in
-            var nextIndex = 0
-            var inFlight = 0
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await withTaskGroup(of: Void.self) { group in
+                var nextIndex = 0
+                var inFlight = 0
 
-            while nextIndex < snapshot.count,
-                  inFlight < Self.maxConcurrentSearches,
-                  !token.isCancelled,
-                  generation == self.searchGeneration {
-                let plugin = snapshot[nextIndex]
-                nextIndex += 1
-                inFlight += 1
-                group.addTask {
-                    await self.queryPlugin(plugin, keyword: keyword, generation: generation)
-                }
-            }
-
-            while inFlight > 0 {
-                await group.next()
-                inFlight -= 1
-                if nextIndex < snapshot.count,
-                   !token.isCancelled,
-                   generation == self.searchGeneration {
+                while nextIndex < snapshot.count,
+                      inFlight < Self.maxConcurrentSearches,
+                      !Task.isCancelled,
+                      !token.isCancelled,
+                      generation == self.searchGeneration {
                     let plugin = snapshot[nextIndex]
                     nextIndex += 1
                     inFlight += 1
@@ -154,7 +148,32 @@ final class PluginSearchService {
                         await self.queryPlugin(plugin, keyword: keyword, generation: generation)
                     }
                 }
+
+                while inFlight > 0 {
+                    await group.next()
+                    inFlight -= 1
+                    if nextIndex < snapshot.count,
+                       !Task.isCancelled,
+                       !token.isCancelled,
+                       generation == self.searchGeneration {
+                        let plugin = snapshot[nextIndex]
+                        nextIndex += 1
+                        inFlight += 1
+                        group.addTask {
+                            await self.queryPlugin(plugin, keyword: keyword, generation: generation)
+                        }
+                    }
+                }
             }
+            if self.searchGeneration == generation {
+                self.activeSearchTask = nil
+            }
+        }
+        activeSearchTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -166,26 +185,27 @@ final class PluginSearchService {
             return created
         }()
         guard let session = owner.begin() else { return }
-        // 看门狗：超时没结果就落到失败。请求本身不强杀——它回来时会被下面的
-        // 会话校验丢掉，不会把「失败」又盖成结果。
-        let watchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.sourceTimeout * 1_000_000_000))
-            guard !Task.isCancelled, let self else { return }
-            guard owner.isActive(session), self.statuses[plugin.name] == .pending else { return }
-            if let generation, generation != self.searchGeneration { return }
-            KazumiLog.plugin.warning(
-                "PluginSearchService: \(plugin.name, privacy: .public) timed out after \(Int(Self.sourceTimeout))s"
-            )
-            self.statuses[plugin.name] = .error
-        }
-        defer { watchdog.cancel() }
+        let engine = self.engine
+        let config = RuleExecutionConfig(plugin: plugin)
+        let token = self.cancelToken
+        let timeout = Self.sourceTimeout
         do {
-            let trace = try await engine.search(
-                RuleExecutionConfig(plugin: plugin),
-                keyword: keyword,
-                cancelToken: cancelToken
-            )
-            guard owner.isActive(session) else { return }
+            // 与单源超时竞速：任一先返回立刻 cancelAll，确保超时立刻取消底层 URLSession 并释放并发槽位。
+            let trace = try await withThrowingTaskGroup(of: RuleSearchTrace.self) { group in
+                group.addTask {
+                    try await engine.search(config, keyword: keyword, cancelToken: token)
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(timeout))
+                    throw SourceSearchTimeoutError()
+                }
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else {
+                    throw CancellationError()
+                }
+                return result
+            }
+            guard !Task.isCancelled, owner.isActive(session) else { return }
             // 这一轮已经被更新的一轮顶掉了：结果只属于旧轮，不许写进现在的列表。
             if let generation, generation != searchGeneration { return }
             // 回话里一条都没有，就是「找不到」：状态字本来写的也是「无结果」，
@@ -199,8 +219,17 @@ final class PluginSearchService {
             // 结果整体替换，避免手动重搜后出现重复条目。
             responses.removeAll { $0.pluginName == plugin.name }
             responses.append(trace.response)
-        } catch {
+        } catch is SourceSearchTimeoutError {
             guard owner.isActive(session) else { return }
+            if let generation, generation != searchGeneration { return }
+            KazumiLog.plugin.warning(
+                "PluginSearchService: \(plugin.name, privacy: .public) timed out after \(Int(Self.sourceTimeout))s"
+            )
+            statuses[plugin.name] = .error
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled, owner.isActive(session) else { return }
             if let generation, generation != searchGeneration { return }
             handleSearchError(plugin, error: error)
         }
@@ -224,6 +253,8 @@ final class PluginSearchService {
     }
 
     func cancel() {
+        activeSearchTask?.cancel()
+        activeSearchTask = nil
         searchGeneration += 1
         cancelToken.cancel()
         for owner in querySessions.values { owner.cancel() }
@@ -248,9 +279,12 @@ extension PluginSearchService {
         guard plugin.antiCrawlerConfig.enabled else { return nil }
         let flow = CaptchaFlow(plugin: plugin, keyword: keyword) { [weak self] html in
             guard let self else { return }
-            if self.applyHarvestedSearchResult(pluginName: pluginName, html: html) { return }
-            // 收割页解析不出结果（仍是挑战页或重定向页）时回退到重新搜索。
-            Task { await self.querySource(keyword, pluginName: pluginName) }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if await self.applyHarvestedSearchResult(pluginName: pluginName, html: html) { return }
+                // 收割页解析不出结果（仍是挑战页或重定向页）时回退到重新搜索。
+                await self.querySource(keyword, pluginName: pluginName)
+            }
         }
         return flow
     }

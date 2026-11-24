@@ -74,9 +74,11 @@ final class AniListClient {
     private var queuedIDs: Set<Int> = []
     private var loading: Task<Void, Never>?
     private var diskLoaded = false
+    private var diskLoadTask: Task<Void, Never>?
     private let sessionProvider: ProxyAwareURLSession
     /// 代理变了就重建，见 `ProxyAwareURLSession`。
     private var session: URLSession { sessionProvider.session }
+    private let cacheDirectory: URL
     private let cacheURL: URL
 
     private init() {
@@ -87,16 +89,14 @@ final class AniListClient {
             return configuration
         }
 
-        let support = (try? FileManager.default.url(
+        let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            in: .userDomainMask
+        ).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let directory = support
             .appendingPathComponent("Kazumi", isDirectory: true)
             .appendingPathComponent("update_times", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        cacheDirectory = directory
         cacheURL = directory.appendingPathComponent("anilist.json")
     }
 
@@ -124,7 +124,7 @@ final class AniListClient {
     /// 上次查询失败的。所以每次请求量取决于这一轮有多少部真的更新了，
     /// 而不是当季一共有多少部。
     func ensureLoaded(_ bangumiIDs: [Int], malIDs: [Int: Int]) async {
-        loadDiskCacheIfNeeded()
+        await loadDiskCacheIfNeeded()
         let now = Date()
         var missing = bangumiIDs.filter { needsRefresh($0, now: now) }
         missing.append(contentsOf: pendingIDs)
@@ -194,7 +194,7 @@ final class AniListClient {
         }
     }
 
-    private struct Payload {
+    private struct Payload: Sendable {
         var airingAt: Int
         var episode: Int?
         var finished: Bool
@@ -218,6 +218,14 @@ final class AniListClient {
         }.joined(separator: "\n")
         let declarations = variables.keys.map { "$\($0): Int" }.joined(separator: ", ")
         let query = "query (\(declarations)) {\n\(fields)\n}"
+        let capturedVariables = variables
+
+        let bodyData = await Task.detached(priority: .utility) {
+            try? JSONSerialization.data(withJSONObject: [
+                "query": query,
+                "variables": capturedVariables,
+            ])
+        }.value
 
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
@@ -225,10 +233,7 @@ final class AniListClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // AniList 会挡掉没带 User-Agent 的请求（直接 403），显式带一个。
         request.setValue("Kazumi-Swift/1.0", forHTTPHeaderField: "User-Agent")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "query": query,
-            "variables": variables,
-        ])
+        request.httpBody = bodyData
 
         guard let (data, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse
@@ -244,12 +249,24 @@ final class AniListClient {
             try? await Task.sleep(for: .seconds(min(max(retryAfter, 1), 60)))
             return [:]
         }
-        guard (200...299).contains(http.statusCode),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard (200...299).contains(http.statusCode) else { return [:] }
+
+        let aliases = aliasToBangumi
+        return await Task.detached(priority: .utility) {
+            Self.parseBatchResponse(data, aliasToBangumi: aliases)
+        }.value
+    }
+
+    private nonisolated static func parseBatchResponse(
+        _ data: Data,
+        aliasToBangumi: [String: Int]
+    ) -> [Int: Payload] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let payload = root["data"] as? [String: Any]
         else { return [:] }
 
         var result: [Int: Payload] = [:]
+        let fetchedAt = Date().millisecondsSinceEpoch
         for (alias, bangumiID) in aliasToBangumi {
             guard let media = payload[alias] as? [String: Any] else { continue }
             if let next = media["nextAiringEpisode"] as? [String: Any],
@@ -262,7 +279,6 @@ final class AniListClient {
             } else {
                 // 没有下一次播出：这部番已经播完（或还没开播）。
                 // 记一条「已完播」，避免每次加载都重新查它。
-                let fetchedAt = Date().millisecondsSinceEpoch
                 result[bangumiID] = Payload(airingAt: fetchedAt, episode: media["episodes"] as? Int, finished: true)
             }
         }
@@ -271,23 +287,43 @@ final class AniListClient {
 
     // MARK: - 磁盘缓存
 
-    private struct DiskPayload: Codable {
+    private struct DiskPayload: Codable, Sendable {
         var entries: [String: AniListAiring]
     }
 
-    private func loadDiskCacheIfNeeded() {
-        guard !diskLoaded else { return }
-        diskLoaded = true
-        guard let data = try? Data(contentsOf: cacheURL),
-              let payload = try? JSONDecoder().decode(DiskPayload.self, from: data)
-        else { return }
-        let now = Date()
-        for (key, airing) in payload.entries {
-            guard let bangumiID = Int(key) else { continue }
-            // 过期条目（完播、停播、下架）直接丢掉，不再占缓存。
-            guard !airing.isExpired(at: now, maxAge: Self.maxAge) else { continue }
-            memory[bangumiID] = airing
+    private func loadDiskCacheIfNeeded() async {
+        if diskLoaded { return }
+        if let existing = diskLoadTask {
+            await existing.value
+            return
         }
+        let url = cacheURL
+        let maxAge = Self.maxAge
+        let task = Task { [weak self] in
+            let loaded = await Task.detached(priority: .userInitiated) { () -> [Int: AniListAiring] in
+                guard let data = try? Data(contentsOf: url),
+                      let payload = try? JSONDecoder().decode(DiskPayload.self, from: data)
+                else { return [:] }
+                let now = Date()
+                var fresh: [Int: AniListAiring] = [:]
+                fresh.reserveCapacity(payload.entries.count)
+                for (key, airing) in payload.entries {
+                    guard let bangumiID = Int(key) else { continue }
+                    // 过期条目（完播、停播、下架）直接丢掉，不再占缓存。
+                    guard !airing.isExpired(at: now, maxAge: maxAge) else { continue }
+                    fresh[bangumiID] = airing
+                }
+                return fresh
+            }.value
+            guard let self else { return }
+            for (bangumiID, airing) in loaded where self.memory[bangumiID] == nil {
+                self.memory[bangumiID] = airing
+            }
+            self.diskLoaded = true
+        }
+        diskLoadTask = task
+        await task.value
+        diskLoadTask = nil
     }
 
     private func saveDiskCache() {
@@ -296,7 +332,13 @@ final class AniListClient {
         for (bangumiID, airing) in memory where !airing.isExpired(at: now, maxAge: Self.maxAge) {
             entries["\(bangumiID)"] = airing
         }
-        guard let data = try? JSONEncoder().encode(DiskPayload(entries: entries)) else { return }
-        try? data.write(to: cacheURL, options: .atomic)
+        let payload = DiskPayload(entries: entries)
+        let dir = cacheDirectory
+        let url = cacheURL
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            guard let data = try? JSONEncoder().encode(payload) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 }

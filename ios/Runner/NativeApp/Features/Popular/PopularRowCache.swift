@@ -27,7 +27,7 @@ final class PopularRowCache {
         static let slow: TimeInterval = 15 * 24 * 60 * 60
     }
 
-    private struct Payload: Codable {
+    private struct Payload: Codable, Sendable {
         var savedAt: Date
         var items: [PopularPoster]
     }
@@ -37,18 +37,17 @@ final class PopularRowCache {
     /// 不在 init 里就读 `AppEnvironment.storageRoot`：那是 MainActor 上的东西，
     /// 而 init 的隔离性取哪种写法都能编过，把它推到使用时读（本类所有用法本来就在 MainActor 上）。
     private let directory: URL?
-    private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    /// 内存缓存：避免同会话内反复读盘与 JSON 解码。
+    private var memory: [String: Payload] = [:]
 
     init(directory: URL? = nil) {
         self.directory = directory
     }
 
-    /// 缓存目录（不存在就建）。
+    /// 缓存目录路径（写盘时在后台建目录，避免在主线程触碰文件系统）。
     private var root: URL {
-        let url = directory ?? AppEnvironment.storageRoot.appending(path: "popular")
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        directory ?? AppEnvironment.storageRoot.appending(path: "popular")
     }
 
     /// 取缓存，**不看是否过期**：过期的那份也照样先画出来，
@@ -66,16 +65,26 @@ final class PopularRowCache {
 
     func store(_ items: [PopularPoster], for key: String) {
         guard !items.isEmpty else { return }
-        guard let data = try? encoder.encode(Payload(savedAt: Date(), items: items)) else { return }
-        try? data.write(to: fileURL(key), options: .atomic)
+        let payload = Payload(savedAt: Date(), items: items)
+        memory[key] = payload
+        let targetDirectory = root
+        let url = fileURL(key)
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+            guard let data = try? JSONEncoder().encode(payload) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
-    /// 这份缓存还在有效期内吗。
     // MARK: - 内部
 
     private func load(_ key: String) -> Payload? {
-        guard let data = try? Data(contentsOf: fileURL(key)) else { return nil }
-        return try? decoder.decode(Payload.self, from: data)
+        if let cached = memory[key] { return cached }
+        guard let data = try? Data(contentsOf: fileURL(key)),
+              let payload = try? decoder.decode(Payload.self, from: data)
+        else { return nil }
+        memory[key] = payload
+        return payload
     }
 
     private func fileURL(_ key: String) -> URL {

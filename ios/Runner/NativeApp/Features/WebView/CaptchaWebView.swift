@@ -27,7 +27,7 @@ final class CaptchaWebView: NSObject {
     var onCaptchaDisappeared: (() -> Void)?
     var onLog: ((String) -> Void)?
 
-    private static let handlerNames = [
+    nonisolated private static let handlerNames = [
         "CaptchaImageBridge",
         "CaptchaStatusBridge",
         "CaptchaGoneBridge",
@@ -35,7 +35,7 @@ final class CaptchaWebView: NSObject {
         "CaptchaLogBridge"
     ]
 
-    private var webView: WKWebView?
+    nonisolated(unsafe) private var webView: WKWebView?
     private var currentCaptchaImageXpath = ""
     private var currentInputXpath = ""
     private var isDisposed = false
@@ -50,8 +50,9 @@ final class CaptchaWebView: NSObject {
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         let controller = WKUserContentController()
+        let proxy = WeakScriptMessageHandler(self)
         for name in Self.handlerNames {
-            controller.add(self, name: name)
+            controller.add(proxy, name: name)
         }
         controller.addUserScript(WKUserScript(
             source: Self.callHandlerShim,
@@ -192,6 +193,28 @@ final class CaptchaWebView: NSObject {
             webView.navigationDelegate = nil
         }
         webView = nil
+    }
+
+    deinit {
+        if let webView {
+            Self.tearDown(webView)
+        }
+    }
+
+    nonisolated private static func tearDown(_ webView: WKWebView) {
+        let cleanup: @MainActor () -> Void = {
+            webView.stopLoading()
+            webView.configuration.userContentController.removeAllUserScripts()
+            for name in handlerNames {
+                webView.configuration.userContentController.removeScriptMessageHandler(forName: name)
+            }
+            webView.navigationDelegate = nil
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { cleanup() }
+        } else {
+            Task { @MainActor in cleanup() }
+        }
     }
     // MARK: - 内部实现
 

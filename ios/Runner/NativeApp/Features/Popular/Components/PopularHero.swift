@@ -182,6 +182,8 @@ struct PopularHero: View {
     @State private var isToggling = false
     /// 顶栏本体的实际高度：提示语要落在它下面。
     @State private var topBarHeight: CGFloat = 59
+    /// 缓存浮动 tab 条药丸底边，仅在出现或封面尺寸变化时遍历窗口层级读取。
+    @State private var cachedTabBarBottomEdge: CGFloat?
     @State private var toastMessage: String?
     /// 选源面板的载体：与番剧详情页同一套（LP 2903 / Colo 2907）。
     @State private var sourceController: InfoController?
@@ -467,10 +469,19 @@ struct PopularHero: View {
             // （tab 底 59.5、标题顶 67.5）。
             // 这一份压在封面大图上，仍是白字加阴影（Ato 8224）。
             PopularWideTopBar(leadingPadding: 20, onLightBackground: false)
-                .padding(.top, (Self.tabBarBottomEdge() ?? Self.statusBarHeight + 26) + 8)
+                .padding(.top, (cachedTabBarBottomEdge ?? Self.statusBarHeight + 26) + 8)
                 // 标题行和圆钮跟信息块同一个量：封面底边往下长多少就下移多少，
                 // 同一个状态（pullScale）、同一个弹簧（Ato 7241 / Colo 7236）。
                 .offset(y: fadeOffset)
+        }
+        .onAppear {
+            cachedTabBarBottomEdge = Self.tabBarBottomEdge()
+        }
+        .onChange(of: coverWidth) { _, _ in
+            cachedTabBarBottomEdge = Self.tabBarBottomEdge()
+        }
+        .onChange(of: coverHeight) { _, _ in
+            cachedTabBarBottomEdge = Self.tabBarBottomEdge()
         }
     }
 

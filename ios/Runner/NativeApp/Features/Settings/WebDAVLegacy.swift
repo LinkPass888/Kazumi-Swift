@@ -16,7 +16,6 @@
 
 import Foundation
 
-@MainActor
 enum WebDAVLegacy {
     /// 原版固定目录名（lib/services/sync/webdav.dart:16-20）。
     static let historyFolder = "history"
@@ -216,36 +215,83 @@ enum WebDAVLegacy {
     /// `<deviceId>.json`，逐个 `DanmakuShieldSyncState.decode` 后 merge。
     static func shieldState(client: WebDAVClient, deviceID: String) async throws -> ShieldSnapshot {
         let names = try await client.listFolder(path: shieldFolder)
+        let jsonNames = names.sorted().filter { $0.hasSuffix(".json") }
+        guard !jsonNames.isEmpty else { return ShieldSnapshot() }
+
+        // 有界并发（最多 4 路）拉取各设备的屏蔽词文件，避免逐个串行 RTT 拖慢同步。
+        let maxConcurrency = 4
+        var statesByName: [String: ShieldState] = [:]
+        statesByName.reserveCapacity(jsonNames.count)
+        try await withThrowingTaskGroup(of: (String, ShieldState?).self) { group in
+            var iterator = jsonNames.makeIterator()
+            for _ in 0..<min(maxConcurrency, jsonNames.count) {
+                if let name = iterator.next() {
+                    group.addTask {
+                        let state = try await Self.fetchShieldFile(
+                            name: name,
+                            deviceID: deviceID,
+                            client: client
+                        )
+                        return (name, state)
+                    }
+                }
+            }
+            while let (name, state) = try await group.next() {
+                if let state {
+                    statesByName[name] = state
+                }
+                if let nextName = iterator.next() {
+                    group.addTask {
+                        let nextState = try await Self.fetchShieldFile(
+                            name: nextName,
+                            deviceID: deviceID,
+                            client: client
+                        )
+                        return (nextName, nextState)
+                    }
+                }
+            }
+        }
+
         var snapshot = ShieldSnapshot()
         let ownName = "\(deviceID).json"
-        for name in names.sorted() where name.hasSuffix(".json") {
-            guard let data = try await client.rawDownload(path: "\(shieldFolder)/\(name)"),
-                  let file = try? JSONDecoder().decode(ShieldFile.self, from: data)
-            else { continue }
-            // main 只认 version 1；没有 version 的老文件仍按兼容读。
-            if let version = file.version, version != 1 { continue }
-            // 老文件缺 deviceId 时用文件名兜底：main 那边 deviceId 为空会
-            // 直接判整份文件无效，写回去时不能留空。
-            let fileDevice = String(name.dropLast(".json".count))
-            let fallbackDevice = fileDevice.isEmpty ? deviceID : fileDevice
-            var state = ShieldState()
-            for entry in file.entries ?? [] {
-                let rule = entry.rule?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !rule.isEmpty else { continue }
-                // 缺字段的老文件按「不知道」处理：updatedAt 0 盖不过云端的墓碑，
-                // deleted 缺省当没删。
-                let deviceId = entry.deviceId.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackDevice
-                state.insert(ShieldEntry(
-                    rule: rule,
-                    updatedAt: max(entry.updatedAt ?? 0, 0),
-                    deviceId: deviceId,
-                    deleted: entry.deleted ?? false
-                ))
-            }
+        for name in jsonNames {
+            guard let state = statesByName[name] else { continue }
             snapshot.merged.merge(state)
             if name == ownName { snapshot.own = state }
         }
         return snapshot
+    }
+
+    private static func fetchShieldFile(
+        name: String,
+        deviceID: String,
+        client: WebDAVClient
+    ) async throws -> ShieldState? {
+        guard let data = try await client.rawDownload(path: "\(shieldFolder)/\(name)"),
+              let file = try? JSONDecoder().decode(ShieldFile.self, from: data)
+        else { return nil }
+        // main 只认 version 1；没有 version 的老文件仍按兼容读。
+        if let version = file.version, version != 1 { return nil }
+        // 老文件缺 deviceId 时用文件名兜底：main 那边 deviceId 为空会
+        // 直接判整份文件无效，写回去时不能留空。
+        let fileDevice = String(name.dropLast(".json".count))
+        let fallbackDevice = fileDevice.isEmpty ? deviceID : fileDevice
+        var state = ShieldState()
+        for entry in file.entries ?? [] {
+            let rule = entry.rule?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !rule.isEmpty else { continue }
+            // 缺字段的老文件按「不知道」处理：updatedAt 0 盖不过云端的墓碑，
+            // deleted 缺省当没删。
+            let deviceId = entry.deviceId.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackDevice
+            state.insert(ShieldEntry(
+                rule: rule,
+                updatedAt: max(entry.updatedAt ?? 0, 0),
+                deviceId: deviceId,
+                deleted: entry.deleted ?? false
+            ))
+        }
+        return state
     }
 
     // MARK: - 收藏
@@ -270,6 +316,7 @@ enum WebDAVLegacy {
     static func collectibles(client: WebDAVClient) async throws -> LegacyCollect {
         var result = LegacyCollect()
         if let data = try await client.rawDownload(path: collectiblesPath) {
+            var entryIndexByID: [Int: Int] = [:]
             for item in try HiveBox.read(data) {
                 guard let fields = item.value.objectFields,
                       let bangumi = fields[0]?.objectFields
@@ -307,9 +354,10 @@ enum WebDAVLegacy {
                 // 箱体里偶尔有同一个 key 存了两帧（实测 id 549654 就是这样，
                 // 一帧「在看」一帧「看过」）。Hive 的语义是后写的覆盖前面的，
                 // 所以同一个番剧 id 只留最后一帧，顺序按第一次出现的位置。
-                if let index = result.entries.firstIndex(where: { $0.id == entry.id }) {
+                if let index = entryIndexByID[entry.id] {
                     result.entries[index] = entry
                 } else {
+                    entryIndexByID[entry.id] = result.entries.count
                     result.entries.append(entry)
                 }
             }
@@ -346,7 +394,7 @@ enum WebDAVLegacy {
         _ records: [WatchRecord],
         existing: Data?,
         client: WebDAVClient,
-        progress: ((Int, Int) -> Void)? = nil
+        progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws {
         var root: [String: Any] = [:]
         if let existing, let parsed = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] {
@@ -357,14 +405,34 @@ enum WebDAVLegacy {
         var progressVersions = root["progressVersions"] as? [String: Any] ?? [:]
 
         var index: [String: Int] = [:]
+        index.reserveCapacity(histories.count)
+        var newestKeyByBangumiID: [Int: (key: String, time: Double)] = [:]
+        newestKeyByBangumiID.reserveCapacity(histories.count)
         for (position, item) in histories.enumerated() {
             guard let key = entryKey(item) else { continue }
             index[key] = position
+            if let bangumi = item["bangumiItem"] as? [String: Any] {
+                let bangumiID = Int(ms(bangumi["id"]))
+                if bangumiID > 0 {
+                    let watchTime = ms(item["lastWatchTime"])
+                    if let existing = newestKeyByBangumiID[bangumiID] {
+                        if watchTime > existing.time {
+                            newestKeyByBangumiID[bangumiID] = (key, watchTime)
+                        }
+                    } else {
+                        newestKeyByBangumiID[bangumiID] = (key, watchTime)
+                    }
+                }
+            }
         }
 
         for (offset, record) in records.enumerated() where record.bangumiID > 0 {
             progress?(offset, records.count)
-            let key = Self.entryKey(for: record, in: histories, index: index)
+            let key = Self.entryKey(
+                for: record,
+                index: index,
+                newestKeyByBangumiID: newestKeyByBangumiID
+            )
             let updatedMs = Int(record.updatedAt.timeIntervalSince1970 * 1000)
             let episode = record.episodeNumber
             // 局部变量不能叫 `version`：它会盖住下面用的那个静态方法 `version(_:)`。
@@ -416,6 +484,14 @@ enum WebDAVLegacy {
                     item["lastWatchEpisodeName"] = record.episodeTitle
                     item["bangumiItem"] = fillItem(item["bangumiItem"] as? [String: Any] ?? [:], from: record)
                     itemVersions[key] = itemVersion
+                    let watchTime = Double(updatedMs)
+                    if let existing = newestKeyByBangumiID[record.bangumiID] {
+                        if watchTime > existing.time {
+                            newestKeyByBangumiID[record.bangumiID] = (key, watchTime)
+                        }
+                    } else {
+                        newestKeyByBangumiID[record.bangumiID] = (key, watchTime)
+                    }
                 }
                 histories[position] = item
             } else {
@@ -431,6 +507,14 @@ enum WebDAVLegacy {
                     "progresses": progresses
                 ] as [String: Any])
                 index[key] = histories.count - 1
+                let watchTime = Double(updatedMs)
+                if let existing = newestKeyByBangumiID[record.bangumiID] {
+                    if watchTime > existing.time {
+                        newestKeyByBangumiID[record.bangumiID] = (key, watchTime)
+                    }
+                } else {
+                    newestKeyByBangumiID[record.bangumiID] = (key, watchTime)
+                }
                 itemVersions[key] = itemVersion
                 progressVersions[key] = progresses.reduce(into: [String: Any]()) { result, pair in
                     result[pair.key] = version(Int(ms(pair.value["updatedAtMs"])))
@@ -467,18 +551,15 @@ enum WebDAVLegacy {
     /// 多条时取最近看的那条（跟 `record(for:)` 跨规则取最新的语义一致）。
     private static func entryKey(
         for record: WatchRecord,
-        in histories: [[String: Any]],
-        index: [String: Int]
+        index: [String: Int],
+        newestKeyByBangumiID: [Int: (key: String, time: Double)]
     ) -> String {
         if !record.sourceRuleName.isEmpty || index[record.id] != nil {
             return record.id
         }
-        let matches = histories.filter { item in
-            guard let bangumi = item["bangumiItem"] as? [String: Any] else { return false }
-            return Int(ms(bangumi["id"])) == record.bangumiID
+        if let newest = newestKeyByBangumiID[record.bangumiID] {
+            return newest.key
         }
-        let newest = matches.max { ms($0["lastWatchTime"]) < ms($1["lastWatchTime"]) }
-        if let newest, let key = entryKey(newest) { return key }
         return record.id
     }
 

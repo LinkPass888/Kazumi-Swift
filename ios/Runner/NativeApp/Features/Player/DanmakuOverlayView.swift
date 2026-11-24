@@ -184,9 +184,69 @@ final class DanmakuOverlayView: UIView {
         }
     }
 
+    /// 预编译后的关键词与正则屏蔽规则，避免每条弹幕重复编译 `NSRegularExpression`。
+    private struct CompiledFilterRules {
+        let regexes: [NSRegularExpression]
+        let lowercaseLiterals: [String]
+
+        static let empty = CompiledFilterRules(regexes: [], lowercaseLiterals: [])
+
+        init(regexes: [NSRegularExpression], lowercaseLiterals: [String]) {
+            self.regexes = regexes
+            self.lowercaseLiterals = lowercaseLiterals
+        }
+
+        init(rules: [String]) {
+            var compiledRegexes: [NSRegularExpression] = []
+            var literals: [String] = []
+            for rule in rules where !rule.isEmpty {
+                if rule.hasPrefix("/") && rule.hasSuffix("/") && rule.count >= 2 {
+                    let pattern = String(rule.dropFirst().dropLast())
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                        compiledRegexes.append(regex)
+                    }
+                } else {
+                    literals.append(rule.lowercased())
+                }
+            }
+            self.regexes = compiledRegexes
+            self.lowercaseLiterals = literals
+        }
+
+        var isEmpty: Bool { regexes.isEmpty && lowercaseLiterals.isEmpty }
+
+        func allows(_ text: String) -> Bool {
+            guard !isEmpty else { return true }
+            if !lowercaseLiterals.isEmpty {
+                let lowered = text.lowercased()
+                for literal in lowercaseLiterals where lowered.contains(literal) {
+                    return false
+                }
+            }
+            if !regexes.isEmpty {
+                let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                for regex in regexes where regex.firstMatch(in: text, options: [], range: range) != nil {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     private var style = Style()
     /// 上一次的过滤类设置，用来判断要不要把已经画出来的清掉重来。
     private var lastFilterSignature: Int?
+    private var cachedFilterRuleSources: [String] = []
+    private var compiledFilterRules: CompiledFilterRules = .empty
+    private var cachedFontSize: Double = -1
+    private var cachedFontWeight: Int = -1
+    private var cachedFont: UIFont = .systemFont(ofSize: 20, weight: .regular)
+    private static let cachedParagraphStyle: NSParagraphStyle = {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byClipping
+        return paragraph.copy() as! NSParagraphStyle
+    }()
 
     private var enabled: Bool { style.enabled }
 
@@ -261,10 +321,19 @@ final class DanmakuOverlayView: UIView {
         let newSignature = Self.commentsSignature(newComments)
         let filtersChanged = lastFilterSignature != nil
             && lastFilterSignature != newStyle.filterSignature
+        if newStyle.filterRules != cachedFilterRuleSources {
+            cachedFilterRuleSources = newStyle.filterRules
+            compiledFilterRules = newStyle.filterRules.isEmpty
+                ? .empty
+                : CompiledFilterRules(rules: newStyle.filterRules)
+        }
         if newSignature != signature || filtersChanged {
             signature = newSignature
-            let allowed = newComments.filter { newStyle.allows($0.source) && newStyle.allowsContent($0.text) }
-            let ordered = allowed.sorted { $0.time < $1.time }
+            let filterRules = compiledFilterRules
+            let allowed = newComments.filter { newStyle.allows($0.source) && filterRules.allows($0.text) }
+            let ordered = Self.isTimeAscending(allowed)
+                ? allowed
+                : allowed.sorted { $0.time < $1.time }
             comments = newStyle.deduplication ? Self.merged(ordered) : ordered
             clearLabels()
             // 过滤类设置改了：从现在这一刻接着放，不把已经过去的那段重播一遍。
@@ -315,6 +384,25 @@ final class DanmakuOverlayView: UIView {
         )
         spawn(comment, now: now)
         updateDisplayLinkState()
+    }
+
+    private static func isTimeAscending(_ list: [DanmakuComment]) -> Bool {
+        guard list.count > 1 else { return true }
+        for index in 1..<list.count where list[index].time < list[index - 1].time {
+            return false
+        }
+        return true
+    }
+
+    private func currentFont() -> UIFont {
+        let size = max(10, min(48, style.fontSize))
+        let weight = max(1, min(9, style.fontWeight))
+        if size != cachedFontSize || weight != cachedFontWeight {
+            cachedFontSize = size
+            cachedFontWeight = weight
+            cachedFont = UIFont.systemFont(ofSize: size, weight: Self.weight(weight))
+        }
+        return cachedFont
     }
 
     /// 5 秒内内容完全相同的合并成一条（main: mergeDuplicateDanmakus，窗口 5 秒）。
@@ -499,20 +587,27 @@ final class DanmakuOverlayView: UIView {
         default: return
         }
 
+        let font = currentFont()
+        let border = style.border ? max(0, min(3, style.borderSize)) : 0
+        // 描边会向字形轮廓外扩，按粗细留边，免得笔画被裁掉。
+        let edgePadding = max(4, ceil(CGFloat(border) * 2) + 2)
+        let measured = (comment.text as NSString).size(withAttributes: [.font: font])
+        let width = ceil(measured.width) + edgePadding
+        let height = ceil(measured.height) + edgePadding
+
+        // 先判轨道：海量弹幕关闭且无空轨时直接提前返回，避免白白出池、排版与光栅化。
+        guard let lane = laneIndex(mode: mode, width: width, now: now) else {
+            return
+        }
+
         let label = dequeueLabel()
-        let size = max(10, min(48, style.fontSize))
-        let font = UIFont.systemFont(ofSize: size, weight: Self.weight(style.fontWeight))
         // 关掉「弹幕颜色」就一律白字（main 的 danmakuColor）。
         let textColor = style.useColor ? Self.color(comment.colorValue) : UIColor.white
-        let border = style.border ? max(0, min(3, style.borderSize)) : 0
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        paragraph.lineBreakMode = .byClipping
         // 填充字和描边用同一套排版，`drawText` 里再用同一个 CTLine 画两遍。
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: textColor,
-            .paragraphStyle: paragraph
+            .paragraphStyle: Self.cachedParagraphStyle
         ]
         label.attributedText = NSAttributedString(string: comment.text, attributes: attributes)
         // 直接用 pt，跟 canvas_danmaku 的 `Paint.strokeWidth` 一样；不再折算成
@@ -527,24 +622,11 @@ final class DanmakuOverlayView: UIView {
         label.mode = mode
         label.startTime = now
         label.duration = duration(for: mode)
-
-        let fitted = label.sizeThatFits(
-            CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        )
-        // 描边会向字形轮廓外扩，sizeThatFits 不算这笔；按粗细留边，免得笔画被裁掉。
-        let edgePadding = max(4, ceil(CGFloat(border) * 2) + 2)
-        let width = ceil(fitted.width) + edgePadding
-        let height = ceil(fitted.height) + edgePadding
         label.bounds = CGRect(origin: .zero, size: CGSize(width: width, height: height))
         label.layer.shouldRasterize = true
         label.layer.rasterizationScale = currentScreenScale
-        label.layer.allowsEdgeAntialiasing = true
-
-        // 轨道满了：海量弹幕叠着画，否则这条就不画了（回收刚出池的 label）。
-        guard let lane = laneIndex(mode: mode, width: width, now: now) else {
-            recycleLabel(label)
-            return
-        }
+        // 坐标已做像素对齐，关闭边缘抗锯齿以减少合成开销。
+        label.layer.allowsEdgeAntialiasing = false
         label.lane = lane
         addSubview(label)
         labels.append(label)
