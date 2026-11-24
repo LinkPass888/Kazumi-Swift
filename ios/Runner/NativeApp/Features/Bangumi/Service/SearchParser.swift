@@ -180,8 +180,7 @@ struct SearchParser {
         }
         let range = NSRange(query.startIndex..., in: query)
         let stripped = tokenRegex.stringByReplacingMatches(in: query, options: [], range: range, withTemplate: " ")
-        let collapsed = stripped.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     func toFilterState() -> SearchFilterState {
@@ -232,17 +231,27 @@ struct SearchParser {
         return tokens.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static let seasonExactRegex = try? NSRegularExpression(
+        pattern: #"^(\d{4})Q([1-4])$"#,
+        options: [.caseInsensitive]
+    )
+
+    private static let beijingCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? .current
+        return calendar
+    }()
+
     /// 对应 seasonToDateRange：2024Q1 -> 2023-12-01 .. 2024-03-01。
     static func seasonToDateRange(_ season: String) -> SearchDateRange? {
-        guard let regex = try? NSRegularExpression(pattern: #"^(\d{4})Q([1-4])$"#, options: [.caseInsensitive]),
+        guard let regex = seasonExactRegex,
               let match = regex.firstMatch(in: season, options: [], range: NSRange(season.startIndex..., in: season)),
               let yearRange = Range(match.range(at: 1), in: season),
               let quarterRange = Range(match.range(at: 2), in: season),
               let year = Int(season[yearRange]),
               let quarter = Int(season[quarterRange]) else { return nil }
 
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? .current
+        let calendar = beijingCalendar
         let startMonth = (quarter - 1) * 3 + 1
         // Dart 的 DateTime(year, startMonth - 1, 1) 使用 0 基月份，
         // 因此区间起点落在季度首月的前一个月（放送日通常早于季度起点）。

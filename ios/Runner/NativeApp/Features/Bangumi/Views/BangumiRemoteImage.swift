@@ -20,9 +20,11 @@ struct BangumiRemoteImage: View {
     var networkLoadEnabled = true
     /// 外层每完成一张有序加载就 +1，让视图重新检查内存缓存。
     var reloadToken = 0
+    /// 可选解码像素上限（如模糊背景只需 120px，避免按整屏尺寸解码原图）。
+    var maxPixelSize: Int? = nil
 
     @State private var image: UIImage?
-    @State private var pixelSize = KazumiImageLoader.pixelSize(for: CGSize(width: 200, height: 300))
+    @State private var pixelSize: Int
     /// 尺寸档位变化时 +1，用来重开一次加载任务。
     @State private var attempt = 0
 
@@ -30,14 +32,18 @@ struct BangumiRemoteImage: View {
         url: String,
         contentMode: ContentMode = .fill,
         networkLoadEnabled: Bool = true,
-        reloadToken: Int = 0
+        reloadToken: Int = 0,
+        maxPixelSize: Int? = nil
     ) {
         self.url = url
         self.contentMode = contentMode
         self.networkLoadEnabled = networkLoadEnabled
         self.reloadToken = reloadToken
+        self.maxPixelSize = maxPixelSize
         // 命中内存缓存时直接出图，不经历「占位 → 图片」这一帧。
-        let size = KazumiImageLoader.pixelSize(for: CGSize(width: 200, height: 300))
+        let defaultSize = KazumiImageLoader.pixelSize(for: CGSize(width: 200, height: 300))
+        let size = maxPixelSize.map { min(defaultSize, max(64, $0)) } ?? defaultSize
+        _pixelSize = State(initialValue: size)
         let initial = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: size)
             ?? KazumiImageLoader.shared.cachedImage(for: url, pixelSize: 120)
         _image = State(initialValue: initial)
@@ -60,7 +66,11 @@ struct BangumiRemoteImage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
         .onGeometryChange(for: Int.self) { proxy in
-            KazumiImageLoader.pixelSize(for: proxy.size)
+            let measured = KazumiImageLoader.pixelSize(for: proxy.size)
+            if let cap = maxPixelSize {
+                return min(measured, max(64, cap))
+            }
+            return measured
         } action: { newValue in
             // 只在像素档位真的变了才重来一次：布局每帧都会回调，
             // 若把尺寸直接绑进 .task 的 id，加载会被反复取消，永远出不来图。
@@ -74,6 +84,18 @@ struct BangumiRemoteImage: View {
             }
             pixelSize = newValue
             if needsUpgrade { attempt += 1 }
+        }
+        .onChange(of: key) { _, newKey in
+            guard !newKey.isEmpty else {
+                image = nil
+                return
+            }
+            if let cached = KazumiImageLoader.shared.cachedImage(for: url, pixelSize: pixelSize)
+                ?? KazumiImageLoader.shared.cachedImage(for: url, pixelSize: 120) {
+                image = cached
+            } else {
+                image = nil
+            }
         }
         .task(id: "\(key)#\(attempt)#\(reloadToken)") {
             await loadIfNeeded()

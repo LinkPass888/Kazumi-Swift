@@ -184,8 +184,17 @@ final class BangumiAirTimeService {
     func ensureLoaded(forSeasonOf date: Date) async {
         let target = Self.season(of: date)
         let current = Self.currentSeason()
-        for season in [target, current] where !loadedSeasons.contains(season.id) {
-            await loadSeason(id: season.id)
+        let needTarget = !loadedSeasons.contains(target.id)
+        let needCurrent = current.id != target.id && !loadedSeasons.contains(current.id)
+        guard needTarget || needCurrent else { return }
+        if needTarget && needCurrent {
+            async let targetLoad: Void = loadSeason(id: target.id)
+            async let currentLoad: Void = loadSeason(id: current.id)
+            _ = await (targetLoad, currentLoad)
+        } else if needTarget {
+            await loadSeason(id: target.id)
+        } else {
+            await loadSeason(id: current.id)
         }
     }
 

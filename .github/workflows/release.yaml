@@ -62,10 +62,21 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install build tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: brew install xcodegen xcbeautify
 
       - name: Generate Xcode project
         run: xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Cache Swift Packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spm
+          key: ${{ runner.os }}-spm-ios-${{ hashFiles('ios/project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-ios-
 
       - name: Resolve Swift Packages
         run: |
@@ -105,7 +116,7 @@ jobs:
           # 无签名打包：对嵌入的动态库做 ad-hoc 签名，便于侧载安装。
           find Payload/Runner.app -type d -name "*.framework" -exec codesign --force --sign - {} \;
           find Payload/Runner.app -type f -name "*.dylib" -exec codesign --force --sign - {} \;
-          zip -q -r "Kazumi_ios_${tag}_no_sign.ipa" Payload
+          zip -q -r -9 "Kazumi_ios_${tag}_no_sign.ipa" Payload
           ls -lh "Kazumi_ios_${tag}_no_sign.ipa"
 
       - name: Upload IPA artifact
@@ -145,10 +156,21 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
 
       - name: Install build tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: brew install xcodegen xcbeautify
 
       - name: Generate Xcode project
         run: xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Cache Swift Packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spm-catalyst
+          key: ${{ runner.os }}-spm-catalyst-${{ hashFiles('ios/project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-catalyst-
 
       - name: Resolve Swift Packages
         run: |

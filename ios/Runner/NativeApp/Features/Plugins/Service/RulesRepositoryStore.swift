@@ -193,7 +193,7 @@ enum RulesRepositoryPreview {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await KazumiNetworkPolicy.requestSession.session.data(for: request)
         } catch {
             throw Failure.connection
         }

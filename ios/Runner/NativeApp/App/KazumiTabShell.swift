@@ -19,6 +19,8 @@ struct KazumiTabShell: View {
     @Environment(AppRouter.self) private var router
     @Environment(SettingsStore.self) private var settings
     @Environment(AppEnvironment.self) private var environment
+    @State private var hasCompletedLaunchNotificationRefresh = false
+    @State private var lastForegroundNotificationCheckAt: Date?
 
     var body: some View {
         TabView(selection: tabSelection) {
@@ -55,10 +57,22 @@ struct KazumiTabShell: View {
             ThemeColorSheet(selection: themeColorBinding)
         }
         .task {
+            // 首屏非紧急的本地通知重排延后 1.5s，避免与推荐页首屏封面图争抢带宽。
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled else { return }
+            lastForegroundNotificationCheckAt = Date()
             // 每次启动重排一遍更新提醒：上一轮排的会随系统清理，追番列表也可能变了。
             await environment.refreshUpdateNotifications()
+            hasCompletedLaunchNotificationRefresh = true
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+            // 冷启动时 UIScene.didActivateNotification 会紧随首帧触发，与上面的 .task 合并去重。
+            guard hasCompletedLaunchNotificationRefresh else { return }
+            let now = Date()
+            if let last = lastForegroundNotificationCheckAt, now.timeIntervalSince(last) < 2.0 {
+                return
+            }
+            lastForegroundNotificationCheckAt = now
             Task {
                 await environment.refreshUpdateNotificationsOnForegroundIfNeeded()
             }

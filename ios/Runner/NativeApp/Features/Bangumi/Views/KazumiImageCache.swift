@@ -432,7 +432,11 @@ final class KazumiImageLoader: @unchecked Sendable {
         if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
             return UIImage(cgImage: cgImage)
         }
-        if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+        if let cgImage = CGImageSourceCreateImageAtIndex(
+            source,
+            0,
+            [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+        ) {
             return UIImage(cgImage: cgImage)
         }
         return nil

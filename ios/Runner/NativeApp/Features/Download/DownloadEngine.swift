@@ -98,6 +98,12 @@ enum DownloadEngineError: LocalizedError, Equatable {
 final class DownloadEngine: @unchecked Sendable {
     /// 单个文件失败后重试几次（原版也是三次）。
     private let maxRetries = 3
+    /// 重试短指数退避阶梯（0.5s → 1.5s → 3.0s）。
+    private static let retryBackoffDelays: [Duration] = [
+        .milliseconds(500),
+        .milliseconds(1500),
+        .milliseconds(3000)
+    ]
 
     /// 取某个地址该带的 Cookie：规则登录过才有，按地址的域和路径筛（Fuck 5469 第 2 条）。
     /// 下载取的是播放页里那份媒体，规则要登录时这份请求同样得带。
@@ -139,13 +145,20 @@ final class DownloadEngine: @unchecked Sendable {
         let cookieProvider = cookieForURL ?? self.cookieForURL
 
         // 先取前 2KB 看一眼：是播放列表还是整份文件。
-        let probe = try await probeKind(url, referer: referer, userAgent: userAgent, cookieForURL: cookieProvider)
+        let probe = try await probeKind(
+            url,
+            referer: referer,
+            userAgent: userAgent,
+            cookieForURL: cookieProvider,
+            cancellation: cancellation
+        )
         if cancellation.isCancelled { throw DownloadEngineError.cancelled }
 
         switch probe.kind {
         case .hls(let playlistURL):
             return try await downloadHLS(
                 playlistURL: playlistURL,
+                prefetchedText: probe.isComplete ? probe.prefixText : nil,
                 referer: referer,
                 userAgent: userAgent,
                 cookieForURL: cookieProvider,
@@ -172,24 +185,27 @@ final class DownloadEngine: @unchecked Sendable {
 
     // MARK: - 探类型
 
-    private enum ProbeKind {
+    private enum ProbeKind: Sendable {
         /// 播放列表：主列表和媒体列表都算。
         case hls(URL)
         /// 整份文件。
         case file(URL, Int64)
     }
 
-    private struct Probe {
+    private struct Probe: Sendable {
         var kind: ProbeKind
         /// 探针读到的开头文本，媒体列表直接拿它解析，省一次请求。
         var prefixText: String
+        /// 探针是否已读到完整响应体（< 2048 字节且非 206 截断），可直接复用省一次请求。
+        var isComplete: Bool
     }
 
     private func probeKind(
         _ url: URL,
         referer: String?,
         userAgent: String?,
-        cookieForURL: (@Sendable (URL) -> String?)?
+        cookieForURL: (@Sendable (URL) -> String?)?,
+        cancellation: CancellationFlag
     ) async throws -> Probe {
         var request = URLRequest(url: url)
         request.setValue("bytes=0-2047", forHTTPHeaderField: "Range")
@@ -198,29 +214,48 @@ final class DownloadEngine: @unchecked Sendable {
         if let userAgent, !userAgent.isEmpty { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
         applyCookie(to: &request, url: url, cookieForURL: cookieForURL)
 
-        // 用流式请求只读开头：有的服务器不理 Range，直接回整个文件，
-        // 用 data(for:) 会把几百 MB 全塞进内存。
-        var prefix = Data()
-        let (bytes, response) = try await session.bytes(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw DownloadEngineError.badStatus(http.statusCode)
+        let finalRequest = request
+        let currentSession = session
+        return try await Self.runCancellable(cancellation: cancellation) {
+            // 用流式请求只读开头：有的服务器不理 Range，直接回整个文件，
+            // 用 data(for:) 会把几百 MB 全塞进内存。
+            var prefix = Data()
+            let (bytes, response) = try await currentSession.bytes(for: finalRequest)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw DownloadEngineError.badStatus(http.statusCode)
+            }
+            for try await byte in bytes {
+                if cancellation.isCancelled || Task.isCancelled {
+                    throw DownloadEngineError.cancelled
+                }
+                prefix.append(byte)
+                if prefix.count >= 2048 { break }
+            }
+            let http = response as? HTTPURLResponse
+            let finalURL = http?.url ?? url
+            let text = String(data: prefix, encoding: .utf8) ?? ""
+            let isTruncated206: Bool
+            if http?.statusCode == 206 {
+                let total = Self.totalContentBytes(from: http)
+                isTruncated206 = total <= 0 || Int64(prefix.count) < total
+            } else {
+                isTruncated206 = false
+            }
+            let isComplete = prefix.count < 2048 && !isTruncated206 && !text.isEmpty
+            let contentType = (http?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+            let looksHLS = text.hasPrefix("#EXTM3U")
+                || finalURL.path.contains(".m3u8")
+                || url.absoluteString.contains(".m3u8")
+                || contentType.contains("mpegurl")
+            if looksHLS {
+                return Probe(kind: .hls(finalURL), prefixText: text, isComplete: isComplete)
+            }
+            return Probe(
+                kind: .file(finalURL, Self.totalContentBytes(from: http)),
+                prefixText: text,
+                isComplete: isComplete
+            )
         }
-        for try await byte in bytes {
-            prefix.append(byte)
-            if prefix.count >= 2048 { break }
-        }
-        let http = response as? HTTPURLResponse
-        let finalURL = http?.url ?? url
-        let text = String(data: prefix, encoding: .utf8) ?? ""
-        let contentType = (http?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-        let looksHLS = text.hasPrefix("#EXTM3U")
-            || finalURL.path.contains(".m3u8")
-            || url.absoluteString.contains(".m3u8")
-            || contentType.contains("mpegurl")
-        if looksHLS {
-            return Probe(kind: .hls(finalURL), prefixText: text)
-        }
-        return Probe(kind: .file(finalURL, Self.totalContentBytes(from: http)), prefixText: text)
     }
 
     /// 提取完整文件长度：206 分片响应从 `Content-Range: bytes a-b/total` 取总长度，避免把探针分片大小（2048）当成完整文件。
@@ -245,6 +280,7 @@ final class DownloadEngine: @unchecked Sendable {
 
     private func downloadHLS(
         playlistURL: URL,
+        prefetchedText: String? = nil,
         referer: String?,
         userAgent: String?,
         cookieForURL: (@Sendable (URL) -> String?)?,
@@ -254,7 +290,18 @@ final class DownloadEngine: @unchecked Sendable {
         cancellation: CancellationFlag,
         onProgress: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> URL {
-        var text = try await fetchText(playlistURL, referer: referer, userAgent: userAgent, cookieForURL: cookieForURL)
+        var text: String
+        if let prefetchedText, !prefetchedText.isEmpty {
+            text = prefetchedText
+        } else {
+            text = try await fetchText(
+                playlistURL,
+                referer: referer,
+                userAgent: userAgent,
+                cookieForURL: cookieForURL,
+                cancellation: cancellation
+            )
+        }
         var baseURL = playlistURL
 
         // 主列表：挑码率最高的一条子列表。用户是「下载」，不是「省流量」。
@@ -262,20 +309,45 @@ final class DownloadEngine: @unchecked Sendable {
             guard let variant = HLSPlaylist.bestVariant(from: text, baseURL: playlistURL) else {
                 throw DownloadEngineError.emptyPlaylist
             }
-            text = try await fetchText(variant, referer: referer, userAgent: userAgent, cookieForURL: cookieForURL)
+            text = try await fetchText(
+                variant,
+                referer: referer,
+                userAgent: userAgent,
+                cookieForURL: cookieForURL,
+                cancellation: cancellation
+            )
             baseURL = variant
         }
+
+        if cancellation.isCancelled { throw DownloadEngineError.cancelled }
 
         let plan = try HLSPlaylist.localPlan(from: text, baseURL: baseURL, prefix: baseName)
         guard !plan.segmentURLs.isEmpty else { throw DownloadEngineError.emptyPlaylist }
 
+        // 续传前一次扫描目录元数据构建 `[String: Int64]`，只将 `size > 0` 的已落盘文件计入续传，
+        // 避免逐片重复 `stat` 以及把 0 字节残片误当成已下载。
+        var existingSizes: [String: Int64] = [:]
+        if let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey]
+        ) {
+            for entry in entries {
+                if let size = (try? entry.resourceValues(forKeys: [.fileSizeKey]).fileSize), size > 0 {
+                    existingSizes[entry.lastPathComponent] = Int64(size)
+                }
+            }
+        }
+
         // 初始化段（fMP4 少了它不能播），与短分片一起走复用的 ProxyAwareURLSession。
         var initName: String?
+        var receivedBytes: Int64 = 0
         if let initURL = plan.initURL {
             let name = "\(baseName)-init.mp4"
-            let target = directory.appending(path: name)
-            if !FileManager.default.fileExists(atPath: target.path) {
-                _ = try await fetchSegmentToFile(
+            if let existingInitSize = existingSizes[name], existingInitSize > 0 {
+                receivedBytes += existingInitSize
+            } else {
+                let target = directory.appending(path: name)
+                let downloadedInitSize = try await fetchSegmentToFile(
                     initURL,
                     referer: referer,
                     userAgent: userAgent,
@@ -283,29 +355,20 @@ final class DownloadEngine: @unchecked Sendable {
                     target: target,
                     cancellation: cancellation
                 )
+                if downloadedInitSize > 0 {
+                    receivedBytes += downloadedInitSize
+                }
             }
             initName = name
         }
 
-        // 分片并发下载。已经存在的分片直接跳过——断点续传靠这个。
+        // 分片并发下载。已经存在的有效分片直接跳过——断点续传靠这个。
         let total = plan.segmentURLs.count
-        // 盘上已有的分片（上次下到一半 / 续传）：既计入已完成片数，也累加真实已落盘字节数，
-        // 避免暂停再继续时已下载大小被清零重算。
         var existingNames = Set<String>()
-        var receivedBytes: Int64 = 0
-        if let initName {
-            let initPath = directory.appending(path: initName).path
-            if let initSize = (try? FileManager.default.attributesOfItem(atPath: initPath)[.size] as? Int64), initSize > 0 {
-                receivedBytes += initSize
-            }
-        }
         for name in plan.segmentFileNames {
-            let path = directory.appending(path: name).path
-            if FileManager.default.fileExists(atPath: path) {
+            if let size = existingSizes[name], size > 0 {
                 existingNames.insert(name)
-                if let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64), size > 0 {
-                    receivedBytes += size
-                }
+                receivedBytes += size
             }
         }
         var completed = existingNames.count
@@ -317,10 +380,15 @@ final class DownloadEngine: @unchecked Sendable {
             ))
         }
 
+        // 喂给 TaskGroup 的分片列表提前过滤掉已存在的有效分片，彻底消除无效 Task 与重复 stat。
+        let pendingSegments = zip(plan.segmentURLs, plan.segmentFileNames).filter { _, name in
+            !existingNames.contains(name)
+        }
+
         let limit = max(1, segmentConcurrency)
         var lastProgressUptime: TimeInterval = !existingNames.isEmpty ? ProcessInfo.processInfo.systemUptime : 0
-        try await withThrowingTaskGroup(of: (bytes: Int64, wasExisting: Bool).self) { group in
-            var iterator = zip(plan.segmentURLs, plan.segmentFileNames).makeIterator()
+        try await withThrowingTaskGroup(of: Int64.self) { group in
+            var iterator = pendingSegments.makeIterator()
             var running = 0
 
             func addNext() -> Bool {
@@ -328,11 +396,7 @@ final class DownloadEngine: @unchecked Sendable {
                 let target = directory.appending(path: name)
                 group.addTask {
                     if cancellation.isCancelled { throw DownloadEngineError.cancelled }
-                    if FileManager.default.fileExists(atPath: target.path) {
-                        // 已经在盘上：不重下，也不再加数（上面已经算过了）。
-                        return (0, true)
-                    }
-                    let size = try await self.fetchSegmentToFile(
+                    return try await self.fetchSegmentToFile(
                         segmentURL,
                         referer: referer,
                         userAgent: userAgent,
@@ -340,7 +404,6 @@ final class DownloadEngine: @unchecked Sendable {
                         target: target,
                         cancellation: cancellation
                     )
-                    return (size, false)
                 }
                 running += 1
                 return true
@@ -349,10 +412,10 @@ final class DownloadEngine: @unchecked Sendable {
             for _ in 0..<limit where addNext() {}
 
             while running > 0 {
-                let result = try await group.next() ?? (0, true)
+                let bytes = try await group.next() ?? 0
                 running -= 1
-                receivedBytes += result.bytes
-                if !result.wasExisting { completed += 1 }
+                receivedBytes += bytes
+                completed += 1
                 // 0.25s 时间节流：最后一个分片或距上次回调 >= 0.25s 时才上报进度，避免高频切换主线程。
                 let now = ProcessInfo.processInfo.systemUptime
                 let isLastSegment = completed >= total
@@ -408,6 +471,9 @@ final class DownloadEngine: @unchecked Sendable {
         var resumeData = try? Data(contentsOf: resumeURL)
         var attempt = 0
         while true {
+            if cancellation.isCancelled || Task.isCancelled {
+                throw DownloadEngineError.cancelled
+            }
             do {
                 try await fetchToFile(
                     url,
@@ -436,9 +502,10 @@ final class DownloadEngine: @unchecked Sendable {
                     try? FileManager.default.removeItem(at: resumeURL)
                 }
                 attempt += 1
-                if attempt >= maxRetries || cancellation.isCancelled {
+                if attempt >= maxRetries || cancellation.isCancelled || Task.isCancelled {
                     throw error
                 }
+                try await sleepBeforeRetry(attempt: attempt - 1, cancellation: cancellation)
             }
         }
     }
@@ -511,7 +578,10 @@ final class DownloadEngine: @unchecked Sendable {
         cancellation: CancellationFlag
     ) async throws -> Int64 {
         var lastError: Error = DownloadEngineError.notMedia
-        for _ in 0..<maxRetries {
+        for attempt in 0..<maxRetries {
+            if cancellation.isCancelled || Task.isCancelled {
+                throw DownloadEngineError.cancelled
+            }
             do {
                 return try await fetchSegmentViaProxySession(
                     url,
@@ -525,7 +595,12 @@ final class DownloadEngine: @unchecked Sendable {
                 throw error
             } catch {
                 lastError = error
-                if cancellation.isCancelled { throw DownloadEngineError.cancelled }
+                if cancellation.isCancelled || Task.isCancelled {
+                    throw DownloadEngineError.cancelled
+                }
+                if attempt + 1 < maxRetries {
+                    try await sleepBeforeRetry(attempt: attempt, cancellation: cancellation)
+                }
             }
         }
         throw lastError
@@ -653,18 +728,79 @@ final class DownloadEngine: @unchecked Sendable {
         _ url: URL,
         referer: String?,
         userAgent: String?,
-        cookieForURL: (@Sendable (URL) -> String?)?
+        cookieForURL: (@Sendable (URL) -> String?)?,
+        cancellation: CancellationFlag
     ) async throws -> String {
         var request = URLRequest(url: url)
         apply(headers: request, referer: referer, userAgent: userAgent)
         if let referer, !referer.isEmpty { request.setValue(referer, forHTTPHeaderField: "Referer") }
         if let userAgent, !userAgent.isEmpty { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
         applyCookie(to: &request, url: url, cookieForURL: cookieForURL)
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw DownloadEngineError.badStatus(http.statusCode)
+
+        let finalRequest = request
+        let currentSession = session
+        return try await Self.runCancellable(cancellation: cancellation) {
+            let (data, response) = try await currentSession.data(for: finalRequest)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw DownloadEngineError.badStatus(http.statusCode)
+            }
+            return String(data: data, encoding: .utf8) ?? ""
         }
-        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// 重试前按指数退避阶梯等待，睡眠前后均检查取消，并支持 `CancellationFlag` 即刻唤醒。
+    private func sleepBeforeRetry(attempt: Int, cancellation: CancellationFlag) async throws {
+        if cancellation.isCancelled || Task.isCancelled {
+            throw DownloadEngineError.cancelled
+        }
+        let index = min(max(0, attempt), Self.retryBackoffDelays.count - 1)
+        let delay = Self.retryBackoffDelays[index]
+        try await Self.runCancellable(cancellation: cancellation) {
+            try await Task.sleep(for: delay)
+        }
+        if cancellation.isCancelled || Task.isCancelled {
+            throw DownloadEngineError.cancelled
+        }
+    }
+
+    /// 将异步网络/等待操作接入 `CancellationFlag` 与结构化 `Task` 取消，触发取消时即刻中断。
+    private static func runCancellable<T: Sendable>(
+        cancellation: CancellationFlag,
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        if cancellation.isCancelled || Task.isCancelled {
+            throw DownloadEngineError.cancelled
+        }
+        let workTask = Task {
+            try await operation()
+        }
+        let token = cancellation.addCancelHandler {
+            workTask.cancel()
+        }
+        defer {
+            cancellation.removeCancelHandler(token)
+            workTask.cancel()
+        }
+        do {
+            let value = try await withTaskCancellationHandler {
+                try await workTask.value
+            } onCancel: {
+                workTask.cancel()
+            }
+            if cancellation.isCancelled || Task.isCancelled {
+                throw DownloadEngineError.cancelled
+            }
+            return value
+        } catch let error as DownloadEngineError where error == .cancelled {
+            throw error
+        } catch {
+            if cancellation.isCancelled || Task.isCancelled
+                || error is CancellationError
+                || (error as? URLError)?.code == .cancelled {
+                throw DownloadEngineError.cancelled
+            }
+            throw error
+        }
     }
 
     private func apply(headers request: URLRequest, referer: String?, userAgent: String?) {

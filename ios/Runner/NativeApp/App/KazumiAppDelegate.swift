@@ -270,6 +270,10 @@ final class KazumiSceneDelegate: UIResponder, UIWindowSceneDelegate {
         let host = RemoteControlHostingController(rootView: KazumiRootView(
             environment: launch.environment, storageFailure: launch.failure
         ))
+        host.needsNavigationLayout = { [weak self] in
+            guard let self, let router = self.environment?.router else { return false }
+            return router.pendingExternalLink != nil || self.isWaitingForLinkRoot
+        }
         host.onNavigationLayout = { [weak self] in self?.processPendingLink() }
         // 画面自己铺满；背景交给 SwiftUI 的主题色，别让窗口底色在转场时闪一下白。
         host.view.backgroundColor = .clear
@@ -350,15 +354,18 @@ final class KazumiSceneDelegate: UIResponder, UIWindowSceneDelegate {
 /// 允许现有窗口初始化流程请求成为第一响应者，不据此判断媒体卡片点击结果。
 private final class RemoteControlHostingController<Content: View>: UIHostingController<Content> {
     override var canBecomeFirstResponder: Bool { true }
+    var needsNavigationLayout: (() -> Bool)?
     var onNavigationLayout: (() -> Void)?
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        guard needsNavigationLayout?() ?? true else { return }
         onNavigationLayout?()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        guard onNavigationLayout != nil, needsNavigationLayout?() ?? false else { return }
         // Avoid mutating SwiftUI state from within its current layout pass.
         DispatchQueue.main.async { [weak self] in self?.onNavigationLayout?() }
     }

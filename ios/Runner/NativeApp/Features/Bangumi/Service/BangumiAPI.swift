@@ -112,6 +112,10 @@ enum BangumiAPI {
     /// 主动搜索解析到的受限条目。锁里只放 ID，不把模型扩成全局 `nsfw` 字段。
     private static let nsfwSubjectIDs = OSAllocatedUnfairLock(initialState: Set<Int>())
     private static let searchIncludesNSFWBox = OSAllocatedUnfairLock(initialState: false)
+    /// `info(id:)` single-flight 去重表：同一条目并发请求复用同一个在途 Task。
+    private static let inFlightInfo = OSAllocatedUnfairLock(
+        initialState: [Int: Task<BangumiItem?, Never>]()
+    )
 
     static var searchIncludesNSFW: Bool {
         get { searchIncludesNSFWBox.withLock { $0 } }
@@ -464,7 +468,28 @@ enum BangumiAPI {
     }
 
     /// 普通条目优先走匿名 next 接口；受限条目用 Token 走 v0。
+    /// 同一 `id` 的并发请求通过 `inFlightInfo` 合并为单次网络请求（single-flight）。
     static func info(id: Int) async -> BangumiItem? {
+        let task: Task<BangumiItem?, Never> = inFlightInfo.withLock { map in
+            if let existing = map[id] {
+                return existing
+            }
+            let created = Task<BangumiItem?, Never> {
+                await fetchInfo(id: id)
+            }
+            map[id] = created
+            return created
+        }
+        let result = await task.value
+        inFlightInfo.withLock { map in
+            if map[id] == task {
+                map.removeValue(forKey: id)
+            }
+        }
+        return result
+    }
+
+    private static func fetchInfo(id: Int) async -> BangumiItem? {
         let nextURL = BangumiEndpoints.format(
             BangumiEndpoints.apiNextDomain + BangumiEndpoints.infoByIDNext,
             [id]

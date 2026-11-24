@@ -739,13 +739,12 @@ final class PlayerController {
         let episode = currentEpisode
         let road = selectedRoad
 
-        // 1. 若本地存在离线下载弹幕文件，优先读取离线弹幕（断网/飞行模式 0 延迟秒开）
+        // 1. 若本地存在离线下载弹幕文件，优先在后台读取并解码离线弹幕（断网/飞行模式 0 延迟秒开）
         if let localVideo = localFile?(episode) {
             let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
-            if FileManager.default.fileExists(atPath: danmakuURL.path),
-               let data = try? Data(contentsOf: danmakuURL),
-               let comments = try? JSONDecoder().decode([DanmakuComment].self, from: data),
-               !comments.isEmpty {
+            let comments = await Self.loadOfflineDanmaku(from: danmakuURL)
+            guard currentEpisode == episode, selectedRoad == road else { return }
+            if let comments, !comments.isEmpty {
                 danmakuComments = comments
                 danmakuStatus = .ready
                 KazumiLogBuffer.player("已加载离线本地弹幕：\(comments.count) 条")
@@ -769,10 +768,7 @@ final class PlayerController {
                     KazumiLogBuffer.player("已复用手动匹配的弹幕源：\(comments.count) 条")
                     if let localVideo = localFile?(episode) {
                         let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
-                        if !FileManager.default.fileExists(atPath: danmakuURL.path),
-                           let data = try? JSONEncoder().encode(comments) {
-                            try? data.write(to: danmakuURL, options: .atomic)
-                        }
+                        Self.saveOfflineDanmakuInBackground(comments, to: danmakuURL, overwrite: false)
                     }
                 }
                 return
@@ -792,13 +788,10 @@ final class PlayerController {
             danmakuComments = comments
             danmakuStatus = .ready
             KazumiLogBuffer.player("弹幕已加载：\(comments.count) 条")
-            // 若为已下载的离线视频且本地尚未存有弹幕文件，顺带落盘
+            // 若为已下载的离线视频且本地尚未存有弹幕文件，顺带后台落盘
             if let localVideo = localFile?(episode) {
                 let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
-                if !FileManager.default.fileExists(atPath: danmakuURL.path),
-                   let data = try? JSONEncoder().encode(comments) {
-                    try? data.write(to: danmakuURL, options: .atomic)
-                }
+                Self.saveOfflineDanmakuInBackground(comments, to: danmakuURL, overwrite: false)
             }
         case .empty:
             danmakuComments = []
@@ -844,9 +837,7 @@ final class PlayerController {
             danmakuMessage = String(localized: "已切换弹幕源")
             if let localVideo = localFile?(episode) {
                 let danmakuURL = localVideo.deletingLastPathComponent().appending(path: "ep-\(episode).danmaku.json")
-                if let data = try? JSONEncoder().encode(comments) {
-                    try? data.write(to: danmakuURL, options: .atomic)
-                }
+                Self.saveOfflineDanmakuInBackground(comments, to: danmakuURL, overwrite: true)
             }
             return .loaded(comments.count)
         } catch {
@@ -876,6 +867,32 @@ final class PlayerController {
             return manualDanDanEpisodes[index].episodeID
         }
         return standardID
+    }
+
+    private nonisolated static func loadOfflineDanmaku(from url: URL) async -> [DanmakuComment]? {
+        await Task.detached(priority: .utility) {
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url),
+                  let comments = try? JSONDecoder().decode([DanmakuComment].self, from: data) else {
+                return nil
+            }
+            return comments
+        }.value
+    }
+
+    private nonisolated static func saveOfflineDanmakuInBackground(
+        _ comments: [DanmakuComment],
+        to url: URL,
+        overwrite: Bool
+    ) {
+        Task.detached(priority: .utility) {
+            if !overwrite, FileManager.default.fileExists(atPath: url.path) {
+                return
+            }
+            if let data = try? JSONEncoder().encode(comments) {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
     }
 
     private func resetDanmaku() {

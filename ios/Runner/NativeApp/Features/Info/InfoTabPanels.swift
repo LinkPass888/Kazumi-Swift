@@ -253,14 +253,26 @@ private struct TagFlowLayout: Layout {
     /// 两行之间。
     var rowSpacing: CGFloat = 8
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    struct Cache {
+        var idealSizes: [CGSize] = []
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(idealSizes: subviews.map { $0.sizeThatFits(.unspecified) })
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.idealSizes = subviews.map { $0.sizeThatFits(.unspecified) }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
         var x: CGFloat = 0
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
         var widest: CGFloat = 0
-        for sub in subviews {
-            let ideal = sub.sizeThatFits(.unspecified)
+        for (index, sub) in subviews.enumerated() {
+            let ideal = index < cache.idealSizes.count ? cache.idealSizes[index] : sub.sizeThatFits(.unspecified)
             // 单颗宽过整行时按整行宽算，交给胶囊内部折行。
             let width = min(ideal.width, maxWidth)
             if x > 0, x + spacing + width > maxWidth {
@@ -274,7 +286,10 @@ private struct TagFlowLayout: Layout {
             x += width
             // 按给的宽度量高度：单颗长到两行时行高要跟着长，否则整块报的高度偏矮，
             // 下一行会压上来（Ato 6569）。跟共用的 KazumiFlowLayout 同一算法。
-            rowHeight = max(rowHeight, sub.sizeThatFits(ProposedViewSize(width: width, height: nil)).height)
+            let height = width < ideal.width
+                ? sub.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+                : ideal.height
+            rowHeight = max(rowHeight, height)
         }
         widest = max(widest, x)
         return CGSize(width: proposal.width ?? widest, height: y + rowHeight)
@@ -284,13 +299,13 @@ private struct TagFlowLayout: Layout {
         in bounds: CGRect,
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout ()
+        cache: inout Cache
     ) {
         var x = bounds.minX
         var y = bounds.minY
         var rowHeight: CGFloat = 0
-        for sub in subviews {
-            let ideal = sub.sizeThatFits(.unspecified)
+        for (index, sub) in subviews.enumerated() {
+            let ideal = index < cache.idealSizes.count ? cache.idealSizes[index] : sub.sizeThatFits(.unspecified)
             if x > bounds.minX, x + spacing + ideal.width > bounds.maxX {
                 x = bounds.minX
                 y += rowHeight + rowSpacing
@@ -300,10 +315,13 @@ private struct TagFlowLayout: Layout {
             }
             // 右边界内收住，不越界。
             let width = min(ideal.width, bounds.maxX - x)
-            let proposal = ProposedViewSize(width: width, height: nil)
-            sub.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: proposal)
+            let subProposal = ProposedViewSize(width: width, height: nil)
+            sub.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: subProposal)
             x += width
-            rowHeight = max(rowHeight, sub.sizeThatFits(proposal).height)
+            let height = width < ideal.width
+                ? sub.sizeThatFits(subProposal).height
+                : ideal.height
+            rowHeight = max(rowHeight, height)
         }
     }
 }
@@ -349,7 +367,7 @@ struct InfoCommentsPanel: View {
             } else if comments.isEmpty {
                 InfoPanelPlaceholder(symbol: "text.bubble", text: String(localized: "还没有人吐槽这部番"))
             } else {
-                VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(comments) { comment in
                         CommentRowView(
                             comment: comment,

@@ -100,7 +100,7 @@ struct LibraryPosterCard: View {
                 .frame(width: 32, height: 32)
                 .background(
                     Circle()
-                        .fill(.ultraThinMaterial)
+                        .fill(Color(.systemBackground).opacity(0.84))
                         .overlay(
                             Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
                         )

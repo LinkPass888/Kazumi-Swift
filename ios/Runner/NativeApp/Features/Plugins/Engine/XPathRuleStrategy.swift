@@ -14,12 +14,22 @@
 
 import Foundation
 import Fuzi
+import os
 
 // 类型名一律写 `Fuzi.XMLElement`：macOS 侧 Foundation 也导出了同名的 `XMLElement`
 // （iOS 侧没有），两边一起 import 时裸写这个名字在 macOS 上会报
 // "ambiguous for type lookup in this context"，写全名两边都对。
 
 struct XPathRuleStrategy: Sendable {
+    private static let queryComponentAllowed: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return allowed
+    }()
+
+    private static let captchaRegexCacheLimit = 64
+    private static let captchaRegexCache = OSAllocatedUnfairLock<[String: NSRegularExpression]>(initialState: [:])
+
     /// 上游 `xpath_selector` 在节点上下文里把 `//x` 解释为当前节点的后代；
     /// Fuzi/libxml2 则会从文档根开始。规则按上游语义编写，只在节点内求值时补成 `.//x`。
     nonisolated static func contextRelativeSelector(_ expression: String) -> String {
@@ -132,12 +142,13 @@ struct XPathRuleStrategy: Sendable {
         let roadNodes = try runSelector(.chapterRoads, expression: config.chapterRoads) {
             Array(root.xpath(config.chapterRoads))
         }
+        let preparedBase = EpisodeURL.prepareBase(config.baseUrl)
+        let chapterResult = Self.contextRelativeSelector(config.chapterResult)
 
         for (roadIndex, roadNode) in roadNodes.enumerated() {
             do {
                 var urls: [String] = []
                 var names: [String] = []
-                let chapterResult = Self.contextRelativeSelector(config.chapterResult)
                 let episodeNodes = try runSelector(.chapterResult, expression: config.chapterResult) {
                     Array(roadNode.xpath(chapterResult))
                 }
@@ -148,7 +159,7 @@ struct XPathRuleStrategy: Sendable {
                         continue
                     }
                     let name = removeWhitespace(episode.stringValue)
-                    urls.append(EpisodeURL.normalize(baseUrl: config.baseUrl, raw: source))
+                    urls.append(EpisodeURL.normalize(base: preparedBase, raw: source))
                     names.append(name.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : name)
                 }
                 if urls.isEmpty {
@@ -181,10 +192,7 @@ struct XPathRuleStrategy: Sendable {
             case .text:
                 return raw.contains(detectValue)
             case .regex:
-                guard let regex = try? NSRegularExpression(
-                    pattern: detectValue,
-                    options: [.caseInsensitive, .dotMatchesLineSeparators]
-                ) else {
+                guard let regex = Self.compiledCaptchaRegex(for: detectValue) else {
                     return false
                 }
                 let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
@@ -218,6 +226,25 @@ struct XPathRuleStrategy: Sendable {
     }
 
     // MARK: - Helpers
+
+    private static func compiledCaptchaRegex(for pattern: String) -> NSRegularExpression? {
+        if let cached = captchaRegexCache.withLock({ $0[pattern] }) {
+            return cached
+        }
+        guard let compiled = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return nil
+        }
+        captchaRegexCache.withLock { cache in
+            if cache.count >= captchaRegexCacheLimit {
+                cache.removeAll(keepingCapacity: true)
+            }
+            cache[pattern] = compiled
+        }
+        return compiled
+    }
 
     /// 解析出的文档与它的根节点。两者必须一起被持有。
     struct ParsedHTML {
@@ -285,8 +312,6 @@ struct XPathRuleStrategy: Sendable {
 
     /// 对应 Dart 的 Uri.encodeQueryComponent。
     private func encodeQueryComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        value.addingPercentEncoding(withAllowedCharacters: Self.queryComponentAllowed) ?? value
     }
 }

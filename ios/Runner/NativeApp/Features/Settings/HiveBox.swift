@@ -90,62 +90,61 @@ enum HiveBox {
     }
 
     static func read(_ data: Data) throws -> [Entry] {
-        var reader = Reader(bytes: [UInt8](data))
-        var entries: [Entry] = []
-        while reader.remaining >= 4 {
-            let frameStart = reader.offset
-            let length = Int(try reader.u32())
-            // 帧长含这 4 字节；小于 4 或越过文件末尾就是坏文件，停在这里。
-            guard length >= 4, reader.offset + length - 4 <= reader.bytes.count else {
-                throw DecodeError(description: String(localized: "帧长越界（偏移 \(String(describing: frameStart))，帧长 \(String(describing: length))）"))
+        try data.withUnsafeBytes { rawBuffer in
+            var reader = Reader(raw: rawBuffer)
+            var entries: [Entry] = []
+            while reader.remaining >= 4 {
+                let frameStart = reader.offset
+                let length = Int(try reader.u32())
+                // 帧长含这 4 字节；小于 4 或越过文件末尾就是坏文件，停在这里。
+                guard length >= 4, reader.offset + length - 4 <= reader.raw.count else {
+                    throw DecodeError(description: String(localized: "帧长越界（偏移 \(String(describing: frameStart))，帧长 \(String(describing: length))）"))
+                }
+                let frameEnd = reader.offset + length - 4
+                _ = try reader.u8() // 帧类型，实测恒为 0
+                let key = Int(try reader.u32())
+                let value = try reader.value()
+                entries.append(Entry(key: key, value: value))
+                // 帧尾 4 字节校验（原版不校验，我们也不校验，只是跳过）。
+                reader.offset = frameEnd
             }
-            let frameEnd = reader.offset + length - 4
-            _ = try reader.u8() // 帧类型，实测恒为 0
-            let key = Int(try reader.u32())
-            let value = try reader.value()
-            entries.append(Entry(key: key, value: value))
-            // 帧尾 4 字节校验（原版不校验，我们也不校验，只是跳过）。
-            reader.offset = frameEnd
+            return entries
         }
-        return entries
     }
 
     private struct Reader {
-        let bytes: [UInt8]
+        let raw: UnsafeRawBufferPointer
         var offset: Int = 0
 
-        var remaining: Int { bytes.count - offset }
+        var remaining: Int { raw.count - offset }
 
         mutating func u8() throws -> UInt8 {
-            guard offset < bytes.count else { throw DecodeError(description: String(localized: "读越界")) }
+            guard offset < raw.count else { throw DecodeError(description: String(localized: "读越界")) }
             defer { offset += 1 }
-            return bytes[offset]
+            return raw[offset]
         }
 
         mutating func u32() throws -> UInt32 {
-            guard offset + 4 <= bytes.count else { throw DecodeError(description: "读越界") }
-            let value = UInt32(bytes[offset])
-                | (UInt32(bytes[offset + 1]) << 8)
-                | (UInt32(bytes[offset + 2]) << 16)
-                | (UInt32(bytes[offset + 3]) << 24)
+            guard offset + 4 <= raw.count else { throw DecodeError(description: "读越界") }
+            let value = UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
             offset += 4
             return value
         }
 
         mutating func f64() throws -> Double {
-            guard offset + 8 <= bytes.count else { throw DecodeError(description: "读越界") }
-            var bits: UInt64 = 0
-            for index in 0..<8 {
-                bits |= UInt64(bytes[offset + index]) << (8 * UInt64(index))
-            }
+            guard offset + 8 <= raw.count else { throw DecodeError(description: "读越界") }
+            let bits = UInt64(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: UInt64.self))
             offset += 8
             return Double(bitPattern: bits)
         }
 
         mutating func text() throws -> String {
             let length = Int(try u32())
-            guard offset + length <= bytes.count else { throw DecodeError(description: String(localized: "字符串越界")) }
-            let slice = bytes[offset..<(offset + length)]
+            guard length >= 0, offset + length <= raw.count else {
+                throw DecodeError(description: String(localized: "字符串越界"))
+            }
+            if length == 0 { return "" }
+            let slice = raw[offset..<(offset + length)]
             offset += length
             return String(decoding: slice, as: UTF8.self)
         }

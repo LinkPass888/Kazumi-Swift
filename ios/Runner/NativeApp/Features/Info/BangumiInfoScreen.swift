@@ -478,7 +478,7 @@ extension BangumiInfoScreen {
     /// 背景：同一张封面放大打模糊，再叠一层页面底色把它压成「磨砂」，
     /// 保证浅色 / 深色下上面的文字都读得清。
     private func backdrop(_ controller: InfoController) -> some View {
-        BangumiRemoteImage(url: controller.item.largeImage)
+        BangumiRemoteImage(url: controller.item.largeImage, maxPixelSize: 120)
             .blur(radius: 26)
             .overlay {
                 KazumiPalette.background(for: colorScheme)
@@ -1019,8 +1019,9 @@ extension BangumiInfoScreen {
 
     /// 刷新详情、剧集与播出时刻。详情页已经在屏幕上时，这些只是把内容补全。
     private func refresh(_ controller: InfoController) async {
-        await controller.loadDetailIfNeeded()
-        await controller.loadEpisodes()
+        async let detail: Void = controller.loadDetailIfNeeded()
+        async let episodes: Void = controller.loadEpisodes()
+        _ = await (detail, episodes)
         // 播出时刻要单独拉季度表，失败只是不显示时刻。
         await controller.loadAirTime()
     }

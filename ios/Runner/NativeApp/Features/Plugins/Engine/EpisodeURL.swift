@@ -16,28 +16,56 @@
 import Foundation
 
 enum EpisodeURL {
+    /// 预解析后的 `baseUrl`，供章节解析循环复用，避免对每集重复解析基准地址。
+    struct Base: Sendable {
+        fileprivate let resolved: ResolvedURL?
+        fileprivate let foundationURL: URL?
+        fileprivate let isValid: Bool
+        fileprivate let isHttp: Bool
+
+        fileprivate init(baseUrl: String) {
+            let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = EpisodeURL.parse(trimmed), !parsed.scheme.isEmpty, !parsed.host.isEmpty {
+                self.resolved = parsed
+                self.foundationURL = URL(string: parsed.absoluteString)
+                self.isValid = true
+                self.isHttp = EpisodeURL.isHttpScheme(parsed.scheme)
+            } else {
+                self.resolved = nil
+                self.foundationURL = nil
+                self.isValid = false
+                self.isHttp = false
+            }
+        }
+    }
+
+    static func prepareBase(_ baseUrl: String) -> Base {
+        Base(baseUrl: baseUrl)
+    }
+
     static func normalize(baseUrl: String, raw: String) -> String {
+        normalize(base: prepareBase(baseUrl), raw: raw)
+    }
+
+    static func normalize(base: Base, raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-
-        let base = parse(baseUrl.trimmingCharacters(in: .whitespacesAndNewlines))
-        let hasValidBase = base != nil && !(base?.scheme ?? "").isEmpty && !(base?.host ?? "").isEmpty
 
         var resolved: ResolvedURL?
         if let absolute = parse(trimmed), !absolute.scheme.isEmpty, !absolute.host.isEmpty {
             resolved = absolute
-        } else if hasValidBase, let base {
-            resolved = resolve(trimmed, against: base)
+        } else if base.isValid, let parsedBase = base.resolved {
+            resolved = resolve(trimmed, against: parsedBase, baseFoundationURL: base.foundationURL)
         }
 
         guard var output = resolved, !output.host.isEmpty else { return trimmed }
 
         // 同站 URL 的协议对齐到 baseUrl，避免 http/https 混用产生两个身份。
-        if let base, hasValidBase, isHttpScheme(base.scheme), isHttpScheme(output.scheme),
-           output.scheme != base.scheme, output.host == base.host,
-           output.hasPort == base.hasPort,
-           (!output.hasPort || output.port == base.port) {
-            output.scheme = base.scheme
+        if let parsedBase = base.resolved, base.isValid, base.isHttp, isHttpScheme(output.scheme),
+           output.scheme != parsedBase.scheme, output.host == parsedBase.host,
+           output.hasPort == parsedBase.hasPort,
+           (!output.hasPort || output.port == parsedBase.port) {
+            output.scheme = parsedBase.scheme
         }
 
         // 去除尾部斜杠，根路径保留。
@@ -55,7 +83,7 @@ enum EpisodeURL {
     }
 
     /// 等价于 Dart 的 Uri.tryParse：scheme / host 为空时视为"无法解析为绝对 URL"。
-    private struct ResolvedURL {
+    fileprivate struct ResolvedURL: Sendable {
         var scheme: String
         var host: String
         var port: Int?
@@ -97,12 +125,11 @@ enum EpisodeURL {
     }
 
     /// 按 RFC 3986 相对引用规则补全（等价于 Dart 的 Uri.resolve）。
-    private static func resolve(_ reference: String, against base: ResolvedURL) -> ResolvedURL? {
+    private static func resolve(_ reference: String, against base: ResolvedURL, baseFoundationURL: URL?) -> ResolvedURL? {
         // 与 Dart 的 Uri.resolve 对齐：先把 base 的 authority + path 拼成字符串，
         // 再按 RFC 3986 处理相对引用（去除 ./ 与 ../ 段）。
-        let baseString = base.absoluteString
         guard let rawReference = URL(string: reference) else { return nil }
-        guard let resolved = URL(string: rawReference.relativeString, relativeTo: URL(string: baseString))?.absoluteURL,
+        guard let resolved = URL(string: rawReference.relativeString, relativeTo: baseFoundationURL)?.absoluteURL,
               let components = URLComponents(url: resolved, resolvingAgainstBaseURL: true) else {
             return nil
         }

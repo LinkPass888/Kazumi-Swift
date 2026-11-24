@@ -10,8 +10,8 @@
 //  两个数都是设置项，改了当场生效，不用重启。
 //
 //  每集分两步：先在隐藏网页里嗅真实地址（`EpisodeMediaResolver`），再把地址交给
-//  `DownloadEngine` 落盘。嗅地址很重（一个 WebView 一个进程），所以它跟着集数
-//  并发走，不额外放宽。
+//  `DownloadEngine` 落盘。嗅地址很重（一个 WebView 一个进程），由独立异步限流器
+//  限制同时最多 2 个并发解析，与集数并发解耦，防止低内存机型触发 Jetsam。
 //
 //  记录存 Application Support/downloads.json；文件落在下载目录
 //  `<番剧ID>-<规则名>/` 下，离线播放直接喂本地播放列表。
@@ -29,6 +29,88 @@ private actor DownloadPersistenceActor {
             withIntermediateDirectories: true
         )
         try? data.write(to: storeURL, options: .atomic)
+    }
+}
+
+/// 独立的异步并发限流器：限制同时活跃的隐藏 `WKWebView` 解析数量（最多 2 个），
+/// 与 `downloadParallelEpisodes` 解耦，防止低内存机型因过多 WebContent 进程触发 Jetsam。
+@MainActor
+private final class ResolveConcurrencyLimiter {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+        let cancelToken: UUID
+        let cancellation: CancellationFlag
+    }
+
+    private let maxConcurrent: Int
+    private var activeCount = 0
+    private var waiters: [Waiter] = []
+
+    init(maxConcurrent: Int) {
+        self.maxConcurrent = max(1, maxConcurrent)
+    }
+
+    func acquire(cancellation: CancellationFlag) async throws {
+        if cancellation.isCancelled || Task.isCancelled {
+            throw DownloadError.cancelled
+        }
+        if activeCount < maxConcurrent {
+            activeCount += 1
+            return
+        }
+
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if cancellation.isCancelled || Task.isCancelled {
+                    continuation.resume(throwing: DownloadError.cancelled)
+                    return
+                }
+                if activeCount < maxConcurrent {
+                    activeCount += 1
+                    continuation.resume()
+                    return
+                }
+                let token = cancellation.addCancelHandler { [weak self] in
+                    Task { @MainActor in
+                        self?.cancelWaiter(id: waiterID)
+                    }
+                }
+                waiters.append(Waiter(
+                    id: waiterID,
+                    continuation: continuation,
+                    cancelToken: token,
+                    cancellation: cancellation
+                ))
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in
+                self?.cancelWaiter(id: waiterID)
+            }
+        }
+    }
+
+    func release() {
+        while !waiters.isEmpty {
+            let next = waiters.removeFirst()
+            next.cancellation.removeCancelHandler(next.cancelToken)
+            if next.cancellation.isCancelled {
+                next.continuation.resume(throwing: DownloadError.cancelled)
+                continue
+            }
+            // 名额直接交接给下一个等待者，`activeCount` 保持不变。
+            next.continuation.resume()
+            return
+        }
+        activeCount = max(0, activeCount - 1)
+    }
+
+    private func cancelWaiter(id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.cancellation.removeCancelHandler(waiter.cancelToken)
+        waiter.continuation.resume(throwing: DownloadError.cancelled)
     }
 }
 
@@ -66,6 +148,7 @@ final class DownloadCenter {
     @ObservationIgnored private let engine = DownloadEngine()
 
     private let resolver = EpisodeMediaResolver()
+    @ObservationIgnored private let resolveLimiter = ResolveConcurrencyLimiter(maxConcurrent: 2)
     private let directory: DownloadDirectoryStore
     private let plugins: PluginsController?
     private let settings: SettingsStore
@@ -135,6 +218,15 @@ final class DownloadCenter {
         Set(queue.filter { $0.recordKey == recordKey }.map(\.episodeNumber))
     }
 
+    /// 一次性按记录分组统计排队中的集号，避免在外层循环里重复扫描整个队列。
+    private func queuedNumbersByRecord() -> [String: Set<Int>] {
+        var result: [String: Set<Int>] = [:]
+        for item in queue {
+            result[item.recordKey, default: []].insert(item.episodeNumber)
+        }
+        return result
+    }
+
     nonisolated static func episodeKey(recordKey: String, number: Int) -> String {
         "\(recordKey)#\(number)"
     }
@@ -199,13 +291,14 @@ final class DownloadCenter {
         // 回放时才不用拿剧集地址去凑（LP 5508）。
         if !itemSource.isEmpty { record.itemSource = itemSource }
 
+        var queued = queuedNumbers(recordKey: key)
         var added: [QueueItem] = []
         for item in episodes {
             if let index = record.episodes.firstIndex(where: { $0.number == item.number }) {
                 let existing = record.episodes[index]
                 // 已下完、正在下、已经在排队的，不重复加；失败过的允许重来。
                 if existing.isPlayableOffline || existing.status.isActive { continue }
-                if queuedNumbers(recordKey: key).contains(item.number) { continue }
+                if queued.contains(item.number) { continue }
                 // 暂停/取消过的集重新入队时，要把「取消之后才轮到」的标记清掉：
                 // 不清的话 pump() 出队时会把它当已取消跳过，界面永远停在排队中。
                 cancelledBeforeStart.remove("\(key)#\(item.number)")
@@ -218,6 +311,7 @@ final class DownloadCenter {
                 record.episodes[index].status = .pending
                 record.episodes[index].errorMessage = nil
             } else {
+                if queued.contains(item.number) { continue }
                 record.episodes.append(DownloadEpisode(
                     number: item.number,
                     title: item.title,
@@ -225,6 +319,7 @@ final class DownloadCenter {
                     status: .pending
                 ))
             }
+            queued.insert(item.number)
             added.append(QueueItem(recordKey: key, episodeNumber: item.number))
         }
 
@@ -239,9 +334,10 @@ final class DownloadCenter {
 
     /// 是否存在可开始或恢复的下载任务（已暂停、失败、丢失文件或尚未激活的排队项）。
     var hasStartableEpisodes: Bool {
+        let queuedByRecord = queuedNumbersByRecord()
         for record in records {
             let active = activeNumbers[record.id] ?? []
-            let queued = queuedNumbers(recordKey: record.id)
+            let queued = queuedByRecord[record.id] ?? []
             for episode in record.episodes {
                 switch episode.status {
                 case .paused, .failed:
@@ -269,9 +365,10 @@ final class DownloadCenter {
     /// 全部开始：恢复并排队所有已暂停、失败或等待中的下载任务。
     func startAll() {
         var didChange = false
+        let queuedByRecord = queuedNumbersByRecord()
         for record in records {
             let active = activeNumbers[record.id] ?? []
-            let queued = queuedNumbers(recordKey: record.id)
+            let queued = queuedByRecord[record.id] ?? []
             var toEnqueue: [(number: Int, title: String, pageURL: String)] = []
 
             for episode in record.episodes {
@@ -642,13 +739,13 @@ final class DownloadCenter {
             throw DownloadError.pluginMissing(record.pluginName)
         }
 
-        // 第一步：嗅真实地址。之前嗅到过的直接用。
+        // 第一步：嗅真实地址。之前嗅到过的直接用；受独立限流器约束最多同时 2 个 WebView 并发。
         var mediaURL = episode.mediaURL
         if mediaURL.isEmpty {
             update(item) { $0.status = .resolving }
             persist()
 
-            let resolved = try await resolver.resolve(
+            let resolved = try await resolveWithLimit(
                 pageURL: episode.pageURL,
                 useLegacyParser: plugin.useLegacyParser,
                 pluginName: record.pluginName,
@@ -728,6 +825,22 @@ final class DownloadCenter {
                 }
             }
         }
+    }
+
+    private func resolveWithLimit(
+        pageURL: String,
+        useLegacyParser: Bool,
+        pluginName: String,
+        cancellation: CancellationFlag
+    ) async throws -> EpisodeMediaResolver.Result {
+        try await resolveLimiter.acquire(cancellation: cancellation)
+        defer { resolveLimiter.release() }
+        return try await resolver.resolve(
+            pageURL: pageURL,
+            useLegacyParser: useLegacyParser,
+            pluginName: pluginName,
+            cancellation: cancellation
+        )
     }
 
     /// 一集真正占了多少地方：本地播放列表 + 它的全部分片。

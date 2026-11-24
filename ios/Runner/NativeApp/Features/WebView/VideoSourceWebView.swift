@@ -429,23 +429,24 @@ final class VideoSourceWebView: NSObject {
         return new Promise((resolve, reject) => {
             _r_text.call(this).then((text) => {
                 resolve(text);
-                if (text.trim().startsWith("#EXTM3U")) {
+                if (typeof text === 'string' && text.slice(0, 64).trimStart().startsWith('#EXTM3U')) {
                     window.flutter_inappwebview.callHandler('LogBridge', 'M3U8 source found: ' + this.url);
                     window.flutter_inappwebview.callHandler('VideoBridgeDebug', this.url);
                 }
             }).catch(reject);
         });
-    }
+    };
 
     const _open = window.XMLHttpRequest.prototype.open;
     window.XMLHttpRequest.prototype.open = function (...args) {
         this.addEventListener("load", () => {
             try {
+                if (this.responseType !== '' && this.responseType !== 'text') return;
                 let content = this.responseText;
-                if (content.trim().startsWith("#EXTM3U")) {
+                if (typeof content === 'string' && content.slice(0, 64).trimStart().startsWith('#EXTM3U')) {
                     window.flutter_inappwebview.callHandler('LogBridge', 'M3U8 source found: ' + args[1]);
                     window.flutter_inappwebview.callHandler('VideoBridgeDebug', args[1]);
-                };
+                }
             } catch {}
         });
         return _open.apply(this, args);
@@ -454,13 +455,26 @@ final class VideoSourceWebView: NSObject {
 
     private static let videoTagParserScript = """
     window.flutter_inappwebview.callHandler('LogBridge', 'VideoTagParser script loaded: ' + window.location.href);
+    let _found = false;
+    let _observer = null;
+
+    function _stopObserver() {
+      _found = true;
+      if (_observer) {
+        _observer.disconnect();
+        _observer = null;
+      }
+    }
+
     function processVideoElement(video) {
+      if (_found) return true;
       window.flutter_inappwebview.callHandler('LogBridge', 'Scanning video element for source URL');
       let src = video.getAttribute('src');
       if (src && src.trim() !== '' && !src.startsWith('blob:') && !src.includes('googleads')) {
         window.flutter_inappwebview.callHandler('LogBridge', 'VIDEO source found: ' + src);
         window.flutter_inappwebview.callHandler('VideoBridgeDebug', src);
-        return;
+        _stopObserver();
+        return true;
       }
       const sources = video.getElementsByTagName('source');
       for (let source of sources) {
@@ -468,35 +482,49 @@ final class VideoSourceWebView: NSObject {
         if (src && src.trim() !== '' && !src.startsWith('blob:') && !src.includes('googleads')) {
           window.flutter_inappwebview.callHandler('LogBridge', 'VIDEO source found (source tag): ' + src);
           window.flutter_inappwebview.callHandler('VideoBridgeDebug', src);
-          return;
+          _stopObserver();
+          return true;
         }
       }
+      return false;
     }
 
     document.querySelectorAll('video').forEach(processVideoElement);
 
-    const _observer = new MutationObserver((mutations) => {
-      // 这里原来每收到一批 DOM 变更就往 LogBridge 打一行「Scanning for video elements...」。
-      // 那种页面一秒能改几十上百次，等于把主线程按满；而这行日志对排查没帮助，删掉。
-      mutations.forEach(mutation => {
-        if (mutation.type === 'attributes' && mutation.target.nodeName === 'VIDEO') {
-          processVideoElement(mutation.target);
-        }
-        mutation.addedNodes.forEach(node => {
-          if (node.nodeName === 'VIDEO') processVideoElement(node);
-          if (node.querySelectorAll) {
-            node.querySelectorAll('video').forEach(processVideoElement);
+    if (!_found) {
+      _observer = new MutationObserver((mutations) => {
+        if (_found) return;
+        // 这里原来每收到一批 DOM 变更就往 LogBridge 打一行「Scanning for video elements...」。
+        // 那种页面一秒能改几十上百次，等于把主线程按满；而这行日志对排查没帮助，删掉。
+        for (const mutation of mutations) {
+          if (_found) return;
+          if (mutation.type === 'attributes' && mutation.target.nodeName === 'VIDEO') {
+            if (processVideoElement(mutation.target)) return;
           }
-        });
+          for (const node of mutation.addedNodes) {
+            if (_found) return;
+            if (node.nodeType !== 1) continue;
+            if (node.nodeName === 'VIDEO' && processVideoElement(node)) return;
+            if (node.querySelectorAll) {
+              const videos = node.querySelectorAll('video');
+              for (const video of videos) {
+                if (processVideoElement(video)) return;
+              }
+            }
+          }
+        }
       });
-    });
 
-    _observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['src']
-    });
+      const _observeTarget = document.body || document.documentElement;
+      if (_observeTarget) {
+        _observer.observe(_observeTarget, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['src']
+        });
+      }
+    }
     """
 }
 // MARK: - WKNavigationDelegate

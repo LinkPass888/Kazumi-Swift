@@ -223,15 +223,19 @@ struct MPVPlayerContainer: UIViewRepresentable {
         engine.hardwareDecodeMode = hardwareDecodeMode
         engine.backgroundAutoPiPEnabled = backgroundAutoPiP
         // 播到一半 Wi-Fi 换成移动数据（或反过来）时，缓存档位要跟着换，不用重开这一集。
-        // 「跟随网络」这一档在两种网络下取的值不一样，靠这个回调补上。
-        MeteredNetworkMonitor.shared.onChange = { [engine, mode = lowMemoryMode, isLocal = url.isFileURL] in
+        // 「跟随网络」这一档在两种网络下取的值不一样，经多实例分发表弱引用订阅，避免强捕获与互相覆盖。
+        context.coordinator.lowMemoryMode = lowMemoryMode
+        context.coordinator.isLocalPlayback = url.isFileURL
+        context.coordinator.meteredNetworkObserverToken = MeteredNetworkObserverHub.register { [weak engine, weak coordinator = context.coordinator] in
+            guard let engine, let coordinator else { return false }
             engine.applyCacheSize(
                 PlaybackCachePolicy.bytes(
-                    mode: mode,
+                    mode: coordinator.lowMemoryMode,
                     isMetered: MeteredNetworkMonitor.shared.isMetered,
-                    isLocalPlayback: isLocal
+                    isLocalPlayback: coordinator.isLocalPlayback
                 )
             )
+            return true
         }
         engine.onSnapshot = { [weak surface] snapshot in
             surface?.handle(snapshot: snapshot)
@@ -281,6 +285,8 @@ struct MPVPlayerContainer: UIViewRepresentable {
 
     func updateUIView(_ uiView: MPVHostView, context: Context) {
         context.coordinator.surface = surface
+        context.coordinator.lowMemoryMode = lowMemoryMode
+        context.coordinator.isLocalPlayback = url.isFileURL
         surface.attach(engine: context.coordinator.engine)
         // 设置页改了档位、或者网络在 Wi-Fi 和移动数据之间换了，这一集当场换缓存大小，
         // 不用重开（main 的 `_onChanged` 也是立刻 apply）。
@@ -318,8 +324,47 @@ struct MPVPlayerContainer: UIViewRepresentable {
         coordinator.surface?.attach(engine: nil)
         coordinator.engine?.stop()
         coordinator.engine = nil
-        // 播放器没了就别再把回调挂在单例上。
-        MeteredNetworkMonitor.shared.onChange = nil
+        // 仅注销当前实例的订阅，不影响仍在活跃的其他播放器实例。
+        if let token = coordinator.meteredNetworkObserverToken {
+            MeteredNetworkObserverHub.unregister(token)
+            coordinator.meteredNetworkObserverToken = nil
+        }
+    }
+
+    @MainActor
+    private enum MeteredNetworkObserverHub {
+        private static var observers: [UUID: () -> Bool] = [:]
+
+        static func register(_ handler: @escaping () -> Bool) -> UUID {
+            let token = UUID()
+            observers[token] = handler
+            syncMonitorHandler()
+            return token
+        }
+
+        static func unregister(_ token: UUID) {
+            observers.removeValue(forKey: token)
+            syncMonitorHandler()
+        }
+
+        private static func syncMonitorHandler() {
+            if observers.isEmpty {
+                MeteredNetworkMonitor.shared.onChange = nil
+            } else if MeteredNetworkMonitor.shared.onChange == nil {
+                MeteredNetworkMonitor.shared.onChange = {
+                    let tokens = Array(observers.keys)
+                    for token in tokens {
+                        guard let handler = observers[token] else { continue }
+                        if !handler() {
+                            observers.removeValue(forKey: token)
+                        }
+                    }
+                    if observers.isEmpty {
+                        MeteredNetworkMonitor.shared.onChange = nil
+                    }
+                }
+            }
+        }
     }
 
     @MainActor
@@ -327,6 +372,9 @@ struct MPVPlayerContainer: UIViewRepresentable {
         weak var surface: PlayerSurfaceModel?
         weak var overlay: DanmakuOverlayView?
         var engine: MPVEngine?
+        var meteredNetworkObserverToken: UUID?
+        var lowMemoryMode: LowMemoryMode = .auto
+        var isLocalPlayback = false
 
         private var lastRequest: MPVPlaybackRequest?
         private var lastLoadedURL: URL?

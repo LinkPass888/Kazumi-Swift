@@ -60,6 +60,7 @@ final class AsyncSessionOwner: @unchecked Sendable {
 final class PluginSearchService {
     private(set) var responses: [PluginSearchResponse] = []
     private(set) var statuses: [String: PluginSearchStatus] = [:]
+    @ObservationIgnored private var responsesByPlugin: [String: [SearchItem]] = [:]
 
     private let plugins: PluginsController
     private let engine: RuleEngine
@@ -93,13 +94,15 @@ final class PluginSearchService {
     }
 
     func responses(for pluginName: String) -> [SearchItem] {
-        responses.first { $0.pluginName == pluginName }?.data ?? []
+        // 先触达被观察属性，确保 SwiftUI 视图对 responses 的观察依赖不会因走索引而丢失。
+        _ = responses
+        return responsesByPlugin[pluginName] ?? []
     }
 
     func querySource(_ keyword: String, pluginName: String) async {
         guard let plugin = plugins.plugin(named: pluginName) else { return }
         resetCancelTokenIfNeeded()
-        responses.removeAll { $0.pluginName == pluginName }
+        removeResponse(for: pluginName)
         statuses[pluginName] = .pending
         await queryPlugin(plugin, keyword: keyword)
     }
@@ -110,10 +113,9 @@ final class PluginSearchService {
         guard let plugin = plugins.plugin(named: pluginName) else { return false }
         let config = RuleExecutionConfig(plugin: plugin)
         guard let result = await engine.tryParseHarvestedSearch(config, raw: html) else { return false }
-        responses.removeAll { $0.pluginName == pluginName }
         statuses[pluginName] = .success
         plugins.validityTracker.markSearchValid(pluginName)
-        responses.append(result)
+        setResponse(result)
         return true
     }
 
@@ -122,7 +124,7 @@ final class PluginSearchService {
         activeSearchTask = nil
         searchGeneration += 1
         let generation = searchGeneration
-        responses.removeAll()
+        clearResponses()
         statuses.removeAll()
         resetCancelTokenIfNeeded()
         let token = cancelToken
@@ -217,8 +219,7 @@ final class PluginSearchService {
                 plugins.validityTracker.markSearchValid(plugin.name)
             }
             // 结果整体替换，避免手动重搜后出现重复条目。
-            responses.removeAll { $0.pluginName == plugin.name }
-            responses.append(trace.response)
+            setResponse(trace.response)
         } catch is SourceSearchTimeoutError {
             guard owner.isActive(session) else { return }
             if let generation, generation != searchGeneration { return }
@@ -233,6 +234,22 @@ final class PluginSearchService {
             if let generation, generation != searchGeneration { return }
             handleSearchError(plugin, error: error)
         }
+    }
+
+    private func setResponse(_ response: PluginSearchResponse) {
+        responses.removeAll { $0.pluginName == response.pluginName }
+        responses.append(response)
+        responsesByPlugin[response.pluginName] = response.data
+    }
+
+    private func removeResponse(for pluginName: String) {
+        responses.removeAll { $0.pluginName == pluginName }
+        responsesByPlugin.removeValue(forKey: pluginName)
+    }
+
+    private func clearResponses() {
+        responses.removeAll()
+        responsesByPlugin.removeAll()
     }
 
     private func handleSearchError(_ plugin: Plugin, error: Error) {

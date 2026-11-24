@@ -114,16 +114,17 @@ struct KazumiBanner: View {
         .padding(.top, 8)
         .transition(.move(edge: .top).combined(with: .opacity))
         .sensoryFeedback(feedback, trigger: appeared)
-        .onAppear {
+        .task(id: "\(title)|\(detail ?? "")") {
             appeared = true
             // 浮层不是控件，读屏不会自己念（Colo 6401 §十二）。
             let announcement = detail.map { "\(title)，\($0)" } ?? title
             AccessibilityNotification.Announcement(announcement).post()
-            if mode == .automatic {
-                Task {
-                    try? await Task.sleep(for: .seconds(3.5))
-                    withAnimation(.snappy) { onDismiss() }
-                }
+            guard mode == .automatic else { return }
+            do {
+                try await Task.sleep(for: .seconds(3.5))
+                withAnimation(.snappy) { onDismiss() }
+            } catch {
+                // Banner 内容切换或手动关闭时由 SwiftUI 自动取消，不再误关新 Banner。
             }
         }
     }

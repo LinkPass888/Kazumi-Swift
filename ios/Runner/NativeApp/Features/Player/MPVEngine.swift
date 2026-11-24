@@ -367,12 +367,13 @@ final class MPVEngine {
         log("硬解实际值（内核创建后）：requested=\(requestedHWDec) effective=\(effectiveHardwareDecode) actual=\(stringProperty("hwdec-current") ?? "未知")")
 
         // C API 只接受一个级别，不接受 msg-level 的分模块语法。
-        // v 收集解码 / 色彩 / 渲染；接收端白名单、脱敏、限流，不开 HTTP debug。
-        let logStatus = mpv_request_log_messages(mpv, "v")
+        // 生产默认 warn 降低事件泵日志唤醒开销；接收端仍保持白名单、脱敏、限流，不开 HTTP debug。
+        let logLevel = "warn"
+        let logStatus = mpv_request_log_messages(mpv, logLevel)
         if logStatus >= 0 {
-            log("内核日志订阅成功：级别=v rc=\(logStatus)")
+            log("内核日志订阅成功：级别=\(logLevel) rc=\(logStatus)")
         } else {
-            log("内核日志订阅失败：级别=v rc=\(logStatus)（\(String(cString: mpv_error_string(logStatus)))）")
+            log("内核日志订阅失败：级别=\(logLevel) rc=\(logStatus)（\(String(cString: mpv_error_string(logStatus)))）")
         }
         let clientVersion = mpv_client_api_version()
         log("内核版本 \(stringProperty("mpv-version") ?? "未知") / 客户端 API \(clientVersion >> 16).\(clientVersion & 0xffff)")
@@ -389,7 +390,7 @@ final class MPVEngine {
                 self.apply(snapshot)
             }
         } log: { [weak self] message in
-            Task { @MainActor in self?.log(message) }
+            Task { @MainActor in self?.emitSanitizedLog(message) }
         }
         pump.onCommandReply = { [weak self] id, error, rawFrame, eventAt, copiedAt, window in
             Task { @MainActor in
@@ -1191,7 +1192,11 @@ final class MPVEngine {
 
     /// 包括属性、命令和代理提示在内，交给上层前统一脱敏。
     private func log(_ message: String) {
-        let safe = MPVDiagnostics.sanitize(message)
+        emitSanitizedLog(MPVDiagnostics.sanitize(message))
+    }
+
+    /// 供已由 `MPVDiagnostics` / `MPVEventPump` 完成脱敏的日志直通上层，避免重复正则扫描。
+    private func emitSanitizedLog(_ safe: String) {
         if !safe.isEmpty { onLog?(safe) }
     }
 
@@ -1823,8 +1828,8 @@ final class MPVEventPump: @unchecked Sendable {
                 let suppress = suppressRepeatedPictureInPictureReferenceError(
                     prefix: prefix, level: level, text: text
                 )
-                if let receipt = diagnostic.receipt { log(receipt) }
-                if let line = diagnostic.line, !suppress { log(line) }
+                if let receipt = diagnostic.receipt { emitSanitizedLog(receipt) }
+                if let line = diagnostic.line, !suppress { emitSanitizedLog(line) }
                 if let errorText = diagnostic.errorText {
                     lastCoreErrorText = errorText
                 }
@@ -1901,7 +1906,10 @@ final class MPVEventPump: @unchecked Sendable {
     }
 
     private func log(_ message: String) {
-        let safe = MPVDiagnostics.sanitize(message)
+        emitSanitizedLog(MPVDiagnostics.sanitize(message))
+    }
+
+    private func emitSanitizedLog(_ safe: String) {
         if !safe.isEmpty { onLog(safe) }
     }
 
@@ -1933,9 +1941,6 @@ final class MPVEventPump: @unchecked Sendable {
         mpv_get_property(mpv, "core-idle", MPV_FORMAT_FLAG, &idle)
         var ended: Int32 = 0
         mpv_get_property(mpv, "eof-reached", MPV_FORMAT_FLAG, &ended)
-        var params = mpv_node()
-        let hasVideo = mpv_get_property(mpv, "video-params", MPV_FORMAT_NODE, &params) >= 0
-        mpv_free_node_contents(&params)
         // 画面尺寸：dwidth/dheight 是「实际显示」的尺寸（anamorphic 也算过），
         // 拿不到就退回 width/height。全 0 表示还没有画面，上层回落到整块容器。
         var videoWidth: Int64 = 0
@@ -1946,6 +1951,7 @@ final class MPVEventPump: @unchecked Sendable {
             mpv_get_property(mpv, "width", MPV_FORMAT_INT64, &videoWidth)
             mpv_get_property(mpv, "height", MPV_FORMAT_INT64, &videoHeight)
         }
+        let hasVideo = videoWidth > 0 && videoHeight > 0
         var seeking: Int32 = 0
         mpv_get_property(mpv, "seeking", MPV_FORMAT_FLAG, &seeking)
         return MPVSnapshot(

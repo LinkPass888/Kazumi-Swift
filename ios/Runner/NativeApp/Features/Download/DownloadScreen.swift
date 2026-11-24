@@ -16,6 +16,20 @@
 
 import SwiftUI
 
+/// 复用静态 `ByteCountFormatter`，避免下载列表高频刷新时在热路径反复初始化格式化器。
+@MainActor
+private enum DownloadByteFormatter {
+    private static let formatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter
+    }()
+
+    static func string(fromByteCount count: Int64) -> String {
+        formatter.string(fromByteCount: count)
+    }
+}
+
 struct DownloadScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppEnvironment.self) private var environment
@@ -319,7 +333,7 @@ struct DownloadScreen: View {
 
     private func subtitle(record: DownloadRecord, done: Int, total: Int, running: Bool) -> String {
         let count = String(localized: "\(String(describing: done))/\(String(describing: total)) 集")
-        let size = ByteCountFormatter.string(fromByteCount: record.totalBytes, countStyle: .file)
+        let size = DownloadByteFormatter.string(fromByteCount: record.totalBytes)
         let body = record.totalBytes > 0 ? "\(count) · \(size)" : count
         if running {
             return String(localized: "下载中 · \(String(describing: body))")
@@ -545,15 +559,15 @@ struct DownloadEpisodeRowView: View {
             let downloadedBytes = progressState.downloadedBytes
             let percent = Int((progress * 100).rounded())
             if totalBytes > 0 {
-                let totalSize = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
+                let totalSize = DownloadByteFormatter.string(fromByteCount: totalBytes)
                 if downloadedBytes > 0 {
-                    let downloadedSize = ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)
+                    let downloadedSize = DownloadByteFormatter.string(fromByteCount: downloadedBytes)
                     return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize)) / \(String(describing: totalSize))")
                 }
                 return String(localized: "下载中 \(String(describing: percent))% · \(String(describing: totalSize))")
             }
             if downloadedBytes > 0 {
-                let downloadedSize = ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)
+                let downloadedSize = DownloadByteFormatter.string(fromByteCount: downloadedBytes)
                 return percent > 0
                     ? String(localized: "下载中 \(String(describing: percent))% · \(String(describing: downloadedSize))")
                     : String(localized: "下载中 · 已下 \(String(describing: downloadedSize))")
@@ -567,7 +581,7 @@ struct DownloadEpisodeRowView: View {
         case .completed:
             // 文件不在时大小是假的，写清楚能重下，别只写一个数。
             guard episode.fileName != nil else { return String(localized: "文件不在，可重新下载") }
-            return ByteCountFormatter.string(fromByteCount: episode.totalBytes, countStyle: .file)
+            return DownloadByteFormatter.string(fromByteCount: episode.totalBytes)
         case .failed:
             // 失败原因直接说，不再只画个红点。
             return episode.errorMessage ?? String(localized: "下载失败")

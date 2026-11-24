@@ -38,31 +38,54 @@ final class KazumiLogBuffer: Sendable {
         let message: String
     }
 
+    /// 固定容量的环形桶：写满后原地覆盖最旧槽位，避免每次插入都 `removeFirst` 搬移整个数组。
+    private struct RingBucket: Sendable {
+        private var buffer: [Entry] = []
+        private var nextWriteIndex: Int = 0
+
+        mutating func append(_ entry: Entry, capacity: Int) {
+            if buffer.count < capacity {
+                buffer.append(entry)
+            } else {
+                buffer[nextWriteIndex] = entry
+                nextWriteIndex = (nextWriteIndex + 1) % capacity
+            }
+        }
+
+        func entriesInOrder() -> [Entry] {
+            guard nextWriteIndex > 0, !buffer.isEmpty else { return buffer }
+            var ordered: [Entry] = []
+            ordered.reserveCapacity(buffer.count)
+            ordered.append(contentsOf: buffer[nextWriteIndex...])
+            ordered.append(contentsOf: buffer[..<nextWriteIndex])
+            return ordered
+        }
+    }
+
     /// 每个分类最多保留的条数，超出后丢弃最旧的记录。
     private static let capacity = 200
 
-    private let storage = OSAllocatedUnfairLock(initialState: [Category: [Entry]]())
+    private let storage = OSAllocatedUnfairLock(initialState: [Category: RingBucket]())
 
     func append(_ message: String, category: Category) {
         let entry = Entry(category: category, timestamp: Date(), message: message)
         storage.withLock { buckets in
-            var items = buckets[category] ?? []
-            items.append(entry)
-            if items.count > Self.capacity {
-                items.removeFirst(items.count - Self.capacity)
-            }
-            buckets[category] = items
+            var bucket = buckets[category] ?? RingBucket()
+            bucket.append(entry, capacity: Self.capacity)
+            buckets[category] = bucket
         }
     }
 
     func snapshot() -> [Entry] {
         storage.withLock { buckets in
-            buckets.values.flatMap { $0 }.sorted { $0.timestamp < $1.timestamp }
+            buckets.values
+                .flatMap { $0.entriesInOrder() }
+                .sorted { $0.timestamp < $1.timestamp }
         }
     }
 
     func clear(_ category: Category) {
-        storage.withLock { $0[category] = [] }
+        storage.withLock { $0[category] = nil }
     }
 
     func clearAll() {

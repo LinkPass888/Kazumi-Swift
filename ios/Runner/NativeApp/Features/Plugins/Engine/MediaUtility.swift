@@ -17,6 +17,11 @@ enum MediaUtility {
         options: [.caseInsensitive]
     )
 
+    /// 对应 extractEpisodeNumber：匹配 `第?(\d+)[话集]?`。
+    private static let episodeNumberPattern = try! NSRegularExpression(
+        pattern: "第?(\\d+)[话集]?"
+    )
+
     static func decodeVideoSource(_ iframeUrl: String) -> String {
         let decoded = iframeUrl.removingPercentEncoding ?? iframeUrl
         var matched = iframeUrl
@@ -46,9 +51,8 @@ enum MediaUtility {
 
     /// 对应 extractEpisodeNumber：匹配 `第?(\d+)[话集]?`，无法识别时返回 0。
     static func extractEpisodeNumber(_ input: String) -> Int {
-        let pattern = try! NSRegularExpression(pattern: String(localized: "第?(\\d+)[话集]?"))
         let range = NSRange(input.startIndex..<input.endIndex, in: input)
-        guard let match = pattern.firstMatch(in: input, options: [], range: range),
+        guard let match = episodeNumberPattern.firstMatch(in: input, options: [], range: range),
               match.numberOfRanges > 1,
               let numberRange = Range(match.range(at: 1), in: input) else {
             return 0

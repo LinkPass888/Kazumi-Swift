@@ -148,7 +148,8 @@ struct LibraryScreen: View {
     }
 
     private var pageBody: some View {
-        content
+        let entries = filteredEntries
+        return content(entries)
             // 只量视口尺寸（宽档分档要用高度）：网格的左右内边距各 16，减掉就是可用内容宽。
             // 这颗探针必须在 ScrollView 外面，理由见 content 里那段注释。
             // LP 2026-10-24（后一条）：追番页整体上移到原来的高度——不用系统大标题了，
@@ -157,7 +158,7 @@ struct LibraryScreen: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     header
-                    controlBar
+                    controlBar(count: entries.count)
                 }
                 .background(
                     KazumiPalette.background(for: colorScheme),
@@ -219,13 +220,13 @@ struct LibraryScreen: View {
 
     /// 一行控制条：分类菜单 ＋ 排序菜单 ＋ 部数，右侧搜索。
     /// 搜索展开时两个菜单和部数从布局里移除（不是盖住），整行高度不变。
-    private var controlBar: some View {
+    private func controlBar(count: Int) -> some View {
         Group {
             if isSearching {
                 searchRow
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             } else {
-                defaultRow
+                defaultRow(count: count)
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
         }
@@ -237,7 +238,7 @@ struct LibraryScreen: View {
         // Colo 2550 提过底边留 −4 收回多出的那点，LP 2556 看了说不好看，回退成 0。
     }
 
-    private var defaultRow: some View {
+    private func defaultRow(count: Int) -> some View {
         // 一行放得下就一行；放不下（最大字号下这四样加起来 504，比 370 宽）
         // 就折成两行：筛选＋排序一行，部数＋搜索一行。
         // 顶栏不能靠缩网格救——网格缩到一列，这一行照样出界（Colo 2026-10-24 实测）。
@@ -250,7 +251,7 @@ struct LibraryScreen: View {
             HStack(spacing: 6) {
                 categoryMenu
                 sortMenu
-                categoryCount
+                categoryCount(count)
 
                 Spacer(minLength: 0)
 
@@ -266,7 +267,7 @@ struct LibraryScreen: View {
                     sortMenu
                 }
                 HStack(spacing: 8) {
-                    categoryCount
+                    categoryCount(count)
                     Spacer(minLength: 0)
                     searchIconButton
                     syncButton
@@ -351,9 +352,8 @@ struct LibraryScreen: View {
     }
 
     /// 当前筛选结果的部数；搜索时跟着筛后条数走。
-    private var categoryCount: some View {
-        let total = filteredEntries.count
-        return Text(String(localized: "\(String(describing: total)) 部"))
+    private func categoryCount(_ total: Int) -> some View {
+        Text(String(localized: "\(String(describing: total)) 部"))
             .font(.footnote)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -588,13 +588,8 @@ struct LibraryScreen: View {
     /// 拉不到数据就保持空表 —— 调用方已经先用「最近变更」排好了，不转圈。
     private func loadUpdateTimes() async {
         let entries = library.watchingEntries
-        for entry in entries {
-            await BangumiAirTimeService.shared.ensureLoaded(
-                subjectID: entry.id,
-                airDate: entry.airDate
-            )
-            if Task.isCancelled { return }
-        }
+        await BangumiAirTimeService.shared.ensureLoaded(entries: entries)
+        if Task.isCancelled { return }
         let times = makeUpdateTimes(for: entries)
         updateTimes = times
         // 一部时刻都没拿到（季度 JSON 没到 / 没有匹配项）时继续按最近变更排，
@@ -678,8 +673,8 @@ struct LibraryScreen: View {
 
     // MARK: - 列表
 
-    private var content: some View {
-        contentBody
+    private func content(_ entries: [LibraryEntry]) -> some View {
+        contentBody(entries)
             // LP 3462／Colo 3463：两处并存——标题区那块是主要的，列表里的空白和
             // 行间隙碰到也关。卡片自己的 onTapGesture 更具体，照旧进详情。
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -691,8 +686,7 @@ struct LibraryScreen: View {
     }
 
     @ViewBuilder
-    private var contentBody: some View {
-        let entries = filteredEntries
+    private func contentBody(_ entries: [LibraryEntry]) -> some View {
         if entries.isEmpty {
             if !trimmedQuery.isEmpty {
                 searchEmptyState

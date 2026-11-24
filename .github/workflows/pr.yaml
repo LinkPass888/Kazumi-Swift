@@ -51,10 +51,21 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install build tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: brew install xcodegen xcbeautify
 
       - name: Generate Xcode project
         run: xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Cache Swift Packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spm
+          key: ${{ runner.os }}-spm-ios-${{ hashFiles('ios/project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-ios-
 
       - name: Resolve Swift Packages
         run: |
@@ -79,6 +90,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
+            DEBUG_INFORMATION_FORMAT=dwarf \
             DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
             DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
             | xcbeautify
@@ -96,7 +108,7 @@ jobs:
           cp -R "$APP_PATH" Payload/Runner.app
           find Payload/Runner.app -type d -name "*.framework" -exec codesign --force --sign - {} \;
           find Payload/Runner.app -type f -name "*.dylib" -exec codesign --force --sign - {} \;
-          zip -q -r Kazumi_ios_canary_no_sign.ipa Payload
+          zip -q -r -9 Kazumi_ios_canary_no_sign.ipa Payload
 
       - name: Upload canary IPA
         uses: actions/upload-artifact@v7
@@ -123,6 +135,9 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
 
       - name: Install build tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: brew install xcodegen xcbeautify
 
       - name: Generate Xcode project
@@ -130,6 +145,14 @@ jobs:
 
       # 包解析这一步就能验证 maccatalyst 切片：MPVKit 的 xcframework 里没有
       # ios-arm64_x86_64-maccatalyst 的话，后面的链接必挂。
+      - name: Cache Swift Packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spm-catalyst
+          key: ${{ runner.os }}-spm-catalyst-${{ hashFiles('ios/project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-catalyst-
+
       - name: Resolve Swift Packages
         run: |
           set -o pipefail
@@ -200,6 +223,7 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             SUPPORTS_MACCATALYST=YES \
+            DEBUG_INFORMATION_FORMAT=dwarf \
             DANDAN_APP_ID="${DANDAN_APP_ID:-}" \
             DANDAN_APP_SECRET="${DANDAN_APP_SECRET:-}" \
             2>&1 | tee "$RUNNER_TEMP/catalyst-build.log" | sed '/does not use shallow bundles/d' | xcbeautify

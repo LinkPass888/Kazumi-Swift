@@ -25,6 +25,7 @@ final class DanmakuOverlayView: UIView {
         var lane: Int = 0
         var mode: Int = 1
         var baseY: CGFloat = .nan
+        var lastSnappedX: CGFloat = .nan
         /// 描边宽度（pt）。0 表示不描边。
         var outlineWidth: CGFloat = 0
 
@@ -104,6 +105,10 @@ final class DanmakuOverlayView: UIView {
     private var reusableLabels: [ItemLabel] = []
     private static let maxReusableLabels = 64
     private var nextIndex = 0
+    /// 各模式每条轨道最新一条弹幕，供 `isLaneFree` 以 O(1) 判定轨道碰撞。
+    private var lastScrollItemPerLane: [Int: ItemLabel] = [:]
+    private var lastTopItemPerLane: [Int: ItemLabel] = [:]
+    private var lastBottomItemPerLane: [Int: ItemLabel] = [:]
 
     /// 一整套弹幕观感。字段与「弹幕设置」页一一对应，页面改哪一项这里就跟着变。
     struct Style: Equatable {
@@ -520,7 +525,15 @@ final class DanmakuOverlayView: UIView {
         let activelyAnimating = (clock?.isPlayingNow == true)
             && (clock?.isStalledNow == false)
             && (clock?.hasStartedPlayback == true)
-        setHighFrameRate(activelyAnimating && (!labels.isEmpty || nextIndex < comments.count))
+        let referenceNow = sampleFilled ? smoothTime : (clock?.currentPlaybackTime ?? lastNow)
+        setHighFrameRate(activelyAnimating && needsHighFrameRate(at: referenceNow))
+    }
+
+    /// 空屏且下一条弹幕距离触发 >= 0.25s 时降频至低帧率，避免无弹幕时段锁高刷。
+    private func needsHighFrameRate(at now: Double) -> Bool {
+        if !labels.isEmpty { return true }
+        guard nextIndex < comments.count else { return false }
+        return comments[nextIndex].time - now < 0.25
     }
 
     private func setHighFrameRate(_ high: Bool) {
@@ -563,7 +576,7 @@ final class DanmakuOverlayView: UIView {
         }
         emit(upTo: now)
         layoutLabels(at: now)
-        setHighFrameRate(!labels.isEmpty || nextIndex < comments.count)
+        setHighFrameRate(needsHighFrameRate(at: now))
     }
 
     private func emit(upTo now: Double) {
@@ -628,6 +641,7 @@ final class DanmakuOverlayView: UIView {
         // 坐标已做像素对齐，关闭边缘抗锯齿以减少合成开销。
         label.layer.allowsEdgeAntialiasing = false
         label.lane = lane
+        setLastItem(label, forLane: lane, mode: mode)
         addSubview(label)
         labels.append(label)
         position(label, at: now)
@@ -656,18 +670,23 @@ final class DanmakuOverlayView: UIView {
     }
 
     private func layoutLabels(at now: Double) {
-        var alive: [ItemLabel] = []
-        alive.reserveCapacity(labels.count)
-        for label in labels {
+        var writeIndex = 0
+        for readIndex in 0..<labels.count {
+            let label = labels[readIndex]
             let elapsed = now - label.startTime
             if elapsed > label.duration + 0.6 || elapsed < -1.5 {
                 recycleLabel(label)
                 continue
             }
             position(label, at: now)
-            alive.append(label)
+            if writeIndex != readIndex {
+                labels[writeIndex] = label
+            }
+            writeIndex += 1
         }
-        labels = alive
+        if writeIndex < labels.count {
+            labels.removeLast(labels.count - writeIndex)
+        }
     }
 
     private func position(_ label: ItemLabel, at now: Double) {
@@ -697,8 +716,14 @@ final class DanmakuOverlayView: UIView {
             label.transform = .identity
             label.frame = CGRect(x: 0, y: snappedY, width: width, height: height)
             label.baseY = snappedY
+            label.lastSnappedX = .nan
         }
         let snappedX = snapToPixel(x, scale: scale)
+        // 已定位的固定顶/底弹幕（以及横向像素未变化的弹幕）跳过重复 transform 赋值。
+        if !label.lastSnappedX.isNaN && label.lastSnappedX == snappedX {
+            return
+        }
+        label.lastSnappedX = snappedX
         label.transform = CGAffineTransform(translationX: snappedX, y: 0)
     }
 
@@ -726,34 +751,69 @@ final class DanmakuOverlayView: UIView {
     }
 
     private func isLaneFree(lane: Int, mode: Int, width: CGFloat, now: Double) -> Bool {
-        for item in labels where item.lane == lane && item.mode == mode {
-            if mode == 1 {
-                let progress = (now - item.startTime) / item.duration
-                let x = bounds.width - CGFloat(progress) * (bounds.width + item.bounds.width)
-                if x + item.bounds.width > bounds.width - 16 {
-                    return false
-                }
-            } else if now - item.startTime < item.duration {
-                return false
-            }
+        guard let item = lastItem(forLane: lane, mode: mode) else { return true }
+        if mode == 1 {
+            let progress = (now - item.startTime) / item.duration
+            let x = bounds.width - CGFloat(progress) * (bounds.width + item.bounds.width)
+            return x + item.bounds.width <= bounds.width - 16
         }
-        return true
+        return now - item.startTime >= item.duration
+    }
+
+    private func lastItem(forLane lane: Int, mode: Int) -> ItemLabel? {
+        switch mode {
+        case 1: return lastScrollItemPerLane[lane]
+        case 5: return lastTopItemPerLane[lane]
+        case 4: return lastBottomItemPerLane[lane]
+        default: return nil
+        }
+    }
+
+    private func setLastItem(_ label: ItemLabel, forLane lane: Int, mode: Int) {
+        switch mode {
+        case 1: lastScrollItemPerLane[lane] = label
+        case 5: lastTopItemPerLane[lane] = label
+        case 4: lastBottomItemPerLane[lane] = label
+        default: break
+        }
+    }
+
+    private func clearLastItemIfMatching(_ label: ItemLabel) {
+        switch label.mode {
+        case 1:
+            if lastScrollItemPerLane[label.lane] === label {
+                lastScrollItemPerLane.removeValue(forKey: label.lane)
+            }
+        case 5:
+            if lastTopItemPerLane[label.lane] === label {
+                lastTopItemPerLane.removeValue(forKey: label.lane)
+            }
+        case 4:
+            if lastBottomItemPerLane[label.lane] === label {
+                lastBottomItemPerLane.removeValue(forKey: label.lane)
+            }
+        default:
+            break
+        }
     }
 
     private func dequeueLabel() -> ItemLabel {
         if let reused = reusableLabels.popLast() {
             reused.transform = .identity
             reused.baseY = .nan
+            reused.lastSnappedX = .nan
             return reused
         }
         return ItemLabel()
     }
 
     private func recycleLabel(_ label: ItemLabel) {
+        clearLastItemIfMatching(label)
         label.removeFromSuperview()
         label.attributedText = nil
         label.transform = .identity
         label.baseY = .nan
+        label.lastSnappedX = .nan
         if reusableLabels.count < Self.maxReusableLabels {
             reusableLabels.append(label)
         }
@@ -764,6 +824,9 @@ final class DanmakuOverlayView: UIView {
             recycleLabel(label)
         }
         labels.removeAll()
+        lastScrollItemPerLane.removeAll(keepingCapacity: true)
+        lastTopItemPerLane.removeAll(keepingCapacity: true)
+        lastBottomItemPerLane.removeAll(keepingCapacity: true)
         sampleFilled = false
     }
 

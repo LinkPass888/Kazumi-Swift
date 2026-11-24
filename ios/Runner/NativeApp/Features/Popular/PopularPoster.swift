@@ -89,12 +89,24 @@ struct PopularPoster: Identifiable, Codable, Hashable, Sendable {
         )
     }
 
+    private static let episodesRegex = try? NSRegularExpression(pattern: #"(\d{1,3})话"#)
+    private static let fullDateRegex = try? NSRegularExpression(pattern: #"\d{4}年\d{1,2}月\d{1,2}日"#)
+    private static let yearMonthRegex = try? NSRegularExpression(pattern: #"\d{4}年\d{1,2}月"#)
+    private static let yearOnlyRegex = try? NSRegularExpression(pattern: #"(\d{4})年"#)
+
+    private static func firstMatchRange(_ regex: NSRegularExpression?, in text: String) -> Range<String.Index>? {
+        guard let regex,
+              let match = regex.firstMatch(in: text, options: [], range: NSRange(text.startIndex..., in: text))
+        else { return nil }
+        return Range(match.range, in: text)
+    }
+
     /// 从 info 里取「12话」中的 12。
     ///
     /// 注意用字面量「话」而不是 `\u{8bdd}`：原始字符串 `#"…"#` 不解析转义，
     /// 写成转义时正则一个都匹配不上（第一版就是这么静默失败的）。
     private static func episodesFromInfo(_ info: String) -> Int {
-        guard let range = info.range(of: #"(\d{1,3})话"#, options: .regularExpression) else { return 0 }
+        guard let range = firstMatchRange(episodesRegex, in: info) else { return 0 }
         let digits = info[range].dropLast()
         return Int(digits) ?? 0
     }
@@ -102,7 +114,7 @@ struct PopularPoster: Identifiable, Codable, Hashable, Sendable {
     /// 从 info 里提取完整放送日期（如「2026年10月3日」→「2026-10-03」，「2026年10月」→「2026-10-01」），
     /// 只有年份时退回「2026」。保留月份才能让 `BangumiAirTimeService` 定位所属季度。
     private static func airDateFromInfo(_ info: String) -> String {
-        if let range = info.range(of: #"\d{4}年\d{1,2}月\d{1,2}日"#, options: .regularExpression) {
+        if let range = firstMatchRange(fullDateRegex, in: info) {
             let parts = info[range].split { !$0.isNumber }
             if parts.count >= 3,
                let year = Int(parts[0]),
@@ -113,7 +125,7 @@ struct PopularPoster: Identifiable, Codable, Hashable, Sendable {
                 return String(format: "%04d-%02d-%02d", year, month, day)
             }
         }
-        if let range = info.range(of: #"\d{4}年\d{1,2}月"#, options: .regularExpression) {
+        if let range = firstMatchRange(yearMonthRegex, in: info) {
             let parts = info[range].split { !$0.isNumber }
             if parts.count >= 2,
                let year = Int(parts[0]),
@@ -122,7 +134,7 @@ struct PopularPoster: Identifiable, Codable, Hashable, Sendable {
                 return String(format: "%04d-%02d-01", year, month)
             }
         }
-        guard let range = info.range(of: #"(\d{4})年"#, options: .regularExpression) else { return "" }
+        guard let range = firstMatchRange(yearOnlyRegex, in: info) else { return "" }
         return String(info[range].dropLast())
     }
 }

@@ -15,6 +15,10 @@ import SwiftUI
 /// 算法抄自 `InfoTabPanels.swift` 里原先私有的 `TagFlowLayout`（已在跑的同一套），
 /// 抽到这里是为了两处共用一份，不再让每一处各写一遍换行。
 struct KazumiFlowLayout: Layout {
+    struct Cache {
+        var idealSizes: [CGSize]
+    }
+
     /// 每行颗数上限；`nil` 表示只看宽度。
     var maxColumns: Int?
     /// 同一行两颗之间。
@@ -22,19 +26,30 @@ struct KazumiFlowLayout: Layout {
     /// 两行之间。
     var rowSpacing: CGFloat = 8
 
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(idealSizes: subviews.map { $0.sizeThatFits(.unspecified) })
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.idealSizes = subviews.map { $0.sizeThatFits(.unspecified) }
+    }
+
     func sizeThatFits(
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout ()
+        cache: inout Cache
     ) -> CGSize {
+        if cache.idealSizes.count != subviews.count {
+            cache.idealSizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        }
         let maxWidth = proposal.width ?? .infinity
         var x: CGFloat = 0
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
         var widest: CGFloat = 0
         var itemsInRow = 0
-        for sub in subviews {
-            let ideal = sub.sizeThatFits(.unspecified)
+        for (index, sub) in subviews.enumerated() {
+            let ideal = cache.idealSizes[index]
             // 单颗宽过整行时按整行宽算，交给胶囊内部折行。
             let width = min(ideal.width, maxWidth)
             let columnFull = maxColumns.map { itemsInRow >= $0 } ?? false
@@ -49,7 +64,10 @@ struct KazumiFlowLayout: Layout {
             }
             x += width
             itemsInRow += 1
-            rowHeight = max(rowHeight, sub.sizeThatFits(ProposedViewSize(width: width, height: nil)).height)
+            let itemHeight = ideal.width <= maxWidth
+                ? ideal.height
+                : sub.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+            rowHeight = max(rowHeight, itemHeight)
         }
         widest = max(widest, x)
         return CGSize(width: proposal.width ?? widest, height: y + rowHeight)
@@ -59,14 +77,17 @@ struct KazumiFlowLayout: Layout {
         in bounds: CGRect,
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout ()
+        cache: inout Cache
     ) {
+        if cache.idealSizes.count != subviews.count {
+            cache.idealSizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        }
         var x = bounds.minX
         var y = bounds.minY
         var rowHeight: CGFloat = 0
         var itemsInRow = 0
-        for sub in subviews {
-            let ideal = sub.sizeThatFits(.unspecified)
+        for (index, sub) in subviews.enumerated() {
+            let ideal = cache.idealSizes[index]
             let columnFull = maxColumns.map { itemsInRow >= $0 } ?? false
             if x > bounds.minX, columnFull || x + spacing + ideal.width > bounds.maxX {
                 x = bounds.minX
@@ -77,12 +98,16 @@ struct KazumiFlowLayout: Layout {
                 x += spacing
             }
             // 右边界内收住，不越界。
-            let width = min(ideal.width, bounds.maxX - x)
-            let proposal = ProposedViewSize(width: width, height: nil)
-            sub.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: proposal)
+            let availableWidth = bounds.maxX - x
+            let width = min(ideal.width, availableWidth)
+            let subProposal = ProposedViewSize(width: width, height: nil)
+            sub.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: subProposal)
             x += width
             itemsInRow += 1
-            rowHeight = max(rowHeight, sub.sizeThatFits(proposal).height)
+            let itemHeight = ideal.width <= availableWidth
+                ? ideal.height
+                : sub.sizeThatFits(subProposal).height
+            rowHeight = max(rowHeight, itemHeight)
         }
     }
 }

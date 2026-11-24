@@ -73,7 +73,35 @@ final class BangumiSyncEngine {
     private(set) var lastError: String?
 
     /// 串行队列的替代：同步、推送、连接三种操作不能同时跑。
-    private var operations: Task<Void, Never>?
+    @ObservationIgnored private var operations: Task<Void, Never>?
+
+    private func enqueue<T: Sendable>(
+        _ operation: @escaping @MainActor @Sendable () async -> T
+    ) async -> T {
+        let previous = operations
+        let task = Task { @MainActor in
+            _ = await previous?.value
+            return await operation()
+        }
+        operations = Task { @MainActor in
+            _ = await task.value
+        }
+        return await task.value
+    }
+
+    private func enqueueThrowing<T: Sendable>(
+        _ operation: @escaping @MainActor @Sendable () async throws -> T
+    ) async throws -> T {
+        let previous = operations
+        let task = Task { @MainActor in
+            _ = await previous?.value
+            return try await operation()
+        }
+        operations = Task { @MainActor in
+            _ = try? await task.value
+        }
+        return try await task.value
+    }
 
     init(settings: SettingsStore, library: LibraryStore) {
         self.settings = settings
@@ -107,6 +135,12 @@ final class BangumiSyncEngine {
 
     /// 「测试连接 / 重试连接」。
     func ping() async {
+        await enqueue {
+            await self.performPing()
+        }
+    }
+
+    private func performPing() async {
         isConnecting = true
         lastError = nil
         defer { isConnecting = false }
@@ -126,34 +160,38 @@ final class BangumiSyncEngine {
     ///
     /// 只在验证通过之后才写进设置：写一个没被认过的令牌，等于替一个坏凭据担保。
     func saveToken(_ value: String) async throws {
-        let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty else { throw BangumiSyncError.emptyToken }
-        isConnecting = true
-        defer { isConnecting = false }
-        do {
-            let name = try await validateToken(token)
-            settings.bangumiAccessToken = token
-            settings.bangumiUsername = name
-            verifiedToken = token
-            username = name
-            lastError = nil
-        } catch {
-            if token == settings.bangumiAccessToken {
-                verifiedToken = nil
-                username = settings.bangumiUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-                lastError = Self.describeError(error)
+        try await enqueueThrowing {
+            let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !token.isEmpty else { throw BangumiSyncError.emptyToken }
+            self.isConnecting = true
+            defer { self.isConnecting = false }
+            do {
+                let name = try await self.validateToken(token)
+                self.settings.bangumiAccessToken = token
+                self.settings.bangumiUsername = name
+                self.verifiedToken = token
+                self.username = name
+                self.lastError = nil
+            } catch {
+                if token == self.settings.bangumiAccessToken {
+                    self.verifiedToken = nil
+                    self.username = self.settings.bangumiUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.lastError = Self.describeError(error)
+                }
+                throw error
             }
-            throw error
         }
     }
 
     /// 打开 / 关闭「自动同步追番」。打开时先验证一次，验证不过就不打开。
     func setEnabled(_ enabled: Bool) async {
-        if enabled {
-            await ping()
-            guard lastError == nil else { return }
+        await enqueue {
+            if enabled {
+                await self.performPing()
+                guard self.lastError == nil else { return }
+            }
+            self.settings.bangumiSyncEnable = enabled
         }
-        settings.bangumiSyncEnable = enabled
     }
 
     private func validateToken(_ raw: String) async throws -> String {
@@ -184,10 +222,22 @@ final class BangumiSyncEngine {
         allowWhenAutoSyncDisabled: Bool = false,
         onProgress: @escaping @Sendable @MainActor (String, Int, Int) -> Void
     ) async throws {
+        try await enqueueThrowing {
+            try await self.performSyncCollectibles(
+                allowWhenAutoSyncDisabled: allowWhenAutoSyncDisabled,
+                onProgress: onProgress
+            )
+        }
+    }
+
+    private func performSyncCollectibles(
+        allowWhenAutoSyncDisabled: Bool,
+        onProgress: @escaping @Sendable @MainActor (String, Int, Int) -> Void
+    ) async throws {
         if !allowWhenAutoSyncDisabled {
             guard settings.bangumiSyncEnable else { throw BangumiSyncError.syncDisabled }
         }
-        if !initialized { await ping() }
+        if !initialized { await performPing() }
         if let lastError { throw BangumiSyncError.failed(lastError) }
 
         onProgress(String(localized: "开始同步 Bangumi 状态"), 0, 0)
@@ -208,16 +258,13 @@ final class BangumiSyncEngine {
 
         var done = 0
         if !plan.localOnlyUploads.isEmpty {
-            onProgress(String(localized: "正在上传本地新增状态"), done, total)
-            for upload in plan.localOnlyUploads {
-                let ok = await BangumiAPI.updateCollection(
-                    subjectID: upload.subjectID,
-                    type: upload.type
-                )
-                guard ok else { throw BangumiSyncError.uploadFailed(upload.subjectID) }
-                done += 1
-                onProgress(String(localized: "正在上传本地新增状态"), done, total)
-            }
+            try await uploadBatch(
+                plan.localOnlyUploads,
+                stageTitle: String(localized: "正在上传本地新增状态"),
+                done: &done,
+                total: total,
+                onProgress: onProgress
+            )
         }
         if !plan.remoteOnlyPuts.isEmpty {
             onProgress(String(localized: "正在补全本地缺失状态"), done, total)
@@ -226,16 +273,13 @@ final class BangumiSyncEngine {
             onProgress(String(localized: "正在补全本地缺失状态"), done, total)
         }
         if !plan.conflictUploads.isEmpty {
-            onProgress(String(localized: "\(priority.label)：正在上传冲突状态"), done, total)
-            for upload in plan.conflictUploads {
-                let ok = await BangumiAPI.updateCollection(
-                    subjectID: upload.subjectID,
-                    type: upload.type
-                )
-                guard ok else { throw BangumiSyncError.uploadFailed(upload.subjectID) }
-                done += 1
-                onProgress(String(localized: "\(priority.label)：正在上传冲突状态"), done, total)
-            }
+            try await uploadBatch(
+                plan.conflictUploads,
+                stageTitle: String(localized: "\(priority.label)：正在上传冲突状态"),
+                done: &done,
+                total: total,
+                onProgress: onProgress
+            )
         }
         if !plan.conflictLocalUpdates.isEmpty {
             onProgress(String(localized: "\(priority.label)：正在更新本地冲突状态"), done, total)
@@ -246,25 +290,68 @@ final class BangumiSyncEngine {
         onProgress(String(localized: "Bangumi 状态同步完成"), 1, 1)
     }
 
+    /// 以有界并发（默认 3）批量上传追番状态，避免顺序等待拖慢同步且不触发远端限流。
+    private func uploadBatch(
+        _ uploads: [Upload],
+        stageTitle: String,
+        done: inout Int,
+        total: Int,
+        maxConcurrent: Int = 3,
+        onProgress: @escaping @Sendable @MainActor (String, Int, Int) -> Void
+    ) async throws {
+        guard !uploads.isEmpty else { return }
+        onProgress(stageTitle, done, total)
+        let limit = max(1, maxConcurrent)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            var iterator = uploads.makeIterator()
+            for _ in 0..<min(limit, uploads.count) {
+                if let upload = iterator.next() {
+                    group.addTask {
+                        let ok = await BangumiAPI.updateCollection(
+                            subjectID: upload.subjectID,
+                            type: upload.type
+                        )
+                        guard ok else { throw BangumiSyncError.uploadFailed(upload.subjectID) }
+                    }
+                }
+            }
+            while try await group.next() != nil {
+                done += 1
+                onProgress(stageTitle, done, total)
+                if let upload = iterator.next() {
+                    group.addTask {
+                        let ok = await BangumiAPI.updateCollection(
+                            subjectID: upload.subjectID,
+                            type: upload.type
+                        )
+                        guard ok else { throw BangumiSyncError.uploadFailed(upload.subjectID) }
+                    }
+                }
+            }
+        }
+    }
+
     /// 改了一条追番状态之后把这一条推上去（对应 syncCollectibleWhenIdle）。
     ///
     /// 返回 false 表示没推成功，并在 lastError 中记录具体失败原因，调用方据此展示提示。
     @discardableResult
     func pushCollectible(bangumiID: Int, type: CollectType) async -> Bool {
-        if !initialized { await ping() }
-        guard initialized else {
-            if lastError == nil {
-                lastError = String(localized: "未配置或未验证 Bangumi 账号")
+        await enqueue {
+            if !self.initialized { await self.performPing() }
+            guard self.initialized else {
+                if self.lastError == nil {
+                    self.lastError = String(localized: "未配置或未验证 Bangumi 账号")
+                }
+                return false
             }
-            return false
-        }
-        do {
-            try await BangumiAPI.updateCollectionThrows(subjectID: bangumiID, type: type)
-            lastError = nil
-            return true
-        } catch {
-            lastError = Self.describeError(error)
-            return false
+            do {
+                try await BangumiAPI.updateCollectionThrows(subjectID: bangumiID, type: type)
+                self.lastError = nil
+                return true
+            } catch {
+                self.lastError = Self.describeError(error)
+                return false
+            }
         }
     }
 
@@ -395,9 +482,14 @@ final class BangumiSyncEngine {
 
     private func applyMany(_ puts: [LocalPut]) {
         guard !puts.isEmpty else { return }
+        let existingByID = Dictionary(
+            library.entries.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var updatedEntries: [LibraryEntry] = []
+        updatedEntries.reserveCapacity(puts.count)
         for put in puts {
-            if var existing = library.entry(for: put.entry.id) {
+            if var existing = existingByID[put.entry.id] {
                 existing.type = put.entry.type
                 existing.updatedAt = put.entry.updatedAt
                 if existing.nameCn.isEmpty { existing.nameCn = put.entry.nameCn }

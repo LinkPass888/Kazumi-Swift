@@ -1137,24 +1137,44 @@ final class SettingsStore {
         set { defaults.set(newValue, forKey: SettingsKey.keyPrefix + SettingsKey.bangumiProgressQueue) }
     }
 
+    /// 屏蔽词缓存修订号：供 `@Observable` 追踪 `danmakuFilterRulesText` / `danmakuFilterRules` 变更。
+    private var danmakuFilterRulesRevision: Int = 0
+    @ObservationIgnored private var cachedDanmakuFilterRulesText: String?
+    @ObservationIgnored private var cachedDanmakuFilterRules: [String] = []
+
     /// 弹幕屏蔽词的原文（一条一行）。
     ///
     /// 这个键不在本类建模的属性里：屏蔽词页（DanmakuShieldScreen）自己按同一个
     /// 键名读写，WebDAV 同步也需要整串带出去，所以在这里开一个读写口，
     /// 让两处用同一份键名，避免再出现「写得进、读不出」的偏差。
     var danmakuFilterRulesText: String {
-        get { defaults.string(forKey: SettingsKey.keyPrefix + SettingsKey.danmakuFilterRules) ?? "" }
-        set { defaults.set(newValue, forKey: SettingsKey.keyPrefix + SettingsKey.danmakuFilterRules)
+        get {
+            _ = danmakuFilterRulesRevision
+            return defaults.string(forKey: SettingsKey.keyPrefix + SettingsKey.danmakuFilterRules) ?? ""
+        }
+        set {
+            defaults.set(newValue, forKey: SettingsKey.keyPrefix + SettingsKey.danmakuFilterRules)
+            cachedDanmakuFilterRulesText = nil
+            danmakuFilterRulesRevision &+= 1
             // 改完就来一条通知：同步那边防抖 500ms 后上传（原版的时机）。
             NotificationCenter.default.post(name: .kazumiDanmakuRulesChanged, object: nil)
         }
     }
 
     var danmakuFilterRules: [String] {
-        danmakuFilterRulesText
+        // 先触达被观察属性 `danmakuFilterRulesText`，保证 SwiftUI 正确订阅变更，
+        // 同时兼容外部直接写 UserDefaults 的路径。
+        let text = danmakuFilterRulesText
+        if cachedDanmakuFilterRulesText == text {
+            return cachedDanmakuFilterRules
+        }
+        let parsed = text
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+        cachedDanmakuFilterRulesText = text
+        cachedDanmakuFilterRules = parsed
+        return parsed
     }
 
     /// 已落盘的设置快照：键名（去掉前缀）-> 值。
@@ -1182,6 +1202,10 @@ final class SettingsStore {
     func persistRawSetting(_ value: JSONValue, forKey key: String) -> Bool {
         guard let stored = Self.storedValue(from: value) else { return false }
         defaults.set(stored, forKey: SettingsKey.keyPrefix + key)
+        if key == SettingsKey.danmakuFilterRules {
+            cachedDanmakuFilterRulesText = nil
+            danmakuFilterRulesRevision &+= 1
+        }
         return true
     }
 
