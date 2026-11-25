@@ -71,6 +71,28 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
         }
     }
 
+    /// 上一次已触发 VO 重建时的物理 drawable 尺寸：避免转屏途中连续重建多次 VO。
+    private var committedDrawableSize: CGSize = .zero
+    /// 尺寸稳定后去抖重配视频输出（180ms），确保转屏过渡完成后仅重建 1 次。
+    private var pendingSizeCommit: Task<Void, Never>?
+
+    private func scheduleSizeCommit() {
+        pendingSizeCommit?.cancel()
+        pendingSizeCommit = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard let self, !Task.isCancelled else { return }
+            self.pendingSizeCommit = nil
+            self.metalView.setNeedsLayout()
+            self.metalView.updateDrawableSize()
+            let targetDrawableSize = self.metalView.metalLayer.drawableSize
+            guard targetDrawableSize.width > 1, targetDrawableSize.height > 1 else { return }
+            guard targetDrawableSize != self.committedDrawableSize else { return }
+            guard self.videoSize.width > 0, self.videoSize.height > 0 else { return }
+            self.committedDrawableSize = targetDrawableSize
+            self.engine?.reconfigureVideoOutputForSurfaceResize()
+        }
+    }
+
     /// 更新视频矩形所需的三样东西；真正的尺寸在 layoutSubviews 里按当前 bounds 算。
     func updateVideoLayout(
         videoSize: CGSize,
@@ -90,6 +112,10 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
         if geometryChanged {
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
+            if videoSize.width > 0, videoSize.height > 0,
+               metalView.metalLayer.drawableSize != committedDrawableSize {
+                scheduleSizeCommit()
+            }
         }
     }
 
@@ -114,11 +140,9 @@ final class MPVHostView: UIView, UIPointerInteractionDelegate {
             lastLayoutSize = bounds.size
             metalView.setNeedsLayout()
             metalView.updateDrawableSize()
-            // 还没拿到这一集的画面尺寸（起播 / 换集中）时不要重建 VO：
-            // 这时 drawable 只是在跟着转屏变，旧画面不该被当成新尺寸去重配。
-            if videoSize.width > 0, videoSize.height > 0 {
-                engine?.reconfigureVideoOutputForSurfaceResize()
-            }
+            // 转屏途中 bounds 会连续抖动多次；仅在尺寸稳定后去抖 180ms 重建 1 次 VO，
+            // 消除连建多次 swapchain 造成的卡顿与闪屏。
+            scheduleSizeCommit()
         }
         let rect = fillMode.videoRect(in: bounds, videoSize: videoSize)
         // 顶部按宿主视图坐标系内顶栏实际侵入视频矩形的深度（`max(0, danmakuTopInset - rect.minY)`）扣减；
@@ -199,15 +223,19 @@ struct MPVPlayerContainer: UIViewRepresentable {
         engine.hardwareDecodeMode = hardwareDecodeMode
         engine.backgroundAutoPiPEnabled = backgroundAutoPiP
         // 播到一半 Wi-Fi 换成移动数据（或反过来）时，缓存档位要跟着换，不用重开这一集。
-        // 「跟随网络」这一档在两种网络下取的值不一样，靠这个回调补上。
-        MeteredNetworkMonitor.shared.onChange = { [engine, mode = lowMemoryMode, isLocal = url.isFileURL] in
+        // 「跟随网络」这一档在两种网络下取的值不一样，经多实例分发表弱引用订阅，避免强捕获与互相覆盖。
+        context.coordinator.lowMemoryMode = lowMemoryMode
+        context.coordinator.isLocalPlayback = url.isFileURL
+        context.coordinator.meteredNetworkObserverToken = MeteredNetworkObserverHub.register { [weak engine, weak coordinator = context.coordinator] in
+            guard let engine, let coordinator else { return false }
             engine.applyCacheSize(
                 PlaybackCachePolicy.bytes(
-                    mode: mode,
+                    mode: coordinator.lowMemoryMode,
                     isMetered: MeteredNetworkMonitor.shared.isMetered,
-                    isLocalPlayback: isLocal
+                    isLocalPlayback: coordinator.isLocalPlayback
                 )
             )
+            return true
         }
         engine.onSnapshot = { [weak surface] snapshot in
             surface?.handle(snapshot: snapshot)
@@ -257,6 +285,8 @@ struct MPVPlayerContainer: UIViewRepresentable {
 
     func updateUIView(_ uiView: MPVHostView, context: Context) {
         context.coordinator.surface = surface
+        context.coordinator.lowMemoryMode = lowMemoryMode
+        context.coordinator.isLocalPlayback = url.isFileURL
         surface.attach(engine: context.coordinator.engine)
         // 设置页改了档位、或者网络在 Wi-Fi 和移动数据之间换了，这一集当场换缓存大小，
         // 不用重开（main 的 `_onChanged` 也是立刻 apply）。
@@ -294,8 +324,47 @@ struct MPVPlayerContainer: UIViewRepresentable {
         coordinator.surface?.attach(engine: nil)
         coordinator.engine?.stop()
         coordinator.engine = nil
-        // 播放器没了就别再把回调挂在单例上。
-        MeteredNetworkMonitor.shared.onChange = nil
+        // 仅注销当前实例的订阅，不影响仍在活跃的其他播放器实例。
+        if let token = coordinator.meteredNetworkObserverToken {
+            MeteredNetworkObserverHub.unregister(token)
+            coordinator.meteredNetworkObserverToken = nil
+        }
+    }
+
+    @MainActor
+    private enum MeteredNetworkObserverHub {
+        private static var observers: [UUID: () -> Bool] = [:]
+
+        static func register(_ handler: @escaping () -> Bool) -> UUID {
+            let token = UUID()
+            observers[token] = handler
+            syncMonitorHandler()
+            return token
+        }
+
+        static func unregister(_ token: UUID) {
+            observers.removeValue(forKey: token)
+            syncMonitorHandler()
+        }
+
+        private static func syncMonitorHandler() {
+            if observers.isEmpty {
+                MeteredNetworkMonitor.shared.onChange = nil
+            } else if MeteredNetworkMonitor.shared.onChange == nil {
+                MeteredNetworkMonitor.shared.onChange = {
+                    let tokens = Array(observers.keys)
+                    for token in tokens {
+                        guard let handler = observers[token] else { continue }
+                        if !handler() {
+                            observers.removeValue(forKey: token)
+                        }
+                    }
+                    if observers.isEmpty {
+                        MeteredNetworkMonitor.shared.onChange = nil
+                    }
+                }
+            }
+        }
     }
 
     @MainActor
@@ -303,6 +372,9 @@ struct MPVPlayerContainer: UIViewRepresentable {
         weak var surface: PlayerSurfaceModel?
         weak var overlay: DanmakuOverlayView?
         var engine: MPVEngine?
+        var meteredNetworkObserverToken: UUID?
+        var lowMemoryMode: LowMemoryMode = .auto
+        var isLocalPlayback = false
 
         private var lastRequest: MPVPlaybackRequest?
         private var lastLoadedURL: URL?

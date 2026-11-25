@@ -18,17 +18,20 @@ import UIKit
 struct CommentBodyView: View {
     let text: String
 
+    /// 预解析后的正文块与图片列表，避免 `body` 重复解析 BBCode。
+    private let blocks: [CommentBlock]
+    private let images: [String]
+
     /// 点开的图。为空表示没在看大图。
     @State private var viewer: CommentImageViewerTarget?
     /// 这一块的宽度，图片按它算高。
     @State private var contentWidth: CGFloat = 0
 
-    private var blocks: [CommentBlock] {
-        CommentBlock.blocks(from: CommentSegment.parse(text))
-    }
-
-    private var images: [String] {
-        blocks.flatMap { block in
+    init(text: String) {
+        self.text = text
+        let parsedBlocks = CommentBlock.blocks(from: CommentSegment.parse(text))
+        self.blocks = parsedBlocks
+        self.images = parsedBlocks.flatMap { block in
             if case .images(let urls) = block { return urls }
             return []
         }
@@ -139,37 +142,62 @@ private struct CommentImageRow: View {
 private struct CommentRichText: View {
     let text: String
 
-    @State private var frames: [String: [UIImage]] = [:]
-    /// 动态表情按帧换图用；每 100ms 加一。
-    @State private var tick = 0
+    /// 在 `init` 中一次性预解析 BBCode runs、分词结果与表情码，消除 `body` 多次重复解析。
+    private let runs: [CommentMarkup.Run]
+    private let tokensPerRun: [[CommentToken]]
+    private let codes: [String]
+    private let codesKey: String
 
-    private var runs: [CommentMarkup.Run] {
-        CommentMarkup.runs(text)
-    }
+    @State private var frames: [String: [UIImage]] = [:]
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private var codes: [String] {
-        runs.flatMap { run in
-            CommentToken.parse(run.text).compactMap { token in
-                if case .emoticon(let code) = token { return code }
-                return nil
+    init(text: String) {
+        self.text = text
+        let parsedRuns = CommentMarkup.runs(text)
+        self.runs = parsedRuns
+        let parsedTokens = parsedRuns.map { CommentToken.parse($0.text) }
+        self.tokensPerRun = parsedTokens
+        var seen: Set<String> = []
+        var uniqueCodes: [String] = []
+        for tokens in parsedTokens {
+            for token in tokens {
+                if case .emoticon(let code) = token, seen.insert(code).inserted {
+                    uniqueCodes.append(code)
+                }
             }
         }
+        self.codes = uniqueCodes
+        self.codesKey = uniqueCodes.joined(separator: ",")
+    }
+
+    private var hasAnimatedEmoticons: Bool {
+        frames.values.contains { $0.count > 1 }
     }
 
     var body: some View {
-        composed
+        content
             .fixedSize(horizontal: false, vertical: true)
-            .task(id: codes.joined(separator: ",")) {
+            .task(id: codesKey) {
+                guard !codes.isEmpty else { return }
                 await loadEmoticons()
-            }
-            .task {
-                await animateEmoticons()
             }
     }
 
-    private var composed: Text {
+    /// 仅当表情中存在多帧动图（`count > 1`）时启用共享周期时钟；纯文字与静态表情不常驻轮询任务。
+    @ViewBuilder
+    private var content: some View {
+        if hasAnimatedEmoticons {
+            TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                let tick = max(0, Int(context.date.timeIntervalSinceReferenceDate * 10))
+                composed(tick: tick)
+            }
+        } else {
+            composed(tick: 0)
+        }
+    }
+
+    private func composed(tick: Int) -> Text {
         // 链接的可点性很挑：整段必须是一个 AttributedString、外层不能再加 `.font()`，
         // 否则链接点不动（LP 3361）。所以没有表情的段落走整段那版；
         // 有表情的才拼接（表情只能用 Text(Image) 拼），字号在外层给。
@@ -177,8 +205,8 @@ private struct CommentRichText: View {
             return Text(wholeParagraph)
         }
         var result = Text("")
-        for run in runs {
-            for token in CommentToken.parse(run.text) {
+        for (run, tokens) in zip(runs, tokensPerRun) {
+            for token in tokens {
                 switch token {
                 case .text(let value):
                     // iOS 26 弃用了 `Text + Text`，改用插值拼接（各段样式照旧各自保留）。
@@ -239,38 +267,64 @@ private struct CommentRichText: View {
         }
     }
 
-    /// 有动态表情在屏上才按帧刷，静态表情不动，省得白白重画。
-    private func animateEmoticons() async {
-        while !Task.isCancelled {
-            let animated = frames.values.contains { $0.count > 1 }
-            if animated { tick &+= 1 }
-            try? await Task.sleep(for: .milliseconds(animated ? 100 : 800))
-        }
-    }
 }
 
-/// 表情图：一次取回、解成每一帧、缩到正文那行字的高度，之后都走缓存。
+/// 表情图：一次取回、后台解码并缩到正文那行字的高度，之后走有界内存缓存与并发去重。
 /// 动态表情（`musume_67` 这种）必须真动，所以留的是帧列表，不是一张静图。
 @MainActor
 enum EmoticonStore {
-    private static var cache: [String: [UIImage]] = [:]
+    private final class FramesBox {
+        let frames: [UIImage]
+
+        init(_ frames: [UIImage]) {
+            self.frames = frames
+        }
+    }
+
+    private static let cache: NSCache<NSString, FramesBox> = {
+        let cache = NSCache<NSString, FramesBox>()
+        cache.countLimit = 128
+        return cache
+    }()
+
+    private static var inFlight: [String: Task<[UIImage], Never>] = [:]
 
     static func frames(for code: String) async -> [UIImage] {
-        if let hit = cache[code] { return hit }
+        let key = code as NSString
+        if let hit = cache.object(forKey: key) {
+            return hit.frames
+        }
+        if let existing = inFlight[code] {
+            return await existing.value
+        }
         guard let text = CommentToken.emoticonURL(for: code), let url = URL(string: text) else {
             return []
         }
-        guard let (data, _) = try? await KazumiNetworkPolicy.requestSession.session.data(from: url) else { return [] }
-        let images = decode(data)
-        if !images.isEmpty { cache[code] = images }
+        let task = Task<[UIImage], Never> {
+            guard let (data, _) = try? await KazumiNetworkPolicy.requestSession.session.data(from: url) else {
+                return []
+            }
+            return await Task.detached(priority: .utility) {
+                Self.decode(data)
+            }.value
+        }
+        inFlight[code] = task
+        let images = await task.value
+        if inFlight[code] == task {
+            inFlight.removeValue(forKey: code)
+        }
+        if !images.isEmpty {
+            cache.setObject(FramesBox(images), forKey: key)
+        }
         return images
     }
 
-    /// 按 GIF 的每一帧解开；不是动图就是一张。
-    private static func decode(_ data: Data) -> [UIImage] {
+    /// 按 GIF 的每一帧在后台解开；不是动图就是一张。
+    private nonisolated static func decode(_ data: Data) -> [UIImage] {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return [] }
         let count = CGImageSourceGetCount(source)
         var images: [UIImage] = []
+        images.reserveCapacity(max(count, 1))
         for index in 0 ..< max(count, 1) {
             guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
             images.append(scaled(UIImage(cgImage: cgImage)))
@@ -282,12 +336,12 @@ enum EmoticonStore {
     }
 
     /// 表情原图大小不一，统一缩到跟正文那行字差不多高，排进去才齐。
-    private static func scaled(_ image: UIImage) -> UIImage {
+    private nonisolated static func scaled(_ image: UIImage) -> UIImage {
         let targetHeight: CGFloat = 18
         guard image.size.height > 0 else { return image }
         let scale = targetHeight / image.size.height
         let size = CGSize(width: max(image.size.width * scale, 1), height: targetHeight)
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: size))

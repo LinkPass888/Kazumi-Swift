@@ -71,20 +71,24 @@ final class PluginsController {
     private static let catalogMaxAge: TimeInterval = 5 * 60
     private static let maxConcurrentRuleDownloads = 4
 
-    private(set) var pluginList: [Plugin] = []
+    private(set) var pluginList: [Plugin] = [] {
+        didSet { rebuildPluginsIndex() }
+    }
     private(set) var pluginHTTPList: [PluginHTTPItem] = []
     let validityTracker = PluginValidityTracker()
 
+    @ObservationIgnored private var pluginsByName: [String: Plugin] = [:]
     private var catalogByName: [String: PluginHTTPItem] = [:]
     private var catalogRefreshedAt: Date?
     private var catalogSource: String?
-    private var isRefreshInFlight = false
+    @ObservationIgnored private var inFlightCatalogTask: Task<[PluginHTTPItem], Error>?
+    @ObservationIgnored private var inFlightCatalogSource: String?
 
     private let fileURL: URL
     private let catalogLoader: CatalogLoader
     private let pluginLoader: PluginLoader
     private let errorReporter: @Sendable (String, Error) -> Void
-    private var mutations: Task<Void, Never> = Task {}
+    @ObservationIgnored private var mutations: Task<Void, Never> = Task {}
 
     init(
         fileURL: URL = PluginsController.defaultFileURL,
@@ -155,14 +159,16 @@ final class PluginsController {
         guard !migrated.isEmpty else { return }
         let legacyURLs = migratedURLs
         pluginList = migrated
+        let snapshot = migrated
+        let targetURL = fileURL
         mutations = Task { @MainActor [weak self] in
             guard let self else { return }
-            do {
-                try self.persist()
+            switch await Self.writeInBackground(snapshot, to: targetURL) {
+            case .success:
                 for url in legacyURLs {
                     try? FileManager.default.removeItem(at: url)
                 }
-            } catch {
+            case .failure(let error):
                 self.errorReporter("Plugin: failed to persist migrated rules", error)
             }
         }
@@ -170,9 +176,22 @@ final class PluginsController {
 
     // MARK: - 查询
 
+    private func rebuildPluginsIndex() {
+        var index: [String: Plugin] = [:]
+        index.reserveCapacity(pluginList.count)
+        for plugin in pluginList {
+            let key = pluginNameKey(plugin.name)
+            if index[key] == nil {
+                index[key] = plugin
+            }
+        }
+        pluginsByName = index
+    }
+
     func plugin(named name: String) -> Plugin? {
-        let key = pluginNameKey(name)
-        return pluginList.first { pluginNameKey($0.name) == key }
+        // 先触达被观察属性，确保 SwiftUI 视图对 pluginList 的观察依赖不会因走索引而丢失。
+        _ = pluginList
+        return pluginsByName[pluginNameKey(name)]
     }
 
     func isInstalled(_ name: String) -> Bool {
@@ -251,12 +270,7 @@ final class PluginsController {
             try await enqueue {
                 let snapshotToWrite = self.pluginList
                 let targetURL = self.fileURL
-                do {
-                    try Self.write(snapshotToWrite, to: targetURL)
-                    return .success(())
-                } catch {
-                    return .failure(error)
-                }
+                return await Self.writeInBackground(snapshotToWrite, to: targetURL)
             }
         } catch {
             if revision == reorderRevision { pluginList = previous }
@@ -276,21 +290,20 @@ final class PluginsController {
         }
     }
 
-    /// 所有变更的统一入口：串行执行 body → 写盘 → 失败回滚内存状态。
+    /// 所有变更的统一入口：串行执行 body → 后台写盘 → 失败回滚内存状态。
     private func mutate(_ errorMessage: String, _ body: @escaping @Sendable @MainActor () -> Void) async throws {
         try await enqueue {
-            // 队列 task 本身就在主 actor 上，可直接读写内存状态。
+            // 队列 task 本身就在主 actor 上，可直接读写内存状态；写盘本身卸载到后台执行。
             let previous = self.pluginList
             body()
             let snapshot = self.pluginList
-            do {
-                try Self.write(snapshot, to: self.fileURL)
-                return .success(())
-            } catch {
+            let targetURL = self.fileURL
+            let result = await Self.writeInBackground(snapshot, to: targetURL)
+            if case .failure(let error) = result {
                 self.pluginList = previous
                 self.errorReporter(errorMessage, error)
-                return .failure(error)
             }
+            return result
         }
     }
 
@@ -310,9 +323,24 @@ final class PluginsController {
         try await task.value.get()
     }
 
-    /// 写盘只剩纯 IO，因此不要求 actor 隔离，可安全地在 @Sendable 闭包里调用。
+    /// 将 JSON 序列化与原子写盘移至后台 utility 优先级任务，避免阻塞主线程。
+    nonisolated private static func writeInBackground(
+        _ plugins: [Plugin],
+        to fileURL: URL
+    ) async -> Result<Void, Error> {
+        await Task.detached(priority: .utility) {
+            do {
+                try Self.write(plugins, to: fileURL)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }.value
+    }
+
+    /// 写盘只剩纯 IO，因此不要求 actor 隔离，可安全地在后台任务里调用。
     @discardableResult
-    private static func write(_ plugins: [Plugin], to fileURL: URL) throws -> URL {
+    nonisolated private static func write(_ plugins: [Plugin], to fileURL: URL) throws -> URL {
         let payload = JSONValue.array(plugins.map { $0.toJSON() })
         let text = payload.serialized(pretty: false)
         let directory = fileURL.deletingLastPathComponent()
@@ -330,37 +358,43 @@ final class PluginsController {
     // MARK: - 规则目录
 
     func refreshPluginCatalog() async throws -> [PluginHTTPItem] {
-        if isRefreshInFlight {
+        let currentSource = KazumiEndpoints.pluginShopIndex
+        if let existing = inFlightCatalogTask {
             // 单飞：仓库没变就复用；仓库变了则等旧请求结束后再拉新地址。
-            while isRefreshInFlight {
-                try await Task.sleep(for: .milliseconds(50))
+            if inFlightCatalogSource == currentSource {
+                return try await existing.value
             }
-            if catalogSource == KazumiEndpoints.pluginShopIndex {
-                return pluginHTTPList
-            }
+            _ = try? await existing.value
             return try await refreshPluginCatalog()
         }
-        let source = KazumiEndpoints.pluginShopIndex
-        isRefreshInFlight = true
-        do {
-            let catalog = try await catalogLoader()
-            isRefreshInFlight = false
-            guard source == KazumiEndpoints.pluginShopIndex else {
-                return try await refreshPluginCatalog()
+        let source = currentSource
+        let loader = catalogLoader
+        let task = Task<[PluginHTTPItem], Error> { @MainActor in
+            do {
+                let catalog = try await loader()
+                self.inFlightCatalogTask = nil
+                self.inFlightCatalogSource = nil
+                guard source == KazumiEndpoints.pluginShopIndex else {
+                    return try await self.refreshPluginCatalog()
+                }
+                self.catalogByName = Dictionary(
+                    catalog.map { (pluginNameKey($0.name), $0) },
+                    uniquingKeysWith: { _, latest in latest }
+                )
+                self.pluginHTTPList = catalog
+                self.catalogRefreshedAt = Date()
+                self.catalogSource = source
+                return catalog
+            } catch {
+                self.inFlightCatalogTask = nil
+                self.inFlightCatalogSource = nil
+                self.errorReporter("Plugin: failed to refresh rule catalog", error)
+                throw error
             }
-            catalogByName = Dictionary(
-                catalog.map { (pluginNameKey($0.name), $0) },
-                uniquingKeysWith: { _, latest in latest }
-            )
-            pluginHTTPList = catalog
-            catalogRefreshedAt = Date()
-            catalogSource = source
-            return catalog
-        } catch {
-            isRefreshInFlight = false
-            errorReporter("Plugin: failed to refresh rule catalog", error)
-            throw error
         }
+        inFlightCatalogTask = task
+        inFlightCatalogSource = source
+        return try await task.value
     }
 
     func ensurePluginCatalog() async throws -> [PluginHTTPItem] {
@@ -476,33 +510,40 @@ final class PluginsController {
 
     private func prepareUpdates(names: [String]) async -> [UpdateAttempt] {
         guard !names.isEmpty else { return [] }
-        let batchSize = Self.maxConcurrentRuleDownloads
-        var results = [UpdateAttempt?](repeating: nil, count: names.count)
-        var start = 0
-        while start < names.count {
-            let end = min(start + batchSize, names.count)
-            // 每批内部并发，批与批之间串行，保证同时最多 4 个下载。
-            // 注意：不能在 addTask 闭包里写 `@MainActor in`，Swift 6 的
-            // region-based isolation 检查器无法分析这种写法（会直接报错），
-            // 因此改成在子任务内 await 主 actor 上的方法。
-            let batch = await withTaskGroup(of: (Int, UpdateAttempt).self) { group in
-                for index in start..<end {
+        let maxConcurrent = Self.maxConcurrentRuleDownloads
+        // 滑动窗口并发池：同时最多 4 个下载，任一完成即补入下一个，避免批次尾延迟。
+        // 注意：不能在 addTask 闭包里写 `@MainActor in`，Swift 6 的
+        // region-based isolation 检查器无法分析这种写法（会直接报错），
+        // 因此改成在子任务内 await 主 actor 上的方法。
+        return await withTaskGroup(of: (Int, UpdateAttempt).self) { group in
+            var results = [UpdateAttempt?](repeating: nil, count: names.count)
+            var nextIndex = 0
+            var inFlight = 0
+
+            while nextIndex < names.count, inFlight < maxConcurrent {
+                let index = nextIndex
+                nextIndex += 1
+                inFlight += 1
+                group.addTask {
+                    (index, await self.prepareUpdate(index: index, names: names))
+                }
+            }
+
+            while inFlight > 0 {
+                if let (index, attempt) = await group.next() {
+                    results[index] = attempt
+                }
+                inFlight -= 1
+                if nextIndex < names.count {
+                    let index = nextIndex
+                    nextIndex += 1
+                    inFlight += 1
                     group.addTask {
                         (index, await self.prepareUpdate(index: index, names: names))
                     }
                 }
-                var collected: [(Int, UpdateAttempt)] = []
-                collected.reserveCapacity(end - start)
-                for await item in group {
-                    collected.append(item)
-                }
-                return collected
             }
-            for (index, attempt) in batch {
-                results[index] = attempt
-            }
-            start = end
+            return results.compactMap { $0 }
         }
-        return results.compactMap { $0 }
     }
 }

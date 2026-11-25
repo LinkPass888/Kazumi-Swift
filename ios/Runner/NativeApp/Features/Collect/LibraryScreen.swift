@@ -45,8 +45,8 @@ struct LibraryScreen: View {
     @State private var updateTimes: [Int: Date] = [:]
     /// 季度时刻表是否已经跑完一轮。没跑完之前先按「最近变更」排，不转圈。
     @State private var updateTimesLoaded = false
-    /// 网格封面按左到右、上到下完成一次回源后递增，让对应卡片重新查缓存。
-    @State private var coverLoadRevision = 0
+    /// 可视区之后 15 张封面的可取消预取任务。
+    @State private var coverPrefetchTask: Task<Void, Never>?
 
     @FocusState private var searchFocused: Bool
 
@@ -148,7 +148,8 @@ struct LibraryScreen: View {
     }
 
     private var pageBody: some View {
-        content
+        let entries = filteredEntries
+        return content(entries)
             // 只量视口尺寸（宽档分档要用高度）：网格的左右内边距各 16，减掉就是可用内容宽。
             // 这颗探针必须在 ScrollView 外面，理由见 content 里那段注释。
             // LP 2026-10-24（后一条）：追番页整体上移到原来的高度——不用系统大标题了，
@@ -157,7 +158,7 @@ struct LibraryScreen: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     header
-                    controlBar
+                    controlBar(count: entries.count)
                 }
                 .background(
                     KazumiPalette.background(for: colorScheme),
@@ -171,8 +172,9 @@ struct LibraryScreen: View {
             .task {
                 sort = CollectSort(rawValue: settings.librarySort) ?? .updateTime
             }
-            .task(id: coverLoadKey) {
-                await loadLibraryCovers()
+            .onDisappear {
+                coverPrefetchTask?.cancel()
+                coverPrefetchTask = nil
             }
             // 追番条目变化时补齐时刻表：新加入「在看」的番也要拿到时刻。
             .task(id: library.watchingEntries.map(\.id)) {
@@ -218,13 +220,13 @@ struct LibraryScreen: View {
 
     /// 一行控制条：分类菜单 ＋ 排序菜单 ＋ 部数，右侧搜索。
     /// 搜索展开时两个菜单和部数从布局里移除（不是盖住），整行高度不变。
-    private var controlBar: some View {
+    private func controlBar(count: Int) -> some View {
         Group {
             if isSearching {
                 searchRow
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             } else {
-                defaultRow
+                defaultRow(count: count)
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
         }
@@ -236,7 +238,7 @@ struct LibraryScreen: View {
         // Colo 2550 提过底边留 −4 收回多出的那点，LP 2556 看了说不好看，回退成 0。
     }
 
-    private var defaultRow: some View {
+    private func defaultRow(count: Int) -> some View {
         // 一行放得下就一行；放不下（最大字号下这四样加起来 504，比 370 宽）
         // 就折成两行：筛选＋排序一行，部数＋搜索一行。
         // 顶栏不能靠缩网格救——网格缩到一列，这一行照样出界（Colo 2026-10-24 实测）。
@@ -249,7 +251,7 @@ struct LibraryScreen: View {
             HStack(spacing: 6) {
                 categoryMenu
                 sortMenu
-                categoryCount
+                categoryCount(count)
 
                 Spacer(minLength: 0)
 
@@ -265,7 +267,7 @@ struct LibraryScreen: View {
                     sortMenu
                 }
                 HStack(spacing: 8) {
-                    categoryCount
+                    categoryCount(count)
                     Spacer(minLength: 0)
                     searchIconButton
                     syncButton
@@ -350,9 +352,8 @@ struct LibraryScreen: View {
     }
 
     /// 当前筛选结果的部数；搜索时跟着筛后条数走。
-    private var categoryCount: some View {
-        let total = filteredEntries.count
-        return Text(String(localized: "\(String(describing: total)) 部"))
+    private func categoryCount(_ total: Int) -> some View {
+        Text(String(localized: "\(String(describing: total)) 部"))
             .font(.footnote)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -587,13 +588,8 @@ struct LibraryScreen: View {
     /// 拉不到数据就保持空表 —— 调用方已经先用「最近变更」排好了，不转圈。
     private func loadUpdateTimes() async {
         let entries = library.watchingEntries
-        for entry in entries {
-            await BangumiAirTimeService.shared.ensureLoaded(
-                subjectID: entry.id,
-                airDate: entry.airDate
-            )
-            if Task.isCancelled { return }
-        }
+        await BangumiAirTimeService.shared.ensureLoaded(entries: entries)
+        if Task.isCancelled { return }
         let times = makeUpdateTimes(for: entries)
         updateTimes = times
         // 一部时刻都没拿到（季度 JSON 没到 / 没有匹配项）时继续按最近变更排，
@@ -677,8 +673,8 @@ struct LibraryScreen: View {
 
     // MARK: - 列表
 
-    private var content: some View {
-        contentBody
+    private func content(_ entries: [LibraryEntry]) -> some View {
+        contentBody(entries)
             // LP 3462／Colo 3463：两处并存——标题区那块是主要的，列表里的空白和
             // 行间隙碰到也关。卡片自己的 onTapGesture 更具体，照旧进详情。
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -690,8 +686,8 @@ struct LibraryScreen: View {
     }
 
     @ViewBuilder
-    private var contentBody: some View {
-        if filteredEntries.isEmpty {
+    private func contentBody(_ entries: [LibraryEntry]) -> some View {
+        if entries.isEmpty {
             if !trimmedQuery.isEmpty {
                 searchEmptyState
             } else {
@@ -710,17 +706,19 @@ struct LibraryScreen: View {
                         columns: gridColumns(width: libraryContentWidth),
                         spacing: 14
                     ) {
-                        ForEach(filteredEntries) { entry in
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                             LibraryPosterCard(
                                 entry: entry,
                                 isPending: pendingID == entry.id,
-                                coverReloadToken: coverLoadRevision,
                                 zoomNamespace: zoomNamespace,
                                 onOpen: { router.push(.bangumiInfo(bangumiID: entry.id)) },
                                 onChangeType: { type in changeType(entry, to: type) }
                             )
                             // 取消追番时这张卡淡出并缩到 0.92，其余卡片靠同一次动画补位。
                             .transition(cardRemovalTransition)
+                            .onAppear {
+                                schedulePrefetchAhead(from: index, in: entries)
+                            }
                         }
                     }
                     .padding(.horizontal, 16)
@@ -785,6 +783,12 @@ struct LibraryScreen: View {
         // 没开就是纯本地改动，和以前一模一样。
         guard settings.bangumiSyncEnable else {
             commitType(entry, to: type)
+            return
+        }
+        // Bangumi 接口不支持在 App 内取消追番：本地直接落到未追，不回滚，并提示用户去网站删除。
+        if type == .none {
+            commitType(entry, to: .none)
+            toastMessage = String(localized: "Bangumi 不支持在 App 内取消追番，请到网站删除")
             return
         }
         pendingID = entry.id
@@ -863,34 +867,16 @@ struct LibraryScreen: View {
             )
     }
 
-    /// 追番页封面并发按可视区加载；加载完成后统一通知卡片刷新，避免逐张刷 revision 导致网格反复重绘（P2 优化）。
-    private func loadLibraryCovers() async {
+    /// 对当前卡片之后的 15 张封面发起可取消预取，可视区卡片自身按需加载。
+    private func schedulePrefetchAhead(from index: Int, in entries: [LibraryEntry]) {
         guard libraryContainerSize.width > 0 else { return }
-        let pixelSize = libraryCoverPixelSize
-        let uncached = filteredEntries.map(\.imageURL).filter {
-            !$0.isEmpty && KazumiImageLoader.shared.cachedImage(for: $0, pixelSize: pixelSize) == nil
-        }
-        guard !uncached.isEmpty else { return }
-        await withTaskGroup(of: Void.self) { group in
-            var active = 0
-            for url in uncached {
-                if active >= 6 {
-                    _ = await group.next()
-                    active -= 1
-                }
-                guard !Task.isCancelled else { break }
-                active += 1
-                group.addTask {
-                    _ = await KazumiImageLoader.shared.load(url, pixelSize: pixelSize)
-                }
-            }
-        }
-        guard !Task.isCancelled else { return }
-        coverLoadRevision &+= 1
-    }
-
-    private var coverLoadKey: [String] {
-        ["px:\(libraryCoverPixelSize)"] + filteredEntries.map { "\($0.id)|\($0.imageURL)" }
+        let start = index + 1
+        guard start < entries.count else { return }
+        let end = min(entries.count, start + 15)
+        let urls = entries[start..<end].map(\.imageURL).filter { !$0.isEmpty }
+        guard !urls.isEmpty else { return }
+        coverPrefetchTask?.cancel()
+        coverPrefetchTask = KazumiImageLoader.shared.prefetch(urls, pixelSize: libraryCoverPixelSize)
     }
 
     private var libraryCoverPixelSize: Int {

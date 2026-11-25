@@ -20,7 +20,6 @@
 
 import Foundation
 
-@MainActor
 enum WebDAVSync {
     enum Content: String, CaseIterable, Sendable {
         case history
@@ -71,7 +70,24 @@ enum WebDAVSync {
         var total: Int
     }
 
+    private struct LocalSnapshot: Sendable {
+        let webDAVURL: String
+        let client: WebDAVClient
+        let localRules: String
+        let deviceID: String
+        let localHistory: [WatchRecord]
+        let localEntries: [LibraryEntry]
+        let localRemovals: [RemovedEntry]
+    }
+
+    private enum RemoteDownloadResult: Sendable {
+        case payload(WebDAVClient.Payload?)
+        case emptyBackup
+        case failure(Error)
+    }
+
     /// 这台机器上被打开的内容。
+    @MainActor
     static func enabledContents(_ settings: SettingsStore) -> [Content] {
         var contents: [Content] = []
         if settings.webDavEnableHistory { contents.append(.history) }
@@ -81,38 +97,92 @@ enum WebDAVSync {
     }
 
     /// 合并一轮：读云盘 → 逐类合并 → 写回 → 只把开着的那几类落到本机。
+    ///
+    /// 网络 I/O、JSON 编解码与集合合并均在后台并发执行器中完成，仅在读取初始快照、
+    /// 回调 UI 进度与写回本机 `LibraryStore`/`SettingsStore` 时切回 `@MainActor`。
     static func sync(
         _ contents: [Content],
         settings: SettingsStore,
         library: LibraryStore,
-        progress: (@MainActor (ProgressEvent) -> Void)? = nil
+        progress: (@MainActor @Sendable (ProgressEvent) -> Void)? = nil
     ) async -> Outcome {
         guard !contents.isEmpty else {
             return Outcome(ok: true, message: "", log: "")
         }
-        guard !settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+
+        let snapshot: LocalSnapshot = await MainActor.run {
+            LocalSnapshot(
+                webDAVURL: settings.webDAVURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                client: WebDAVClient(settings: settings),
+                localRules: settings.danmakuFilterRulesText,
+                deviceID: settings.webDAVDeviceID,
+                localHistory: library.history,
+                localEntries: library.entries,
+                localRemovals: library.removedEntries
+            )
+        }
+
+        guard !snapshot.webDAVURL.isEmpty else {
             return Outcome(ok: false, message: String(localized: "先填 WebDAV 地址"), log: "同步跳过：没配地址")
         }
 
-        let client = WebDAVClient(settings: settings)
-        progress?(ProgressEvent(text: String(localized: "正在读取云盘…"), current: 0, total: 0))
+        let client = snapshot.client
+        if let progress {
+            await MainActor.run {
+                progress(ProgressEvent(text: String(localized: "正在读取云盘…"), current: 0, total: 0))
+            }
+        }
+
+        let needHistory = contents.contains(.history)
+        let needCollect = contents.contains(.collect)
+        let needShield = contents.contains(.shield)
+
+        // 并行拉取主备份、原版历史快照、旧版收藏箱体修改时间与弹幕屏蔽词状态，缩短端到端 RTT。
+        async let remoteFetch: RemoteDownloadResult = {
+            do {
+                return .payload(try await client.download())
+            } catch WebDAVClient.WebDAVError.notFound, WebDAVClient.WebDAVError.badStatus(404) {
+                // 云盘上还没有这份文件：当作空的一份，这次同步就是第一次上传。
+                //
+                // 必须接 .notFound：客户端把 404 翻成了这一句（WebDAVClient.validate），
+                // 只接 badStatus(404) 会漏掉，「第一次同步」永远报成网络失败。
+                return .payload(nil)
+            } catch WebDAVClient.WebDAVError.emptyBackup {
+                // 文件在，但是 0 字节。跟「还没有备份」一样处理：本机有数据就上传一份。
+                return .emptyBackup
+            } catch {
+                return .failure(error)
+            }
+        }()
+
+        async let legacyHistoryFetch: WebDAVLegacy.LegacyHistory? = needHistory
+            ? (try? await WebDAVLegacy.history(client: client))
+            : nil
+
+        async let collectModifiedFetch: Date? = needCollect
+            ? await Self.modifiedDate(of: WebDAVLegacy.collectiblesPath, client: client)
+            : nil
+
+        async let shieldSnapshotFetch: WebDAVLegacy.ShieldSnapshot? = needShield
+            ? (try? await WebDAVLegacy.shieldState(client: client, deviceID: snapshot.deviceID))
+            : nil
+
+        let remoteResult = await remoteFetch
+        let legacyHistoryResult = await legacyHistoryFetch
+        let boxModified = await collectModifiedFetch
+        let readShieldSnapshot = await shieldSnapshotFetch
+
         let remote: WebDAVClient.Payload?
         /// 云盘上那份是空的（0 字节）：当作还没备份，这次上传会把它覆盖掉。
         /// 空文件里没有任何数据，覆盖它不会丢掉任何东西。
         var cloudBackupWasEmpty = false
-        do {
-            remote = try await client.download()
-        } catch WebDAVClient.WebDAVError.notFound, WebDAVClient.WebDAVError.badStatus(404) {
-            // 云盘上还没有这份文件：当作空的一份，这次同步就是第一次上传。
-            //
-            // 必须接 .notFound：客户端把 404 翻成了这一句（WebDAVClient.validate），
-            // 只接 badStatus(404) 会漏掉，「第一次同步」永远报成网络失败。
-            remote = nil
-        } catch WebDAVClient.WebDAVError.emptyBackup {
-            // 文件在，但是 0 字节。跟「还没有备份」一样处理：本机有数据就上传一份。
+        switch remoteResult {
+        case .payload(let payload):
+            remote = payload
+        case .emptyBackup:
             cloudBackupWasEmpty = true
             remote = nil
-        } catch {
+        case .failure(let error):
             return Outcome(
                 ok: false,
                 message: String(localized: "同步没能完成：\(Self.friendlyText(error))"),
@@ -120,7 +190,7 @@ enum WebDAVSync {
             )
         }
 
-        let localRules = settings.danmakuFilterRulesText
+        let localRules = snapshot.localRules
         var history = remote?.history ?? []
         var entries = remote?.entries ?? []
         var rules = remote?.danmakuRules ?? ""
@@ -138,17 +208,17 @@ enum WebDAVSync {
         // 否则一次网络抖动就会把云盘上的老记录冲成本机这几条。
         var legacyHistoryRead = false
         var legacySnapshot: Data?
-        if contents.contains(.history) {
-            if let legacy = try? await WebDAVLegacy.history(client: client) {
+        if needHistory {
+            if let legacy = legacyHistoryResult {
                 legacyHistoryRead = legacy.raw != nil
                 legacySnapshot = legacy.raw
                 legacyHistoryCount = legacy.records.count
                 history = mergeHistory(
-                    local: adoptLegacyRuleNames(library.history, from: legacy.records),
+                    local: adoptLegacyRuleNames(snapshot.localHistory, from: legacy.records),
                     remote: history + legacy.records
                 )
             } else {
-                history = mergeHistory(local: library.history, remote: history)
+                history = mergeHistory(local: snapshot.localHistory, remote: history)
             }
         } else {
             history = remote?.history ?? []
@@ -162,9 +232,8 @@ enum WebDAVSync {
         var legacyCollectRemovals: [Int: Date] = [:]
         var legacyCollectMergedAt = remote?.legacyCollectMergedAt
         var mergedRemovals: [RemovedEntry] = remote?.removedEntries ?? []
-        if contents.contains(.collect) {
+        if needCollect {
             var legacyEntries: [LibraryEntry] = []
-            let boxModified = await Self.modifiedDate(of: WebDAVLegacy.collectiblesPath, client: client)
             let stored = remote?.legacyCollectMergedAt
             if let boxModified, stored == nil || boxModified > stored! {
                 if let legacy = try? await WebDAVLegacy.collectibles(client: client) {
@@ -175,7 +244,7 @@ enum WebDAVSync {
                     legacyCollectMergedAt = boxModified
                 }
             }
-            entries = mergeEntries(local: library.entries, remote: entries, legacy: legacyEntries)
+            entries = mergeEntries(local: snapshot.localEntries, remote: entries, legacy: legacyEntries)
 
             // 取消收藏：本机记的、云盘备份里记的、旧版变更队列里记的三处并起来，按时间判先后。
             var removals: [Int: Date] = [:]
@@ -184,7 +253,7 @@ enum WebDAVSync {
                 removals[id] = date
             }
             for item in remote?.removedEntries ?? [] { noteRemoval(item.id, item.removedAt) }
-            for item in library.removedEntries { noteRemoval(item.id, item.removedAt) }
+            for item in snapshot.localRemovals { noteRemoval(item.id, item.removedAt) }
             for (id, date) in legacyCollectRemovals { noteRemoval(id, date) }
             // 取消比收藏晚，才真的删；取消得早说明后来重新收藏了，留着。
             entries.removeAll { entry in
@@ -201,25 +270,21 @@ enum WebDAVSync {
             entries = remote?.entries ?? []
         }
 
-        if contents.contains(.shield) {
+        if needShield {
             // 本机当前的规则（设置里那串文本）。
             let localList = Self.ruleLines(localRules)
             // 本端备份里那份也是云端数据，没有编辑时间，按 updatedAt 0 参与合并。
             let backupList = Self.ruleLines(rules)
-            let readSnapshot = try? await WebDAVLegacy.shieldState(
-                client: client,
-                deviceID: settings.webDAVDeviceID
-            )
-            let snapshot = readSnapshot ?? WebDAVLegacy.ShieldSnapshot()
-            legacyRules = snapshot.merged.rules
+            let shieldSnapshot = readShieldSnapshot ?? WebDAVLegacy.ShieldSnapshot()
+            legacyRules = shieldSnapshot.merged.rules
 
-            var merged = snapshot.merged
+            var merged = shieldSnapshot.merged
             // 本机有、状态里没有的规则：updatedAt 0，盖不过云端带时间戳的墓碑。
             for rule in localList where merged.entries[rule] == nil {
                 merged.insert(WebDAVLegacy.ShieldEntry(
                     rule: rule,
                     updatedAt: 0,
-                    deviceId: settings.webDAVDeviceID,
+                    deviceId: snapshot.deviceID,
                     deleted: false
                 ))
             }
@@ -229,7 +294,7 @@ enum WebDAVSync {
                 merged.insert(WebDAVLegacy.ShieldEntry(
                     rule: rule,
                     updatedAt: 0,
-                    deviceId: settings.webDAVDeviceID,
+                    deviceId: snapshot.deviceID,
                     deleted: false
                 ))
             }
@@ -238,8 +303,8 @@ enum WebDAVSync {
             let localSet = Set(localList)
             let now = Int(Date().timeIntervalSince1970 * 1000)
             var latest = merged.latestTimestamp
-            for rule in snapshot.own.order {
-                guard let entry = snapshot.own.entries[rule],
+            for rule in shieldSnapshot.own.order {
+                guard let entry = shieldSnapshot.own.entries[rule],
                       !entry.deleted,
                       !localSet.contains(rule),
                       merged.entries[rule]?.deleted == false
@@ -248,7 +313,7 @@ enum WebDAVSync {
                 merged.insert(WebDAVLegacy.ShieldEntry(
                     rule: rule,
                     updatedAt: latest,
-                    deviceId: settings.webDAVDeviceID,
+                    deviceId: snapshot.deviceID,
                     deleted: true
                 ))
             }
@@ -270,7 +335,7 @@ enum WebDAVSync {
             }
             rules = lines.joined(separator: "\n")
             // 云盘没读到就不写回：拿空状态盖上去会把本机那份里的墓碑冲掉。
-            mergedShieldState = readSnapshot == nil ? nil : merged
+            mergedShieldState = readShieldSnapshot == nil ? nil : merged
         } else {
             rules = remote?.danmakuRules ?? ""
         }
@@ -283,14 +348,21 @@ enum WebDAVSync {
             removedEntries: mergedRemovals
         )
         let isRemoteIdentical = (remote != nil && !cloudBackupWasEmpty) &&
-            remote?.entries == entries &&
-            remote?.history == history &&
-            remote?.danmakuRules == rules &&
-            remote?.legacyCollectMergedAt == legacyCollectMergedAt &&
-            remote?.removedEntries == mergedRemovals
+            Self.isPayloadIdentical(
+                remote!,
+                entries: entries,
+                history: history,
+                danmakuRules: rules,
+                legacyCollectMergedAt: legacyCollectMergedAt,
+                removedEntries: mergedRemovals
+            )
 
         if !isRemoteIdentical {
-            progress?(ProgressEvent(text: String(localized: "正在上传合并结果…"), current: 0, total: 0))
+            if let progress {
+                await MainActor.run {
+                    progress(ProgressEvent(text: String(localized: "正在上传合并结果…"), current: 0, total: 0))
+                }
+            }
             do {
                 try await client.uploadAndVerify(payload)
             } catch {
@@ -302,66 +374,86 @@ enum WebDAVSync {
             }
         }
 
-        if contents.contains(.collect) {
-            entries = mergeEntries(local: library.entries, remote: entries)
-            var removals: [Int: Date] = [:]
-            func noteRemoval(_ id: Int, _ date: Date) {
-                if let existing = removals[id], existing >= date { return }
-                removals[id] = date
-            }
-            for item in mergedRemovals { noteRemoval(item.id, item.removedAt) }
-            for item in library.removedEntries { noteRemoval(item.id, item.removedAt) }
-            entries.removeAll { entry in
-                guard let removedAt = removals[entry.id] else { return false }
-                return removedAt > entry.updatedAt
-            }
-            let collectedIDs = Set(entries.map(\.id))
-            mergedRemovals = removals
-                .filter { !collectedIDs.contains($0.key) }
-                .map { RemovedEntry(id: $0.key, removedAt: $0.value) }
-                .sorted { $0.id < $1.id }
-        }
-        if contents.contains(.history) {
-            history = mergeHistory(local: library.history, remote: history)
-        }
+        // 切回 @MainActor 合并网络期间可能新产生的本机变更并写回本地状态。
+        let finalRules = rules
+        let uploadedEntries = entries
+        let uploadedHistory = history
+        let uploadedRemovals = mergedRemovals
+        let applied: (history: [WatchRecord], entries: [LibraryEntry], libraryHistoryCount: Int, libraryEntriesCount: Int) =
+            await MainActor.run {
+                var finalEntries = uploadedEntries
+                var finalRemovals = uploadedRemovals
+                if needCollect {
+                    finalEntries = Self.mergeEntries(local: library.entries, remote: finalEntries)
+                    var removals: [Int: Date] = [:]
+                    func noteRemoval(_ id: Int, _ date: Date) {
+                        if let existing = removals[id], existing >= date { return }
+                        removals[id] = date
+                    }
+                    for item in finalRemovals { noteRemoval(item.id, item.removedAt) }
+                    for item in library.removedEntries { noteRemoval(item.id, item.removedAt) }
+                    finalEntries.removeAll { entry in
+                        guard let removedAt = removals[entry.id] else { return false }
+                        return removedAt > entry.updatedAt
+                    }
+                    let collectedIDs = Set(finalEntries.map(\.id))
+                    finalRemovals = removals
+                        .filter { !collectedIDs.contains($0.key) }
+                        .map { RemovedEntry(id: $0.key, removedAt: $0.value) }
+                        .sorted { $0.id < $1.id }
+                }
+                var finalHistory = uploadedHistory
+                if needHistory {
+                    finalHistory = Self.mergeHistory(local: library.history, remote: finalHistory)
+                }
 
-        // 落到本机：开着的那几类用合并结果，没开的原样不动，一次原子写盘避免连续写两次 library.json。
-        let localEntries = contents.contains(.collect) ? entries : library.entries
-        let localHistory = contents.contains(.history) ? history : library.history
-        library.replace(
-            entries: localEntries,
-            history: localHistory,
-            removals: contents.contains(.collect) ? mergedRemovals : nil
-        )
-        if contents.contains(.shield) {
-            settings.danmakuFilterRulesText = rules
-        }
+                // 落到本机：开着的那几类用合并结果，没开的原样不动，一次原子写盘避免连续写两次 library.json。
+                let localEntries = needCollect ? finalEntries : library.entries
+                let localHistory = needHistory ? finalHistory : library.history
+                library.replace(
+                    entries: localEntries,
+                    history: localHistory,
+                    removals: needCollect ? finalRemovals : nil
+                )
+                if needShield {
+                    settings.danmakuFilterRulesText = finalRules
+                }
+                return (finalHistory, finalEntries, library.history.count, library.entries.count)
+            }
+
+        history = applied.history
+        entries = applied.entries
 
         // 写回原版那几份（LP 2026-10-25：历史与屏蔽词要支持读写，旧版得读到新记录）。
         var writeBackError: String?
-        if contents.contains(.history), legacyHistoryRead {
+        if needHistory, legacyHistoryRead {
             do {
-                try await WebDAVLegacy.writeHistory(
+                _ = try await WebDAVLegacy.writeHistory(
                     history,
                     existing: legacySnapshot,
                     client: client
-                ) { current, total in
-                    progress?(ProgressEvent(
-                        text: String(localized: "正在写回原版观看记录 · \(current) / \(total)"),
-                        current: current,
-                        total: total
-                    ))
+                ) { _, total in
+                    guard let progress else { return }
+                    let event = ProgressEvent(
+                        text: String(localized: "正在上传原版观看记录（\(total) 条）…"),
+                        current: 0,
+                        total: 0
+                    )
+                    Task { @MainActor in
+                        progress(event)
+                    }
                 }
             } catch {
                 writeBackError = Self.technicalText(error)
             }
         }
-        if contents.contains(.shield), let mergedShieldState {
-            // 只写本机那一份，别的设备的文件一概不碰。整份状态都要写，墓碑不能丢。
+        if needShield, let mergedShieldState,
+           mergedShieldState.entries != (readShieldSnapshot?.own.entries ?? [:]) {
+            // 只在合并结果与本机已上传文件存在差异时写回，避免无变更二次同步重复上传。
             do {
                 try await WebDAVLegacy.writeShield(
                     mergedShieldState,
-                    deviceID: settings.webDAVDeviceID,
+                    deviceID: snapshot.deviceID,
                     client: client
                 )
             } catch {
@@ -370,12 +462,12 @@ enum WebDAVSync {
         }
 
         var summaryParts: [String] = []
-        if contents.contains(.history) { summaryParts.append(String(localized: "观看记录 \(history.count) 条")) }
-        if contents.contains(.collect) { summaryParts.append(String(localized: "收藏 \(entries.count) 部")) }
-        if contents.contains(.shield) { summaryParts.append(String(localized: "屏蔽词 \(Self.ruleCount(rules)) 条")) }
+        if needHistory { summaryParts.append(String(localized: "观看记录 \(history.count) 条")) }
+        if needCollect { summaryParts.append(String(localized: "收藏 \(entries.count) 部")) }
+        if needShield { summaryParts.append(String(localized: "屏蔽词 \(Self.ruleCount(rules)) 条")) }
         let summary = summaryParts.joined(separator: " · ")
 
-        let counts = String(localized: "观看记录 \(library.history.count) 条 / 收藏 \(library.entries.count) 部 / 屏蔽词 \(Self.ruleCount(rules)) 条")
+        let counts = String(localized: "观看记录 \(applied.libraryHistoryCount) 条 / 收藏 \(applied.libraryEntriesCount) 部 / 屏蔽词 \(Self.ruleCount(rules)) 条")
         var legacyParts: [String] = []
         if legacyHistoryCount > 0 { legacyParts.append(String(localized: "历史 \(legacyHistoryCount) 条")) }
         if !legacyRules.isEmpty { legacyParts.append(String(localized: "屏蔽词 \(legacyRules.count) 条")) }
@@ -409,6 +501,90 @@ enum WebDAVSync {
         (try? await client.modifiedDate(path: path)) ?? nil
     }
 
+    // MARK: - 秒级等价判定（消除 ISO-8601 截断亚秒导致的误判重传）
+
+    private static func sameSecond(_ lhs: Date, _ rhs: Date) -> Bool {
+        abs(lhs.timeIntervalSince(rhs)) < 1
+    }
+
+    private static func sameOptionalSecond(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (a?, b?):
+            return sameSecond(a, b)
+        default:
+            return false
+        }
+    }
+
+    private static func sameEntry(_ lhs: LibraryEntry, _ rhs: LibraryEntry) -> Bool {
+        lhs.id == rhs.id &&
+            lhs.type == rhs.type &&
+            lhs.name == rhs.name &&
+            lhs.nameCn == rhs.nameCn &&
+            lhs.summary == rhs.summary &&
+            lhs.airDate == rhs.airDate &&
+            lhs.imageURL == rhs.imageURL &&
+            lhs.rating == rhs.rating &&
+            lhs.rank == rhs.rank &&
+            lhs.tags == rhs.tags &&
+            lhs.totalEpisodes == rhs.totalEpisodes &&
+            lhs.currentEpisode == rhs.currentEpisode &&
+            sameSecond(lhs.addedAt, rhs.addedAt) &&
+            sameSecond(lhs.updatedAt, rhs.updatedAt)
+    }
+
+    private static func sameProgress(_ lhs: EpisodeProgress, _ rhs: EpisodeProgress) -> Bool {
+        lhs.episode == rhs.episode &&
+            lhs.road == rhs.road &&
+            lhs.progressSeconds == rhs.progressSeconds &&
+            sameSecond(lhs.updatedAt, rhs.updatedAt)
+    }
+
+    private static func sameRecord(_ lhs: WatchRecord, _ rhs: WatchRecord) -> Bool {
+        guard lhs.bangumiID == rhs.bangumiID,
+              lhs.bangumiName == rhs.bangumiName,
+              lhs.imageURL == rhs.imageURL,
+              lhs.sourceRuleName == rhs.sourceRuleName,
+              lhs.episodeTitle == rhs.episodeTitle,
+              lhs.episodeNumber == rhs.episodeNumber,
+              lhs.durationSeconds == rhs.durationSeconds,
+              lhs.detailURL == rhs.detailURL,
+              sameSecond(lhs.updatedAt, rhs.updatedAt),
+              lhs.progresses.count == rhs.progresses.count
+        else { return false }
+        for (slot, leftProgress) in lhs.progresses {
+            guard let rightProgress = rhs.progresses[slot],
+                  sameProgress(leftProgress, rightProgress)
+            else { return false }
+        }
+        return true
+    }
+
+    private static func sameRemoval(_ lhs: RemovedEntry, _ rhs: RemovedEntry) -> Bool {
+        lhs.id == rhs.id && sameSecond(lhs.removedAt, rhs.removedAt)
+    }
+
+    private static func isPayloadIdentical(
+        _ remote: WebDAVClient.Payload,
+        entries: [LibraryEntry],
+        history: [WatchRecord],
+        danmakuRules: String,
+        legacyCollectMergedAt: Date?,
+        removedEntries: [RemovedEntry]
+    ) -> Bool {
+        guard remote.danmakuRules == danmakuRules,
+              sameOptionalSecond(remote.legacyCollectMergedAt, legacyCollectMergedAt),
+              remote.entries.count == entries.count,
+              remote.history.count == history.count,
+              remote.removedEntries.count == removedEntries.count
+        else { return false }
+        guard zip(remote.entries, entries).allSatisfy(sameEntry) else { return false }
+        guard zip(remote.history, history).allSatisfy(sameRecord) else { return false }
+        return zip(remote.removedEntries, removedEntries).allSatisfy(sameRemoval)
+    }
+
     // MARK: - 合并
 
     // 观看记录与收藏都以「番剧 ID / 规则 + 番剧」为主键，同一条留 `updatedAt`
@@ -432,15 +608,16 @@ enum WebDAVSync {
         _ local: [WatchRecord],
         from legacy: [WatchRecord]
     ) -> [WatchRecord] {
+        var rulesByBangumiID: [Int: Set<String>] = [:]
+        rulesByBangumiID.reserveCapacity(legacy.count)
+        for record in legacy where !record.sourceRuleName.isEmpty {
+            rulesByBangumiID[record.bangumiID, default: []].insert(record.sourceRuleName)
+        }
         var result = local
         for index in result.indices where result[index].sourceRuleName.isEmpty {
-            let bangumiID = result[index].bangumiID
-            let rules = Set(
-                legacy
-                    .filter { $0.bangumiID == bangumiID && !$0.sourceRuleName.isEmpty }
-                    .map(\.sourceRuleName)
-            )
-            if rules.count == 1, let rule = rules.first {
+            if let rules = rulesByBangumiID[result[index].bangumiID],
+               rules.count == 1,
+               let rule = rules.first {
                 result[index].sourceRuleName = rule
             }
         }

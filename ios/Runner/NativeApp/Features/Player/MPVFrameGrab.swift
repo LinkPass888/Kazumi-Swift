@@ -14,10 +14,78 @@
 //  其中 `data` 是 MPV_FORMAT_BYTE_ARRAY。node 只在事件处理那一刻有效，所以当场拷走。
 //
 
+import Accelerate
 import CoreGraphics
 import CoreVideo
 import Foundation
 import Libmpv
+
+/// 按 `(width, height)` 复用的 32BGRA `CVPixelBufferPool`，避免画中画 30Hz 每帧
+/// 反复分配/释放 8.3MB IOSurface 缓冲。
+final class PiPPixelBufferPool: @unchecked Sendable {
+    static let shared = PiPPixelBufferPool()
+
+    private let lock = NSLock()
+    private var pool: CVPixelBufferPool?
+    private var width = 0
+    private var height = 0
+
+    func dequeue(width: Int, height: Int) -> CVPixelBuffer? {
+        guard width > 0, height > 0 else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+
+        if pool == nil || self.width != width || self.height != height {
+            pool = Self.makePool(width: width, height: height)
+            self.width = width
+            self.height = height
+        }
+
+        if let pool {
+            var buffer: CVPixelBuffer?
+            if CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &buffer) == kCVReturnSuccess,
+               let buffer {
+                return buffer
+            }
+        }
+
+        var fallback: CVPixelBuffer?
+        let attributes = [
+            kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
+            kCVPixelBufferMetalCompatibilityKey: true,
+        ] as CFDictionary
+        guard CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attributes,
+            &fallback
+        ) == kCVReturnSuccess else { return nil }
+        return fallback
+    }
+
+    private static func makePool(width: Int, height: Int) -> CVPixelBufferPool? {
+        let poolAttributes: [CFString: Any] = [
+            kCVPixelBufferPoolMinimumBufferCountKey: 4,
+        ]
+        let pixelAttributes: [CFString: Any] = [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey: width,
+            kCVPixelBufferHeightKey: height,
+            kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
+            kCVPixelBufferMetalCompatibilityKey: true,
+        ]
+        var created: CVPixelBufferPool?
+        let status = CVPixelBufferPoolCreate(
+            kCFAllocatorDefault,
+            poolAttributes as CFDictionary,
+            pixelAttributes as CFDictionary,
+            &created
+        )
+        return status == kCVReturnSuccess ? created : nil
+    }
+}
 
 /// 一块从 mpv 取回来的原始帧。
 struct MPVRawFrame: Sendable {
@@ -161,8 +229,8 @@ struct MPVRawFrame: Sendable {
         format.caseInsensitiveCompare("bgra") == .orderedSame
     }
 
-    /// 转成画中画可直接消费的 32BGRA `CVPixelBuffer`。
-    func makePixelBuffer() -> CVPixelBuffer? {
+    /// 转成画中画可直接消费的 32BGRA `CVPixelBuffer`（走复用池与 Accelerate vImage SIMD）。
+    func makePixelBuffer(pool: PiPPixelBufferPool = .shared) -> CVPixelBuffer? {
         guard let layout = Self.layout(of: format) else { return nil }
         let bytesPerPixel = layout.bytesPerPixel
         let channels = layout.map
@@ -173,60 +241,75 @@ struct MPVRawFrame: Sendable {
         guard pixels.count >= rowStride * height else { return nil }
         let bottomUp = stride < 0
 
-        var buffer: CVPixelBuffer?
-        let attributes = [
-            kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
-            kCVPixelBufferMetalCompatibilityKey: true,
-        ] as CFDictionary
-        guard CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            attributes,
-            &buffer
-        ) == kCVReturnSuccess, let buffer else { return nil }
+        guard let buffer = pool.dequeue(width: width, height: height) else { return nil }
 
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         guard let destination = CVPixelBufferGetBaseAddress(buffer) else { return nil }
         let destinationStride = CVPixelBufferGetBytesPerRow(buffer)
-        let visibleRowBytes = width * 4
 
         pixels.withUnsafeBufferPointer { source in
             guard let base = source.baseAddress else { return }
-            let output = destination.assumingMemoryBound(to: UInt8.self)
-            // 逐行取源行起点：负 stride 时第 0 行在缓冲末尾，界面方向不能跟着翻。
-            func sourceRow(_ y: Int) -> UnsafePointer<UInt8> {
-                let row = bottomUp ? height - 1 - y : y
-                return base.advanced(by: row * rowStride)
-            }
-            if canDirectCopyToBGRA {
-                if !bottomUp, rowStride == visibleRowBytes, destinationStride == visibleRowBytes {
-                    UnsafeMutableRawPointer(output).copyMemory(
-                        from: UnsafeRawPointer(base),
-                        byteCount: visibleRowBytes * height
+            if bytesPerPixel == 4 {
+                var srcBuffer = vImage_Buffer(
+                    data: UnsafeMutableRawPointer(mutating: base),
+                    height: vImagePixelCount(height),
+                    width: vImagePixelCount(width),
+                    rowBytes: rowStride
+                )
+                var dstBuffer = vImage_Buffer(
+                    data: destination,
+                    height: vImagePixelCount(height),
+                    width: vImagePixelCount(width),
+                    rowBytes: destinationStride
+                )
+                let isBGRAOrder = channels[2] == 0 && channels[1] == 1 && channels[0] == 2
+                if canDirectCopyToBGRA || isBGRAOrder {
+                    // 单趟 SIMD 复制 B/G/R 并将 byte 3（BGRA 的 A 通道，copyMask = 0x1）统一置 255。
+                    _ = vImageOverwriteChannelsWithScalar_ARGB8888(
+                        255,
+                        &srcBuffer,
+                        &dstBuffer,
+                        0x1,
+                        vImage_Flags(kvImageNoFlags)
                     )
                 } else {
-                    for y in 0..<height {
-                        let destinationRow = output.advanced(by: y * destinationStride)
-                        UnsafeMutableRawPointer(destinationRow).copyMemory(
-                            from: UnsafeRawPointer(sourceRow(y)),
-                            byteCount: visibleRowBytes
+                    var permuteMap: [UInt8] = [
+                        UInt8(channels[2]),
+                        UInt8(channels[1]),
+                        UInt8(channels[0]),
+                        UInt8(channels[3] >= 0 ? channels[3] : 3),
+                    ]
+                    _ = vImagePermuteChannels_ARGB8888(
+                        &srcBuffer,
+                        &dstBuffer,
+                        &permuteMap,
+                        vImage_Flags(kvImageNoFlags)
+                    )
+                    if channels[3] < 0 {
+                        _ = vImageOverwriteChannelsWithScalar_ARGB8888(
+                            255,
+                            &dstBuffer,
+                            &dstBuffer,
+                            0x1,
+                            vImage_Flags(kvImageNoFlags)
                         )
                     }
                 }
-                // 视频帧没有真正的 alpha；解码器留下的 0 会让小窗整块透明。
-                for y in 0..<height {
-                    let destinationRow = output.advanced(by: y * destinationStride)
-                    for x in 0..<width {
-                        destinationRow[x * 4 + 3] = 255
-                    }
+                if bottomUp {
+                    _ = vImageVerticalReflect_ARGB8888(
+                        &dstBuffer,
+                        &dstBuffer,
+                        vImage_Flags(kvImageNoFlags)
+                    )
                 }
                 return
             }
+
+            let output = destination.assumingMemoryBound(to: UInt8.self)
+            // 非 32-bit 打包格式（如 24-bit / 48-bit / 64-bit）保留通用逐像素回退。
             for y in 0..<height {
-                let row = sourceRow(y)
+                let row = base.advanced(by: (bottomUp ? height - 1 - y : y) * rowStride)
                 let destinationRow = output.advanced(by: y * destinationStride)
                 for x in 0..<width {
                     let pixel = row.advanced(by: x * bytesPerPixel)

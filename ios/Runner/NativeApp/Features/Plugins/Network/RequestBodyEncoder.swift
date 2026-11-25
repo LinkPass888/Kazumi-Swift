@@ -20,6 +20,12 @@ enum JsonBodyEncoder {
 }
 
 enum FormBodyEncoder {
+    private static let formComponentAllowed: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~*!'()")
+        return allowed
+    }()
+
     static func encode(_ value: JSONValue) -> String {
         var pairs: [String] = []
         switch value {
@@ -60,9 +66,7 @@ enum FormBodyEncoder {
 
     /// 表单编码：空格应为 `+`（与 Dart Uri.encodeQueryComponent 一致）。
     private static func encodeComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~*!'()")
-        let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        let encoded = value.addingPercentEncoding(withAllowedCharacters: formComponentAllowed) ?? value
         return encoded.replacingOccurrences(of: "%20", with: "+")
     }
 }

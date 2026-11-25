@@ -50,7 +50,7 @@ struct MPVDiagnostics {
         guard !modules.contains("http"), !modules.contains("https") else { return event }
         let normalized = Self.normalized(text)
         guard !Self.matches(Self.httpDump, normalized) else { return event }
-        let safeText = Self.sanitize(normalized)
+        let safeText = Self.sanitizeNormalized(normalized, skipHTTPDumpCheck: true)
         guard !safeText.isEmpty else { return event }
         let line = "[\(safePrefix)] \(safeLevel) \(safeText)"
         if isError {
@@ -78,9 +78,12 @@ struct MPVDiagnostics {
 
     /// 所有 onLog 和错误摘要的最后一道边界。先脱敏再截断，输出始终单行。
     static func sanitize(_ text: String) -> String {
+        sanitizeNormalized(normalized(text), skipHTTPDumpCheck: false)
+    }
+
+    private static func sanitizeNormalized(_ normalized: String, skipHTTPDumpCheck: Bool) -> String {
         // 整段隐藏，防止折行头、JSON 请求体或转义换行里的凭据漏到下一行。
-        let normalized = normalized(text)
-        if matches(httpDump, normalized) || matches(secrets, normalized) {
+        if (!skipHTTPDumpCheck && matches(httpDump, normalized)) || matches(secrets, normalized) {
             return String(localized: "[敏感诊断已隐藏]")
         }
         var result = urls.stringByReplacingMatches(

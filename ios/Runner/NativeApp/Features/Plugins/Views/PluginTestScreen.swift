@@ -397,7 +397,7 @@ struct PluginTestScreen: View {
             // 已经拿到的部分结果留在界面上。
             let config = RuleExecutionConfig(plugin: plugin)
             do {
-                let trace = try await engine.search(config, keyword: trimmed)
+                let trace = try await engine.search(config, keyword: trimmed, includeFragments: true)
                 guard generation == testGeneration else { return }
                 searchRaw = trace.rawResponse
                 searchResponse = trace.response

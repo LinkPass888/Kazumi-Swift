@@ -27,7 +27,7 @@ final class CaptchaWebView: NSObject {
     var onCaptchaDisappeared: (() -> Void)?
     var onLog: ((String) -> Void)?
 
-    private static let handlerNames = [
+    nonisolated private static let handlerNames = [
         "CaptchaImageBridge",
         "CaptchaStatusBridge",
         "CaptchaGoneBridge",
@@ -35,7 +35,7 @@ final class CaptchaWebView: NSObject {
         "CaptchaLogBridge"
     ]
 
-    private var webView: WKWebView?
+    nonisolated(unsafe) private var webView: WKWebView?
     private var currentCaptchaImageXpath = ""
     private var currentInputXpath = ""
     private var isDisposed = false
@@ -50,8 +50,9 @@ final class CaptchaWebView: NSObject {
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         let controller = WKUserContentController()
+        let proxy = WeakScriptMessageHandler(self)
         for name in Self.handlerNames {
-            controller.add(self, name: name)
+            controller.add(proxy, name: name)
         }
         controller.addUserScript(WKUserScript(
             source: Self.callHandlerShim,
@@ -193,6 +194,28 @@ final class CaptchaWebView: NSObject {
         }
         webView = nil
     }
+
+    deinit {
+        if let webView {
+            Self.tearDown(webView)
+        }
+    }
+
+    nonisolated private static func tearDown(_ webView: WKWebView) {
+        let cleanup: @MainActor () -> Void = {
+            webView.stopLoading()
+            webView.configuration.userContentController.removeAllUserScripts()
+            for name in handlerNames {
+                webView.configuration.userContentController.removeScriptMessageHandler(forName: name)
+            }
+            webView.navigationDelegate = nil
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { cleanup() }
+        } else {
+            Task { @MainActor in cleanup() }
+        }
+    }
     // MARK: - 内部实现
 
     private func addUserScript(_ source: String, injectionTime: WKUserScriptInjectionTime) {
@@ -211,11 +234,8 @@ final class CaptchaWebView: NSObject {
         guard let webView else { return }
         let store = webView.configuration.websiteDataStore.httpCookieStore
         let cookies = await store.allCookies()
-        // iOS 26 SDK 起 `delete(_:)` 被标注为可异步；显式绑定到同步签名，
-        // 避免编译器把它解析成 async 版本而报 "asynchronous alternative" 警告。
-        let deleteSync: (HTTPCookie) -> Void = { store.delete($0) }
         for cookie in cookies {
-            deleteSync(cookie)
+            await store.delete(cookie)
         }
         emit("[Captcha WebView] Cookies cleared before load")
     }
@@ -269,6 +289,7 @@ final class CaptchaWebView: NSObject {
         var _inputXpath = '\(escapedInputXpath)';
         var _captchaPoller = null;
         var _disappearObserver = null;
+        var _disappearTimer = null;
 
         function _evalXpath() {
           try {
@@ -282,17 +303,25 @@ final class CaptchaWebView: NSObject {
         function _startDisappearMonitor() {
           if (_disappearObserver) return;
           _disappearObserver = new MutationObserver(function() {
-            var node = _evalXpath();
-            if (!node) {
-              _disappearObserver.disconnect();
-              _disappearObserver = null;
-              try {
-                window.flutter_inappwebview.callHandler('CaptchaGoneBridge', '');
-              } catch(e) {}
-            }
+            if (_disappearTimer) return;
+            _disappearTimer = setTimeout(function() {
+              _disappearTimer = null;
+              if (!_disappearObserver) return;
+              var node = _evalXpath();
+              if (!node) {
+                _disappearObserver.disconnect();
+                _disappearObserver = null;
+                try {
+                  window.flutter_inappwebview.callHandler('CaptchaGoneBridge', '');
+                } catch(e) {}
+              }
+            }, 100);
           });
-          _disappearObserver.observe(document.documentElement,
-            { childList: true, subtree: true, attributes: true });
+          var target = document.documentElement || document.body;
+          if (target) {
+            _disappearObserver.observe(target,
+              { childList: true, subtree: true, attributes: true });
+          }
         }
 
         function _captureAsBase64(imgNode, callback) {
@@ -364,8 +393,9 @@ final class CaptchaWebView: NSObject {
         });
 
         if (!_checkForCaptcha()) {
+          var _pollStart = Date.now();
           _captchaPoller = setInterval(function() {
-            if (_checkForCaptcha()) {
+            if (_checkForCaptcha() || Date.now() - _pollStart >= 30000) {
               clearInterval(_captchaPoller);
               _captchaPoller = null;
             }
@@ -383,6 +413,7 @@ final class CaptchaWebView: NSObject {
         var _clicked = false;
         var _poller = null;
         var _disappearObserver = null;
+        var _disappearTimer = null;
 
         function _evalBtnXpath() {
           try {
@@ -396,14 +427,22 @@ final class CaptchaWebView: NSObject {
         function _startDisappearMonitor() {
           if (_disappearObserver) return;
           _disappearObserver = new MutationObserver(function() {
-            if (!_evalBtnXpath()) {
-              _disappearObserver.disconnect();
-              _disappearObserver = null;
-              try { window.flutter_inappwebview.callHandler('CaptchaGoneBridge', ''); } catch(e) {}
-            }
+            if (_disappearTimer) return;
+            _disappearTimer = setTimeout(function() {
+              _disappearTimer = null;
+              if (!_disappearObserver) return;
+              if (!_evalBtnXpath()) {
+                _disappearObserver.disconnect();
+                _disappearObserver = null;
+                try { window.flutter_inappwebview.callHandler('CaptchaGoneBridge', ''); } catch(e) {}
+              }
+            }, 100);
           });
-          _disappearObserver.observe(document.documentElement,
-            { childList: true, subtree: true, attributes: true });
+          var target = document.documentElement || document.body;
+          if (target) {
+            _disappearObserver.observe(target,
+              { childList: true, subtree: true, attributes: true });
+          }
         }
 
         function _checkAndClick() {
@@ -419,8 +458,12 @@ final class CaptchaWebView: NSObject {
         }
 
         if (!_checkAndClick()) {
+          var _pollStart = Date.now();
           _poller = setInterval(function() {
-            if (_checkAndClick()) { clearInterval(_poller); _poller = null; }
+            if (_checkAndClick() || Date.now() - _pollStart >= 30000) {
+              clearInterval(_poller);
+              _poller = null;
+            }
           }, 500);
         }
         """

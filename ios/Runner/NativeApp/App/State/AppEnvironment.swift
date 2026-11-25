@@ -70,14 +70,29 @@ final class AppEnvironment {
     }
 
     /// 与原 main.dart 一致：先确保存储目录可用，失败时返回错误页而不是崩溃。
+    ///
+    /// 冷启动首帧优化（P0-7b）：
+    /// * 若存储根目录已存在，将子目录补齐延后至后台线程执行；首次启动不存在时仍同步校验以暴露存储异常；
+    /// * `library` 改为异步预加载（`loadAsync()`），避免首帧前在主线程同步读盘与 JSON 解码。
     static func makeAtLaunch() -> LaunchResult {
         do {
-            try AppEnvironment.prepareStorageDirectories()
+            let rootExists = FileManager.default.fileExists(
+                atPath: storageRoot.path(percentEncoded: false)
+            )
+            if rootExists {
+                Task.detached(priority: .utility) {
+                    try? AppEnvironment.prepareStorageDirectories()
+                }
+            } else {
+                try AppEnvironment.prepareStorageDirectories()
+            }
             let settings = SettingsStore()
             let library = LibraryStore()
-            library.load()
             let router = AppRouter(defaultStartupPage: settings.defaultStartupPage)
             let environment = AppEnvironment(settings: settings, library: library, router: router)
+            Task { @MainActor in
+                await library.loadAsync()
+            }
             return LaunchResult(environment: environment, failure: nil)
         } catch {
             KazumiLog.storage.error("存储初始化失败：\(error.localizedDescription, privacy: .public)")
@@ -95,7 +110,7 @@ final class AppEnvironment {
     }
 
     /// Application Support/hive 对应原工程的存储根目录；原生版改为 Application Support/Kazumi。
-    static func prepareStorageDirectories() throws {
+    nonisolated static func prepareStorageDirectories() throws {
         // 图片解码要的屏幕倍率由场景代理在窗口就绪时写入（`KazumiImageLoader.screenScale`）：
         // iOS 26 起 `UIScreen.main` 已弃用，倍率要从窗口所在的场景里取，启动这一刻还没有场景。
         let manager = FileManager.default
@@ -182,6 +197,7 @@ final class AppEnvironment {
             lastNotificationRefreshAt = Date()
             return
         }
+        await library.loadAsync()
         let watching = library.entries.filter { $0.collectType == .watching }
         guard !watching.isEmpty else {
             await UpdateNotificationScheduler.shared.cancelAll()

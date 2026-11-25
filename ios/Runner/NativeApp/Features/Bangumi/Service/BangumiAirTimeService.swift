@@ -67,20 +67,13 @@ final class BangumiAirTimeService {
         // 和 main 一样落在 Application Support：Caches 会被系统在存储紧张时整目录
         // 清掉，清掉之后每次冷启动都要重新拉季度数据，卡片上的「HH:mm 更新」
         // 就会慢一拍才出现。
-        let support = (try? FileManager.default.url(
+        let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            in: .userDomainMask
+        ).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         directory = support
             .appendingPathComponent("Kazumi", isDirectory: true)
             .appendingPathComponent("update_times", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        } catch {
-            // 建不出来就只在内存里用这一份，下次启动重新拉。
-        }
 
         sessionProvider = ProxyAwareURLSession {
             let configuration = URLSessionConfiguration.default
@@ -191,8 +184,17 @@ final class BangumiAirTimeService {
     func ensureLoaded(forSeasonOf date: Date) async {
         let target = Self.season(of: date)
         let current = Self.currentSeason()
-        for season in [target, current] where !loadedSeasons.contains(season.id) {
-            await loadSeason(id: season.id)
+        let needTarget = !loadedSeasons.contains(target.id)
+        let needCurrent = current.id != target.id && !loadedSeasons.contains(current.id)
+        guard needTarget || needCurrent else { return }
+        if needTarget && needCurrent {
+            async let targetLoad: Void = loadSeason(id: target.id)
+            async let currentLoad: Void = loadSeason(id: current.id)
+            _ = await (targetLoad, currentLoad)
+        } else if needTarget {
+            await loadSeason(id: target.id)
+        } else {
+            await loadSeason(id: current.id)
         }
     }
 
@@ -255,13 +257,29 @@ final class BangumiAirTimeService {
         directory.appendingPathComponent("\(season.id).json")
     }
 
+    private struct ParsedSeason: Sendable {
+        var times: [Int: String]
+        var schedules: [Int: BangumiAirSchedule]
+        var malIDs: [Int: Int]
+    }
+
+    private struct DiskReadOutcome: Sendable {
+        var isFresh: Bool
+        var staleData: Data?
+        var freshParsed: ParsedSeason?
+    }
+
     /// 清掉一年前的季度文件（按修改时间）。
     ///
     /// 只动 `.json`，刚写的那一份永远跳过；删不掉就跳过——
     /// 清理失败不该影响本次放送时刻的使用。
-    private func pruneOldCaches(keeping current: URL) {
+    private nonisolated static func pruneOldCaches(
+        in directory: URL,
+        keeping current: URL,
+        maxAge: TimeInterval
+    ) {
         let manager = FileManager.default
-        let cutoff = Date().addingTimeInterval(-Self.cacheMaxAge)
+        let cutoff = Date().addingTimeInterval(-maxAge)
         let files = (try? manager.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.contentModificationDateKey]
@@ -306,14 +324,29 @@ final class BangumiAirTimeService {
         else { return }
         let season = Season(year: year, month: month)
         let fileURL = cacheURL(for: season)
+        let maxAge = Self.maxAge
+        let cacheMaxAge = Self.cacheMaxAge
+        let cacheDirectory = directory
 
-        let cached = try? Data(contentsOf: fileURL)
-        let modified = (try? FileManager.default.attributesOfItem(atPath: fileURL.path))?[.modificationDate] as? Date
-        let isFresh = modified.map { Date().timeIntervalSince($0) < Self.maxAge } ?? false
+        // 1. 后台读盘并判鲜：7 天内直接在后台解析完成再回到主线程合入。
+        let diskOutcome = await Task.detached(priority: .userInitiated) { () -> DiskReadOutcome in
+            guard let data = try? Data(contentsOf: fileURL) else {
+                return DiskReadOutcome(isFresh: false, staleData: nil, freshParsed: nil)
+            }
+            let modified = (try? FileManager.default.attributesOfItem(atPath: fileURL.path))?[.modificationDate] as? Date
+            let isFresh = modified.map { Date().timeIntervalSince($0) < maxAge } ?? false
+            if isFresh {
+                return DiskReadOutcome(
+                    isFresh: true,
+                    staleData: nil,
+                    freshParsed: Self.parseSeasonPayload(data)
+                )
+            }
+            return DiskReadOutcome(isFresh: false, staleData: data, freshParsed: nil)
+        }.value
 
-        // 1. 本地缓存（7 天内直接用，不再发请求）
-        if isFresh, let cached {
-            apply(cached)
+        if diskOutcome.isFresh, let parsed = diskOutcome.freshParsed {
+            apply(parsed)
             applied = true
             return
         }
@@ -324,10 +357,16 @@ final class BangumiAirTimeService {
                 let (data, response) = try await session.data(from: remote)
                 if let http = response as? HTTPURLResponse {
                     if (200...299).contains(http.statusCode) {
-                        apply(data)
+                        let parsed = await Task.detached(priority: .userInitiated) {
+                            Self.parseSeasonPayload(data)
+                        }.value
+                        apply(parsed)
                         applied = true
-                        try? data.write(to: fileURL, options: .atomic)
-                        pruneOldCaches(keeping: fileURL)
+                        Task.detached(priority: .utility) {
+                            try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+                            try? data.write(to: fileURL, options: .atomic)
+                            Self.pruneOldCaches(in: cacheDirectory, keeping: fileURL, maxAge: cacheMaxAge)
+                        }
                         return
                     }
                     // 分支路径 404 时继续尝试同镜像下的备选分支名；其他状态直接结束远端尝试。
@@ -340,16 +379,20 @@ final class BangumiAirTimeService {
 
         // 3. 拉不到（离线 / 非 2xx）就用过期缓存，main 也是这个顺序：
         //    过期的数据总比空表好，卡片至少还有「HH:mm 更新」。
-        if let cached {
-            apply(cached)
+        if let staleData = diskOutcome.staleData {
+            let parsed = await Task.detached(priority: .userInitiated) {
+                Self.parseSeasonPayload(staleData)
+            }.value
+            apply(parsed)
             applied = true
         }
     }
 
-    private func apply(_ data: Data) {
-        let parsed = Self.parseSeasonPayload(data)
+    private func apply(_ parsed: ParsedSeason) {
+        for (subjectID, time) in parsed.times {
+            times[subjectID] = time
+        }
         for (subjectID, schedule) in parsed.schedules {
-            times[subjectID] = Self.timeText(schedule.first)
             schedules[subjectID] = schedule
         }
         for (subjectID, malID) in parsed.malIDs {
@@ -368,17 +411,26 @@ final class BangumiAirTimeService {
         hhmmFormatter.string(from: date)
     }
 
-    /// 单趟解析季度 JSON，同时提取「bangumi id -> 首播时刻 + 周期」与 `mal_id`。
-    private static func parseSeasonPayload(_ data: Data) -> (
-        schedules: [Int: BangumiAirSchedule],
-        malIDs: [Int: Int]
-    ) {
+    /// 单趟解析季度 JSON（非主线程安全），同时提取「bangumi id -> 时刻 / 首播+周期 / mal_id」。
+    private nonisolated static func parseSeasonPayload(_ data: Data) -> ParsedSeason {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = root["items"] as? [String: Any]
-        else { return ([:], [:]) }
+        else { return ParsedSeason(times: [:], schedules: [:], malIDs: [:]) }
 
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        let formatters = [withFraction, plain]
+
+        let hhmm = DateFormatter()
+        hhmm.locale = Locale(identifier: "en_US_POSIX")
+        hhmm.dateFormat = "HH:mm"
+
+        var times: [Int: String] = [:]
         var schedules: [Int: BangumiAirSchedule] = [:]
         var malIDs: [Int: Int] = [:]
+        times.reserveCapacity(items.count)
         schedules.reserveCapacity(items.count)
         malIDs.reserveCapacity(items.count)
 
@@ -393,17 +445,18 @@ final class BangumiAirTimeService {
             // 拿不出可信的播出时刻，不显示。
             guard beginText.count > 10,
                   let period = parseBroadcastPeriod(broadcast),
-                  let begin = parseInstant(beginText)
+                  let begin = parseInstant(beginText, formatters: formatters)
             else { continue }
             schedules[subjectID] = BangumiAirSchedule(first: begin, period: period)
+            times[subjectID] = hhmm.string(from: begin)
         }
-        return (schedules, malIDs)
+        return ParsedSeason(times: times, schedules: schedules, malIDs: malIDs)
     }
 
     /// `R/<ISO>/P7D` 里的周期；解析不出来（或为 0）返回 nil。
     ///
     /// 这里只用来判断「这条记录有没有可靠时刻」，与时刻本身无关。
-    private static func parseBroadcastPeriod(_ value: String) -> TimeInterval? {
+    private nonisolated static func parseBroadcastPeriod(_ value: String) -> TimeInterval? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("R/") else { return nil }
         let parts = trimmed.split(separator: "/")
@@ -431,18 +484,10 @@ final class BangumiAirTimeService {
     }
 
     /// 解析带时刻的 ISO 时间戳（`Z` 或 `+00:00`，可带小数秒）。
-    private static func parseInstant(_ text: String) -> Date? {
-        for formatter in instantFormatters {
+    private nonisolated static func parseInstant(_ text: String, formatters: [ISO8601DateFormatter]) -> Date? {
+        for formatter in formatters {
             if let date = formatter.date(from: text) { return date }
         }
         return nil
     }
-
-    private static let instantFormatters: [ISO8601DateFormatter] = {
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return [withFraction, plain]
-    }()
 }

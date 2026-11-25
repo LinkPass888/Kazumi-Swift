@@ -9,11 +9,10 @@
 //  只是不显示画面。
 //
 //  一次解析一个 `VideoSourceWebView`：每个都带一个 WebContent 子进程，复用会互相
-//  污染 cookie 与脚本状态。同时开几个由调用方（`DownloadCenter`）管。
+//  污染 cookie 与脚本状态。同时开几个由调用方（`DownloadCenter`）的并发限流器管。
 //
-//  收结果的写法是「锁保护的盒子 + 轮询」，不是 continuation：
-//  continuation 套在 @MainActor 的 WebView 回调里，编译器的 region 隔离检查认不出来，
-//  而且回调可能来两次，写不好就是 resume 两次崩溃。轮询 200ms 的代价小得多。
+//  收结果采用锁保护的 `CheckedContinuation` + 取消/超时即刻唤醒：
+//  任意回调、取消或超时都通过单次消费状态机安全 resume 一次，命中或取消后零延迟释放 WebView。
 //
 
 import Foundation
@@ -26,9 +25,6 @@ final class EpisodeMediaResolver {
         var format: VideoSourceFormat
     }
 
-    /// 轮询间隔。嗅到地址通常几百毫秒内就有，这个粒度够快又不烧 CPU。
-    private let pollInterval: Duration = .milliseconds(200)
-
     /// 网页报加载完之后再等这么久（脚本还要拼地址、起播放器）。
     private let graceAfterLoad: Duration = .seconds(6)
 
@@ -40,85 +36,145 @@ final class EpisodeMediaResolver {
         timeout: Duration = .seconds(45),
         cancellation: CancellationFlag
     ) async throws -> Result {
+        if cancellation.isCancelled || Task.isCancelled {
+            throw DownloadError.cancelled
+        }
+
         let sniffer = VideoSourceWebView()
-        let box = EventBox()
+        let waiter = ResolveWaiter()
+        var timeoutTask: Task<Void, Never>?
+        var loadTask: Task<Void, Never>?
+        var cancelToken: UUID?
+
         defer {
+            if let token = cancelToken {
+                cancellation.removeCancelHandler(token)
+            }
+            waiter.cancelGraceTask()
+            timeoutTask?.cancel()
+            loadTask?.cancel()
             sniffer.onVideoURLParser = nil
+            sniffer.onPageLoaded = nil
             sniffer.releaseMedia()
             sniffer.dispose()
         }
 
+        let graceDuration = graceAfterLoad
         sniffer.onVideoURLParser = { event in
-            // 同一个地址会重复报（fetch 与 video 标签各一次），盒子只收第一个。
+            // 同一个地址会重复报（fetch 与 video 标签各一次），waiter 只收第一个并即刻唤醒。
             guard !event.url.isEmpty else { return }
-            box.deliver(.init(url: event.url, format: event.format))
+            waiter.finish(with: .success(.init(url: event.url, format: event.format)))
         }
         // 「网页加载完」只能听 didFinish：`load(url:)` 在请求刚发出时就返回了，
         // 拿它当加载完会让每一集都秒判「没有地址」（LP 5112 那个红叹号就是这个）。
-        sniffer.onPageLoaded = { box.markLoadFinished() }
+        // 网页报完加载后再给脚本一段宽限期拼地址，超时即刻唤醒判定无媒体。
+        sniffer.onPageLoaded = {
+            waiter.scheduleGraceTimeout(after: graceDuration)
+        }
+
+        cancelToken = cancellation.addCancelHandler {
+            waiter.finish(with: .failure(DownloadError.cancelled))
+        }
+
+        timeoutTask = Task {
+            do {
+                try await Task.sleep(for: timeout)
+                waiter.finish(with: .failure(DownloadError.timedOut))
+            } catch {
+                // 正常命中或取消，忽略睡眠中断。
+            }
+        }
 
         // 下载取的也是播放页里那份地址：规则要登录，这里同样得带上（Fuck 5469 第 2 条）。
-        await MainActor.run {
-            sniffer.configureSession(pluginName: pluginName, url: pageURL)
-        }
-        let loadTask = Task { @MainActor in
+        sniffer.configureSession(pluginName: pluginName, url: pageURL)
+        loadTask = Task { @MainActor in
             await sniffer.load(url: pageURL, useLegacyParser: useLegacyParser)
         }
-        defer { loadTask.cancel() }
 
-        let started = ContinuousClock.now
-        // 网页报完加载还要给脚本一点时间拼地址；过了这段宽限期仍然没有地址，
-        // 那就是真没有，不用耗满超时。
-        var pageLoadedAt: ContinuousClock.Instant?
-        while true {
-            if let result = box.take() { return result }
-            if cancellation.isCancelled { throw DownloadError.cancelled }
-            if box.loadFinished {
-                if pageLoadedAt == nil { pageLoadedAt = ContinuousClock.now }
-                if let loadedAt = pageLoadedAt, ContinuousClock.now - loadedAt > graceAfterLoad {
-                    throw DownloadEngineError.notMedia
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiter.attach(continuation)
+                if cancellation.isCancelled || Task.isCancelled {
+                    waiter.finish(with: .failure(DownloadError.cancelled))
                 }
             }
-            if ContinuousClock.now - started > timeout { throw DownloadError.timedOut }
-            try await Task.sleep(for: pollInterval)
+        } onCancel: {
+            waiter.finish(with: .failure(DownloadError.cancelled))
         }
     }
 }
 
-/// 跨线程传「嗅到的第一个地址」的小盒子。
-private final class EventBox: @unchecked Sendable {
+/// 跨线程单次消费唤醒器：保证 `CheckedContinuation` 至多被 resume 一次，并托管页面加载宽限计时器。
+private final class ResolveWaiter: @unchecked Sendable {
     private let lock = NSLock()
-    private var result: EpisodeMediaResolver.Result?
-    private var delivered = false
+    private var continuation: CheckedContinuation<EpisodeMediaResolver.Result, Error>?
+    private var pendingOutcome: Swift.Result<EpisodeMediaResolver.Result, Error>?
+    private var graceTask: Task<Void, Never>?
     private var finished = false
 
-    /// 只收第一个，后来的丢掉。
-    func deliver(_ value: EpisodeMediaResolver.Result) {
+    func attach(_ continuation: CheckedContinuation<EpisodeMediaResolver.Result, Error>) {
+        var immediate: Swift.Result<EpisodeMediaResolver.Result, Error>?
         lock.lock()
-        defer { lock.unlock() }
-        guard !delivered else { return }
-        delivered = true
-        result = value
+        if let pending = pendingOutcome {
+            pendingOutcome = nil
+            immediate = pending
+        } else if !finished {
+            self.continuation = continuation
+        }
+        lock.unlock()
+        if let immediate {
+            continuation.resume(with: immediate)
+        }
     }
 
-    func take() -> EpisodeMediaResolver.Result? {
+    func finish(with outcome: Swift.Result<EpisodeMediaResolver.Result, Error>) {
+        let toResume: CheckedContinuation<EpisodeMediaResolver.Result, Error>?
+        let graceToCancel: Task<Void, Never>?
         lock.lock()
-        defer { lock.unlock() }
-        let value = result
-        result = nil
-        return value
-    }
-
-    func markLoadFinished() {
-        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
         finished = true
+        graceToCancel = graceTask
+        graceTask = nil
+        if let cont = continuation {
+            continuation = nil
+            toResume = cont
+        } else {
+            pendingOutcome = outcome
+            toResume = nil
+        }
+        lock.unlock()
+
+        graceToCancel?.cancel()
+        toResume?.resume(with: outcome)
+    }
+
+    func scheduleGraceTimeout(after duration: Duration) {
+        lock.lock()
+        guard !finished, graceTask == nil else {
+            lock.unlock()
+            return
+        }
+        let task = Task { [weak self] in
+            do {
+                try await Task.sleep(for: duration)
+                self?.finish(with: .failure(DownloadEngineError.notMedia))
+            } catch {
+                // 已命中结果或外部取消，忽略。
+            }
+        }
+        graceTask = task
         lock.unlock()
     }
 
-    var loadFinished: Bool {
+    func cancelGraceTask() {
         lock.lock()
-        defer { lock.unlock() }
-        return finished
+        let task = graceTask
+        graceTask = nil
+        lock.unlock()
+        task?.cancel()
     }
 }
 

@@ -609,20 +609,25 @@ struct ImageSearchScreen: View {
         isShowingPicker = true
     }
 
-    /// 相册选择结果：读到内存后按 JPEG 上传，与原版 image_picker + readAsBytes 等价。
+    /// 相册选择结果：后台用 ImageIO 解码并压缩为 JPEG 后上传，避免阻塞主线程。
     private func loadPhoto(_ item: PhotosPickerItem) {
         isPicking = true
         inputError = nil
         Task {
             defer { isPicking = false }
             do {
-                guard let data = try await item.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data)
-                else {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
                     inputError = String(localized: "无法读取这张图片，请换一张")
                     return
                 }
-                adopt(PickedImage(image: image, fileName: "screenshot"))
+                let picked = await Task.detached(priority: .userInitiated) {
+                    PickedImage.prepare(from: data, fileName: "screenshot")
+                }.value
+                guard let picked else {
+                    inputError = String(localized: "无法读取这张图片，请换一张")
+                    return
+                }
+                adopt(picked)
             } catch {
                 inputError = String(localized: "无法读取这张图片，请换一张")
             }

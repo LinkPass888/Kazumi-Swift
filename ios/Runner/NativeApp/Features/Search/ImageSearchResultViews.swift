@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-/// 16:9 的匹配画面；加载失败或没有地址时显示占位图标。
+/// 16:9 的匹配画面；走统一图片缓存。
 struct RemoteFrameImage: View {
     let url: URL
     var height: CGFloat? = nil
@@ -17,30 +17,11 @@ struct RemoteFrameImage: View {
         Rectangle()
             .fill(KazumiPalette.cardSurface(for: colorScheme))
             .overlay {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                    case .failure:
-                        placeholder
-                    case .empty:
-                        ProgressView()
-                    @unknown default:
-                        placeholder
-                    }
-                }
+                BangumiRemoteImage(url: url.absoluteString, contentMode: .fit)
             }
             .frame(maxWidth: .infinity)
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    private var placeholder: some View {
-        Image(systemName: "film")
-            .font(.system(size: 32, weight: .light))
-            .foregroundStyle(.tertiary)
     }
 }
 
@@ -55,21 +36,7 @@ struct TraceFrame: View {
             .aspectRatio(16 / 9, contentMode: .fit)
             .overlay {
                 if let url = result.frameURL {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFit()
-                        case .failure:
-                            placeholder
-                        case .empty:
-                            ProgressView()
-                                .controlSize(.small)
-                        @unknown default:
-                            placeholder
-                        }
-                    }
+                    BangumiRemoteImage(url: url.absoluteString, contentMode: .fit)
                 } else {
                     placeholder
                 }

@@ -25,6 +25,7 @@ final class DanmakuOverlayView: UIView {
         var lane: Int = 0
         var mode: Int = 1
         var baseY: CGFloat = .nan
+        var lastSnappedX: CGFloat = .nan
         /// 描边宽度（pt）。0 表示不描边。
         var outlineWidth: CGFloat = 0
 
@@ -104,6 +105,10 @@ final class DanmakuOverlayView: UIView {
     private var reusableLabels: [ItemLabel] = []
     private static let maxReusableLabels = 64
     private var nextIndex = 0
+    /// 各模式每条轨道最新一条弹幕，供 `isLaneFree` 以 O(1) 判定轨道碰撞。
+    private var lastScrollItemPerLane: [Int: ItemLabel] = [:]
+    private var lastTopItemPerLane: [Int: ItemLabel] = [:]
+    private var lastBottomItemPerLane: [Int: ItemLabel] = [:]
 
     /// 一整套弹幕观感。字段与「弹幕设置」页一一对应，页面改哪一项这里就跟着变。
     struct Style: Equatable {
@@ -184,9 +189,69 @@ final class DanmakuOverlayView: UIView {
         }
     }
 
+    /// 预编译后的关键词与正则屏蔽规则，避免每条弹幕重复编译 `NSRegularExpression`。
+    private struct CompiledFilterRules {
+        let regexes: [NSRegularExpression]
+        let lowercaseLiterals: [String]
+
+        static let empty = CompiledFilterRules(regexes: [], lowercaseLiterals: [])
+
+        init(regexes: [NSRegularExpression], lowercaseLiterals: [String]) {
+            self.regexes = regexes
+            self.lowercaseLiterals = lowercaseLiterals
+        }
+
+        init(rules: [String]) {
+            var compiledRegexes: [NSRegularExpression] = []
+            var literals: [String] = []
+            for rule in rules where !rule.isEmpty {
+                if rule.hasPrefix("/") && rule.hasSuffix("/") && rule.count >= 2 {
+                    let pattern = String(rule.dropFirst().dropLast())
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                        compiledRegexes.append(regex)
+                    }
+                } else {
+                    literals.append(rule.lowercased())
+                }
+            }
+            self.regexes = compiledRegexes
+            self.lowercaseLiterals = literals
+        }
+
+        var isEmpty: Bool { regexes.isEmpty && lowercaseLiterals.isEmpty }
+
+        func allows(_ text: String) -> Bool {
+            guard !isEmpty else { return true }
+            if !lowercaseLiterals.isEmpty {
+                let lowered = text.lowercased()
+                for literal in lowercaseLiterals where lowered.contains(literal) {
+                    return false
+                }
+            }
+            if !regexes.isEmpty {
+                let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                for regex in regexes where regex.firstMatch(in: text, options: [], range: range) != nil {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     private var style = Style()
     /// 上一次的过滤类设置，用来判断要不要把已经画出来的清掉重来。
     private var lastFilterSignature: Int?
+    private var cachedFilterRuleSources: [String] = []
+    private var compiledFilterRules: CompiledFilterRules = .empty
+    private var cachedFontSize: Double = -1
+    private var cachedFontWeight: Int = -1
+    private var cachedFont: UIFont = .systemFont(ofSize: 20, weight: .regular)
+    private static let cachedParagraphStyle: NSParagraphStyle = {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byClipping
+        return paragraph.copy() as! NSParagraphStyle
+    }()
 
     private var enabled: Bool { style.enabled }
 
@@ -261,10 +326,19 @@ final class DanmakuOverlayView: UIView {
         let newSignature = Self.commentsSignature(newComments)
         let filtersChanged = lastFilterSignature != nil
             && lastFilterSignature != newStyle.filterSignature
+        if newStyle.filterRules != cachedFilterRuleSources {
+            cachedFilterRuleSources = newStyle.filterRules
+            compiledFilterRules = newStyle.filterRules.isEmpty
+                ? .empty
+                : CompiledFilterRules(rules: newStyle.filterRules)
+        }
         if newSignature != signature || filtersChanged {
             signature = newSignature
-            let allowed = newComments.filter { newStyle.allows($0.source) && newStyle.allowsContent($0.text) }
-            let ordered = allowed.sorted { $0.time < $1.time }
+            let filterRules = compiledFilterRules
+            let allowed = newComments.filter { newStyle.allows($0.source) && filterRules.allows($0.text) }
+            let ordered = Self.isTimeAscending(allowed)
+                ? allowed
+                : allowed.sorted { $0.time < $1.time }
             comments = newStyle.deduplication ? Self.merged(ordered) : ordered
             clearLabels()
             // 过滤类设置改了：从现在这一刻接着放，不把已经过去的那段重播一遍。
@@ -315,6 +389,25 @@ final class DanmakuOverlayView: UIView {
         )
         spawn(comment, now: now)
         updateDisplayLinkState()
+    }
+
+    private static func isTimeAscending(_ list: [DanmakuComment]) -> Bool {
+        guard list.count > 1 else { return true }
+        for index in 1..<list.count where list[index].time < list[index - 1].time {
+            return false
+        }
+        return true
+    }
+
+    private func currentFont() -> UIFont {
+        let size = max(10, min(48, style.fontSize))
+        let weight = max(1, min(9, style.fontWeight))
+        if size != cachedFontSize || weight != cachedFontWeight {
+            cachedFontSize = size
+            cachedFontWeight = weight
+            cachedFont = UIFont.systemFont(ofSize: size, weight: Self.weight(weight))
+        }
+        return cachedFont
     }
 
     /// 5 秒内内容完全相同的合并成一条（main: mergeDuplicateDanmakus，窗口 5 秒）。
@@ -432,7 +525,15 @@ final class DanmakuOverlayView: UIView {
         let activelyAnimating = (clock?.isPlayingNow == true)
             && (clock?.isStalledNow == false)
             && (clock?.hasStartedPlayback == true)
-        setHighFrameRate(activelyAnimating && (!labels.isEmpty || nextIndex < comments.count))
+        let referenceNow = sampleFilled ? smoothTime : (clock?.currentPlaybackTime ?? lastNow)
+        setHighFrameRate(activelyAnimating && needsHighFrameRate(at: referenceNow))
+    }
+
+    /// 空屏且下一条弹幕距离触发 >= 0.25s 时降频至低帧率，避免无弹幕时段锁高刷。
+    private func needsHighFrameRate(at now: Double) -> Bool {
+        if !labels.isEmpty { return true }
+        guard nextIndex < comments.count else { return false }
+        return comments[nextIndex].time - now < 0.25
     }
 
     private func setHighFrameRate(_ high: Bool) {
@@ -475,7 +576,7 @@ final class DanmakuOverlayView: UIView {
         }
         emit(upTo: now)
         layoutLabels(at: now)
-        setHighFrameRate(!labels.isEmpty || nextIndex < comments.count)
+        setHighFrameRate(needsHighFrameRate(at: now))
     }
 
     private func emit(upTo now: Double) {
@@ -499,20 +600,27 @@ final class DanmakuOverlayView: UIView {
         default: return
         }
 
+        let font = currentFont()
+        let border = style.border ? max(0, min(3, style.borderSize)) : 0
+        // 描边会向字形轮廓外扩，按粗细留边，免得笔画被裁掉。
+        let edgePadding = max(4, ceil(CGFloat(border) * 2) + 2)
+        let measured = (comment.text as NSString).size(withAttributes: [.font: font])
+        let width = ceil(measured.width) + edgePadding
+        let height = ceil(measured.height) + edgePadding
+
+        // 先判轨道：海量弹幕关闭且无空轨时直接提前返回，避免白白出池、排版与光栅化。
+        guard let lane = laneIndex(mode: mode, width: width, now: now) else {
+            return
+        }
+
         let label = dequeueLabel()
-        let size = max(10, min(48, style.fontSize))
-        let font = UIFont.systemFont(ofSize: size, weight: Self.weight(style.fontWeight))
         // 关掉「弹幕颜色」就一律白字（main 的 danmakuColor）。
         let textColor = style.useColor ? Self.color(comment.colorValue) : UIColor.white
-        let border = style.border ? max(0, min(3, style.borderSize)) : 0
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        paragraph.lineBreakMode = .byClipping
         // 填充字和描边用同一套排版，`drawText` 里再用同一个 CTLine 画两遍。
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: textColor,
-            .paragraphStyle: paragraph
+            .paragraphStyle: Self.cachedParagraphStyle
         ]
         label.attributedText = NSAttributedString(string: comment.text, attributes: attributes)
         // 直接用 pt，跟 canvas_danmaku 的 `Paint.strokeWidth` 一样；不再折算成
@@ -527,25 +635,13 @@ final class DanmakuOverlayView: UIView {
         label.mode = mode
         label.startTime = now
         label.duration = duration(for: mode)
-
-        let fitted = label.sizeThatFits(
-            CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        )
-        // 描边会向字形轮廓外扩，sizeThatFits 不算这笔；按粗细留边，免得笔画被裁掉。
-        let edgePadding = max(4, ceil(CGFloat(border) * 2) + 2)
-        let width = ceil(fitted.width) + edgePadding
-        let height = ceil(fitted.height) + edgePadding
         label.bounds = CGRect(origin: .zero, size: CGSize(width: width, height: height))
         label.layer.shouldRasterize = true
         label.layer.rasterizationScale = currentScreenScale
-        label.layer.allowsEdgeAntialiasing = true
-
-        // 轨道满了：海量弹幕叠着画，否则这条就不画了（回收刚出池的 label）。
-        guard let lane = laneIndex(mode: mode, width: width, now: now) else {
-            recycleLabel(label)
-            return
-        }
+        // 坐标已做像素对齐，关闭边缘抗锯齿以减少合成开销。
+        label.layer.allowsEdgeAntialiasing = false
         label.lane = lane
+        setLastItem(label, forLane: lane, mode: mode)
         addSubview(label)
         labels.append(label)
         position(label, at: now)
@@ -574,18 +670,23 @@ final class DanmakuOverlayView: UIView {
     }
 
     private func layoutLabels(at now: Double) {
-        var alive: [ItemLabel] = []
-        alive.reserveCapacity(labels.count)
-        for label in labels {
+        var writeIndex = 0
+        for readIndex in 0..<labels.count {
+            let label = labels[readIndex]
             let elapsed = now - label.startTime
             if elapsed > label.duration + 0.6 || elapsed < -1.5 {
                 recycleLabel(label)
                 continue
             }
             position(label, at: now)
-            alive.append(label)
+            if writeIndex != readIndex {
+                labels[writeIndex] = label
+            }
+            writeIndex += 1
         }
-        labels = alive
+        if writeIndex < labels.count {
+            labels.removeLast(labels.count - writeIndex)
+        }
     }
 
     private func position(_ label: ItemLabel, at now: Double) {
@@ -615,8 +716,14 @@ final class DanmakuOverlayView: UIView {
             label.transform = .identity
             label.frame = CGRect(x: 0, y: snappedY, width: width, height: height)
             label.baseY = snappedY
+            label.lastSnappedX = .nan
         }
         let snappedX = snapToPixel(x, scale: scale)
+        // 已定位的固定顶/底弹幕（以及横向像素未变化的弹幕）跳过重复 transform 赋值。
+        if !label.lastSnappedX.isNaN && label.lastSnappedX == snappedX {
+            return
+        }
+        label.lastSnappedX = snappedX
         label.transform = CGAffineTransform(translationX: snappedX, y: 0)
     }
 
@@ -644,34 +751,69 @@ final class DanmakuOverlayView: UIView {
     }
 
     private func isLaneFree(lane: Int, mode: Int, width: CGFloat, now: Double) -> Bool {
-        for item in labels where item.lane == lane && item.mode == mode {
-            if mode == 1 {
-                let progress = (now - item.startTime) / item.duration
-                let x = bounds.width - CGFloat(progress) * (bounds.width + item.bounds.width)
-                if x + item.bounds.width > bounds.width - 16 {
-                    return false
-                }
-            } else if now - item.startTime < item.duration {
-                return false
-            }
+        guard let item = lastItem(forLane: lane, mode: mode) else { return true }
+        if mode == 1 {
+            let progress = (now - item.startTime) / item.duration
+            let x = bounds.width - CGFloat(progress) * (bounds.width + item.bounds.width)
+            return x + item.bounds.width <= bounds.width - 16
         }
-        return true
+        return now - item.startTime >= item.duration
+    }
+
+    private func lastItem(forLane lane: Int, mode: Int) -> ItemLabel? {
+        switch mode {
+        case 1: return lastScrollItemPerLane[lane]
+        case 5: return lastTopItemPerLane[lane]
+        case 4: return lastBottomItemPerLane[lane]
+        default: return nil
+        }
+    }
+
+    private func setLastItem(_ label: ItemLabel, forLane lane: Int, mode: Int) {
+        switch mode {
+        case 1: lastScrollItemPerLane[lane] = label
+        case 5: lastTopItemPerLane[lane] = label
+        case 4: lastBottomItemPerLane[lane] = label
+        default: break
+        }
+    }
+
+    private func clearLastItemIfMatching(_ label: ItemLabel) {
+        switch label.mode {
+        case 1:
+            if lastScrollItemPerLane[label.lane] === label {
+                lastScrollItemPerLane.removeValue(forKey: label.lane)
+            }
+        case 5:
+            if lastTopItemPerLane[label.lane] === label {
+                lastTopItemPerLane.removeValue(forKey: label.lane)
+            }
+        case 4:
+            if lastBottomItemPerLane[label.lane] === label {
+                lastBottomItemPerLane.removeValue(forKey: label.lane)
+            }
+        default:
+            break
+        }
     }
 
     private func dequeueLabel() -> ItemLabel {
         if let reused = reusableLabels.popLast() {
             reused.transform = .identity
             reused.baseY = .nan
+            reused.lastSnappedX = .nan
             return reused
         }
         return ItemLabel()
     }
 
     private func recycleLabel(_ label: ItemLabel) {
+        clearLastItemIfMatching(label)
         label.removeFromSuperview()
         label.attributedText = nil
         label.transform = .identity
         label.baseY = .nan
+        label.lastSnappedX = .nan
         if reusableLabels.count < Self.maxReusableLabels {
             reusableLabels.append(label)
         }
@@ -682,6 +824,9 @@ final class DanmakuOverlayView: UIView {
             recycleLabel(label)
         }
         labels.removeAll()
+        lastScrollItemPerLane.removeAll(keepingCapacity: true)
+        lastTopItemPerLane.removeAll(keepingCapacity: true)
+        lastBottomItemPerLane.removeAll(keepingCapacity: true)
         sampleFilled = false
     }
 

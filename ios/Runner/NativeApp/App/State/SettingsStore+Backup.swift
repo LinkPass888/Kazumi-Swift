@@ -656,11 +656,6 @@ extension SettingsStore {
             guard persistRawSetting(rawValue, forKey: key) else { continue }
             restored += 1
         }
-        // 恢复完成后同步全局网络与镜像状态，使新设置立即生效无需重启
-        let selectedMirror = RulesMirror(rawValue: rulesMirror) ?? .ghProxy
-        RulesRepoClient.mirror.withLock { $0 = selectedMirror }
-        KazumiNetworkPolicy.imageAcceleration = ImageAcceleration(rawValue: imageAcceleration) ?? .direct
-        BangumiAcceleration.mode = enableBangumiProxy ? .mirror : .direct
         return restored
     }
 }

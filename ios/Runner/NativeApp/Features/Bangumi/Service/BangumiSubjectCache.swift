@@ -33,21 +33,23 @@ final class BangumiSubjectCache {
     /// 每份数据是什么时候拿到的（epoch 秒）。
     private var infoSavedAt: [Int: TimeInterval] = [:]
     private var episodesSavedAt: [Int: TimeInterval] = [:]
+    /// 已尝试从磁盘水合过的 subjectID，避免同一会话内对缺失或已读文件重复读盘解码。
+    private var diskHydratedIDs: Set<Int> = []
 
     private let directory: URL
     private let decoder = JSONDecoder()
+    private let diskStore: DiskStore
 
     private init() {
-        let support = (try? FileManager.default.url(
+        let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        directory = support
+            in: .userDomainMask
+        ).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let dir = support
             .appendingPathComponent("Kazumi", isDirectory: true)
             .appendingPathComponent("subjects", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directory = dir
+        diskStore = DiskStore(directory: dir)
     }
 
     // MARK: - 读
@@ -59,46 +61,40 @@ final class BangumiSubjectCache {
     /// 同上，剧集。
     func memoryEpisodes(for bangumiID: Int) -> [BangumiEpisode]? { episodes[bangumiID] }
 
+    /// 异步读取条目：先查内存，未命中则在后台 actor 读盘与解析，不阻塞主线程。
+    func cachedItemAsync(for bangumiID: Int) async -> BangumiItem? {
+        if let item = items[bangumiID] { return item }
+        guard !diskHydratedIDs.contains(bangumiID) else { return nil }
+        let loaded = await diskStore.loadSubject(
+            bangumiID,
+            infoMaxAge: Self.infoMaxAge,
+            episodesMaxAge: Self.episodesMaxAge
+        )
+        applyHydrated(loaded, for: bangumiID)
+        return items[bangumiID]
+    }
+
     /// 条目：内存里有就直接用，没有就读盘。不判断新鲜度——调用方拿它先画页面，
     /// 是否要刷新由 [needsInfoRefresh] 决定。
     func item(for bangumiID: Int) -> BangumiItem? {
         if let item = items[bangumiID] { return item }
-        guard let payload = loadPayload(bangumiID),
-              let info = payload.info,
-              // 只留一天：更早的当没有，重新拉。
-              let savedAt = payload.infoSavedAt,
-              Date().timeIntervalSince1970 - savedAt < Self.infoMaxAge
-        else { return nil }
-        let item = BangumiItem.fromJSON(JSONValue(any: info.value))
-        // 没标题的旧缓存当没有（LP 2997）：以前会把半截响应存进去，
-        // 之后详情页就一直拿它铺页面，停在「未知」那张空页上。
-        guard !item.displayName.isEmpty else { return nil }
-        items[bangumiID] = item
-        infoSavedAt[bangumiID] = payload.infoSavedAt
-        return item
+        hydrateFromDiskIfNeeded(bangumiID)
+        return items[bangumiID]
     }
 
     /// 剧集列表，同上。
     func episodes(for bangumiID: Int) -> [BangumiEpisode]? {
         if let episodes = episodes[bangumiID] { return episodes }
-        guard let payload = loadPayload(bangumiID),
-              let raw = payload.episodes,
-              let savedAt = payload.episodesSavedAt,
-              Date().timeIntervalSince1970 - savedAt < Self.episodesMaxAge
-        else { return nil }
-        let parsed = raw.map { BangumiEpisode.fromJSON(JSONValue(any: $0.value)) }
-        // 一集首播日期都没有的缓存当没有（LP 3013）：早期版本存过没有 airdate 的
-        // 剧集，结果「更新进度」永远算成 0 集、整行不显示，缓存还挡着不再去拉。
-        // 只认「一条日期都没有」这种情况，正常的未播出番（日期为空）不受影响。
-        guard parsed.contains(where: { !$0.airdate.isEmpty }) else { return nil }
-        episodes[bangumiID] = parsed
-        episodesSavedAt[bangumiID] = payload.episodesSavedAt
-        return parsed
+        hydrateFromDiskIfNeeded(bangumiID)
+        return episodes[bangumiID]
     }
 
     /// 条目是否需要重新拉：没缓存、或过了保质期。
     func needsInfoRefresh(_ bangumiID: Int) -> Bool {
-        guard let savedAt = infoSavedAt[bangumiID] ?? loadPayload(bangumiID)?.infoSavedAt else {
+        if infoSavedAt[bangumiID] == nil {
+            hydrateFromDiskIfNeeded(bangumiID)
+        }
+        guard let savedAt = infoSavedAt[bangumiID] else {
             return true
         }
         return Date().timeIntervalSince1970 - savedAt > Self.infoMaxAge
@@ -106,7 +102,10 @@ final class BangumiSubjectCache {
 
     /// 剧集是否需要重新拉。
     func needsEpisodesRefresh(_ bangumiID: Int) -> Bool {
-        guard let savedAt = episodesSavedAt[bangumiID] ?? loadPayload(bangumiID)?.episodesSavedAt else {
+        if episodesSavedAt[bangumiID] == nil {
+            hydrateFromDiskIfNeeded(bangumiID)
+        }
+        guard let savedAt = episodesSavedAt[bangumiID] else {
             return true
         }
         return Date().timeIntervalSince1970 - savedAt > Self.episodesMaxAge
@@ -124,27 +123,29 @@ final class BangumiSubjectCache {
         for item in list { remember(item) }
     }
 
-    /// 接口返回的完整条目，落盘。
+    /// 接口返回的完整条目，更新内存后在后台 actor 落盘。
     func store(info json: JSONValue, for bangumiID: Int) {
         // 半截响应不落盘：存了会顶掉原来那份好的，还会被当成「有数据」不再刷新。
         let item = BangumiItem.fromJSON(json)
         guard !item.displayName.isEmpty else { return }
-        var payload = loadPayload(bangumiID) ?? Payload()
-        payload.info = AnyCodableJSON(json.foundationObject)
-        payload.infoSavedAt = Date().timeIntervalSince1970
-        save(payload, for: bangumiID)
+        let savedAt = Date().timeIntervalSince1970
         items[bangumiID] = item
-        infoSavedAt[bangumiID] = payload.infoSavedAt
+        infoSavedAt[bangumiID] = savedAt
+        let store = diskStore
+        Task.detached(priority: .utility) {
+            await store.saveInfo(json, savedAt: savedAt, for: bangumiID)
+        }
     }
 
-    /// 接口返回的剧集列表，落盘。
+    /// 接口返回的剧集列表，更新内存后在后台 actor 落盘。
     func store(episodes list: [JSONValue], for bangumiID: Int) {
-        var payload = loadPayload(bangumiID) ?? Payload()
-        payload.episodes = list.map { AnyCodableJSON($0.foundationObject) }
-        payload.episodesSavedAt = Date().timeIntervalSince1970
-        save(payload, for: bangumiID)
+        let savedAt = Date().timeIntervalSince1970
         episodes[bangumiID] = list.map { BangumiEpisode.fromJSON($0) }
-        episodesSavedAt[bangumiID] = payload.episodesSavedAt
+        episodesSavedAt[bangumiID] = savedAt
+        let store = diskStore
+        Task.detached(priority: .utility) {
+            await store.saveEpisodes(list, savedAt: savedAt, for: bangumiID)
+        }
     }
 
     // MARK: - 磁盘
@@ -156,18 +157,138 @@ final class BangumiSubjectCache {
         var episodesSavedAt: TimeInterval?
     }
 
+    private struct LoadedSubject: Sendable {
+        var item: BangumiItem?
+        var infoSavedAt: TimeInterval?
+        var episodes: [BangumiEpisode]?
+        var episodesSavedAt: TimeInterval?
+    }
+
     private func fileURL(_ bangumiID: Int) -> URL {
         directory.appendingPathComponent("\(bangumiID).json")
     }
 
-    private func loadPayload(_ bangumiID: Int) -> Payload? {
-        guard let data = try? Data(contentsOf: fileURL(bangumiID)) else { return nil }
-        return try? decoder.decode(Payload.self, from: data)
+    /// 单次水合：兼容同步调用方，把条目和剧集一次读出并记入内存，避免重复读盘。
+    private func hydrateFromDiskIfNeeded(_ bangumiID: Int) {
+        guard !diskHydratedIDs.contains(bangumiID) else { return }
+        let loaded = Self.parsePayloadData(
+            try? Data(contentsOf: fileURL(bangumiID)),
+            decoder: decoder,
+            infoMaxAge: Self.infoMaxAge,
+            episodesMaxAge: Self.episodesMaxAge
+        )
+        applyHydrated(loaded, for: bangumiID)
     }
 
-    private func save(_ payload: Payload, for bangumiID: Int) {
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        try? data.write(to: fileURL(bangumiID), options: .atomic)
+    private func applyHydrated(_ loaded: LoadedSubject?, for bangumiID: Int) {
+        diskHydratedIDs.insert(bangumiID)
+        guard let loaded else { return }
+        if items[bangumiID] == nil, let item = loaded.item {
+            items[bangumiID] = item
+        }
+        if infoSavedAt[bangumiID] == nil, let savedAt = loaded.infoSavedAt {
+            infoSavedAt[bangumiID] = savedAt
+        }
+        if episodes[bangumiID] == nil, let list = loaded.episodes {
+            episodes[bangumiID] = list
+        }
+        if episodesSavedAt[bangumiID] == nil, let savedAt = loaded.episodesSavedAt {
+            episodesSavedAt[bangumiID] = savedAt
+        }
+    }
+
+    private nonisolated static func parsePayloadData(
+        _ data: Data?,
+        decoder: JSONDecoder,
+        infoMaxAge: TimeInterval,
+        episodesMaxAge: TimeInterval
+    ) -> LoadedSubject? {
+        guard let data, let payload = try? decoder.decode(Payload.self, from: data) else {
+            return nil
+        }
+        let now = Date().timeIntervalSince1970
+        var parsedItem: BangumiItem?
+        if let info = payload.info,
+           let savedAt = payload.infoSavedAt,
+           now - savedAt < infoMaxAge {
+            let item = BangumiItem.fromJSON(JSONValue(any: info.value))
+            // 没标题的旧缓存当没有（LP 2997）：以前会把半截响应存进去，
+            // 之后详情页就一直拿它铺页面，停在「未知」那张空页上。
+            if !item.displayName.isEmpty {
+                parsedItem = item
+            }
+        }
+        var parsedEpisodes: [BangumiEpisode]?
+        if let raw = payload.episodes,
+           let savedAt = payload.episodesSavedAt,
+           now - savedAt < episodesMaxAge {
+            let parsed = raw.map { BangumiEpisode.fromJSON(JSONValue(any: $0.value)) }
+            // 一集首播日期都没有的缓存当没有（LP 3013）：早期版本存过没有 airdate 的
+            // 剧集，结果「更新进度」永远算成 0 集、整行不显示，缓存还挡着不再去拉。
+            // 只认「一条日期都没有」这种情况，正常的未播出番（日期为空）不受影响。
+            if parsed.contains(where: { !$0.airdate.isEmpty }) {
+                parsedEpisodes = parsed
+            }
+        }
+        return LoadedSubject(
+            item: parsedItem,
+            infoSavedAt: payload.infoSavedAt,
+            episodes: parsedEpisodes,
+            episodesSavedAt: payload.episodesSavedAt
+        )
+    }
+
+    /// 独立后台 actor 串行负责磁盘读改写与 JSON 编解码，彻底移出 `@MainActor`。
+    private actor DiskStore {
+        private let directory: URL
+        private let decoder = JSONDecoder()
+        private let encoder = JSONEncoder()
+
+        init(directory: URL) {
+            self.directory = directory
+        }
+
+        private func fileURL(_ bangumiID: Int) -> URL {
+            directory.appendingPathComponent("\(bangumiID).json")
+        }
+
+        func loadSubject(
+            _ bangumiID: Int,
+            infoMaxAge: TimeInterval,
+            episodesMaxAge: TimeInterval
+        ) -> LoadedSubject? {
+            BangumiSubjectCache.parsePayloadData(
+                try? Data(contentsOf: fileURL(bangumiID)),
+                decoder: decoder,
+                infoMaxAge: infoMaxAge,
+                episodesMaxAge: episodesMaxAge
+            )
+        }
+
+        func saveInfo(_ json: JSONValue, savedAt: TimeInterval, for bangumiID: Int) {
+            var payload = loadPayload(bangumiID) ?? Payload()
+            payload.info = AnyCodableJSON(json.foundationObject)
+            payload.infoSavedAt = savedAt
+            save(payload, for: bangumiID)
+        }
+
+        func saveEpisodes(_ list: [JSONValue], savedAt: TimeInterval, for bangumiID: Int) {
+            var payload = loadPayload(bangumiID) ?? Payload()
+            payload.episodes = list.map { AnyCodableJSON($0.foundationObject) }
+            payload.episodesSavedAt = savedAt
+            save(payload, for: bangumiID)
+        }
+
+        private func loadPayload(_ bangumiID: Int) -> Payload? {
+            guard let data = try? Data(contentsOf: fileURL(bangumiID)) else { return nil }
+            return try? decoder.decode(Payload.self, from: data)
+        }
+
+        private func save(_ payload: Payload, for bangumiID: Int) {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            guard let data = try? encoder.encode(payload) else { return }
+            try? data.write(to: fileURL(bangumiID), options: .atomic)
+        }
     }
 }
 

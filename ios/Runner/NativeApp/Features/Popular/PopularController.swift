@@ -26,6 +26,8 @@ final class PopularController {
     static let heroLimit = 5
 
     private(set) var rows: [PopularRow] = []
+    /// 每行货架需要抑制缩放源的重复番剧 ID 缓存（避免在视图 body 中逐帧重算）。
+    private(set) var shelfSuppressedZoomIDs: [String: Set<Int>] = [:]
     /// 首屏还在等第一批数据（缓存和网络都还没结果）。
     private(set) var isLoading = true
     /// 四行全空且网络也失败。
@@ -40,6 +42,8 @@ final class PopularController {
     private let cache = PopularRowCache.shared
     /// 详情缓存（焦点区补简介复用这份，不另开一套）。
     private let subjectCache = BangumiSubjectCache.shared
+    /// `load()` 在途去重任务，避免多处 `onAppear` / 重试并发拉取。
+    private var loadTask: Task<Void, Never>?
 
     /// 四行的定义：键名、标题、过期时间。
     private struct RowSpec {
@@ -84,13 +88,27 @@ final class PopularController {
             painted.append(makeRow(spec, items: items))
         }
         guard !painted.isEmpty else { return false }
-        rows = painted
+        setRows(painted)
         isLoading = false
         return true
     }
 
-    /// 刷新：没过期的行不重新拉，已经画出来的行保持原样，页面不闪。
+    /// 刷新：在途去重，仅拉取真正过期的行，未过期的行保持原样。
     func load() async {
+        if let existing = loadTask {
+            await existing.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performLoad()
+        }
+        loadTask = task
+        await task.value
+        loadTask = nil
+    }
+
+    private func performLoad() async {
         let specs = self.specs
         let stale = specs.filter { !cache.isFresh(cacheKey(for: $0), ttl: $0.ttl) }
         guard !stale.isEmpty else {
@@ -102,25 +120,27 @@ final class PopularController {
             return
         }
 
-        // 四条并行拉，谁先回来都不影响别人。
-        async let trending = Self.fetchTrending()
-        async let season = Self.fetchSeason()
-        async let ranked = Self.fetchRanked()
-        async let collected = Self.fetchCollected()
-        let fetched = await (trending: trending, season: season, ranked: ranked, collected: collected)
-
-        let results: [String: [PopularPoster]] = [
-            "trending": fetched.trending,
-            "season": fetched.season,
-            "ranked": fetched.ranked,
-            "collected": fetched.collected,
-        ]
+        // 仅并行拉取真正过期的行，未过期的行不发网络请求。
+        let staleNames = Set(stale.map(\.name))
+        let results = await withTaskGroup(of: (String, [PopularPoster]).self) { group in
+            for spec in stale {
+                let name = spec.name
+                group.addTask {
+                    let items = await Self.fetchRow(named: name)
+                    return (name, items)
+                }
+            }
+            var fetched: [String: [PopularPoster]] = [:]
+            for await (name, items) in group {
+                fetched[name] = items
+            }
+            return fetched
+        }
 
         var updated: [PopularRow] = []
         for spec in specs {
             let key = cacheKey(for: spec)
-            let needsFetch = stale.contains { $0.name == spec.name }
-            if needsFetch, let fresh = results[spec.name], !fresh.isEmpty {
+            if staleNames.contains(spec.name), let fresh = results[spec.name], !fresh.isEmpty {
                 cache.store(fresh, for: key)
                 updated.append(makeRow(spec, items: fresh))
             } else if let cached = cache.items(for: key), !cached.isEmpty {
@@ -129,13 +149,33 @@ final class PopularController {
             }
         }
 
-        rows = updated
+        setRows(updated)
         isLoading = false
         isFailed = updated.isEmpty
 
-        // 焦点区那一张补简介（Ato 2761 破例）：只为当前这张发一次详情请求，
-        // 而且先读详情页那份 24 小时缓存，缓存里有就一次请求都不发。
+        // 焦点区补简介（Ato 2761 破例）：先读详情页那份 24 小时缓存，缓存里有就一次请求都不发。
         await enrichAllHeroes()
+    }
+
+    private func setRows(_ newRows: [PopularRow]) {
+        rows = newRows
+        shelfSuppressedZoomIDs = Self.computeShelfSuppressedZoomIDs(for: newRows)
+    }
+
+    /// 为每行货架计算需要抑制缩放源的重复番剧 ID（只保留首次出现的那张，避免同 Namespace 冲突）。
+    private static func computeShelfSuppressedZoomIDs(for rows: [PopularRow]) -> [String: Set<Int>] {
+        var seen = Set<Int>()
+        var result: [String: Set<Int>] = [:]
+        for row in rows {
+            var suppressed = Set<Int>()
+            for poster in row.items {
+                if !seen.insert(poster.id).inserted {
+                    suppressed.insert(poster.id)
+                }
+            }
+            result[row.id] = suppressed
+        }
+        return result
     }
 
     /// 把一组条目装成一行。
@@ -188,8 +228,8 @@ final class PopularController {
     func enrichHero(_ id: Int) async {
         guard !enrichedHeroIDs.contains(id) else { return }
 
-        // 缓存里有就直接用（详情页那份，24 小时有效）。
-        if let cached = subjectCache.item(for: id), !cached.summary.isEmpty {
+        // 缓存里有就直接用（详情页那份，24 小时有效，后台读盘不阻塞主线程）。
+        if let cached = await subjectCache.cachedItemAsync(for: id), !cached.summary.isEmpty {
             enrichedHeroIDs.insert(id)
             applyHeroDetail(cached)
             return
@@ -201,11 +241,17 @@ final class PopularController {
         applyHeroDetail(fresh)
     }
 
-    /// 焦点区轮播里的每一张都补一次，不是只补第一张（LP 6737 / Ato 6738）：
+    /// 焦点区轮播里的每一张并发补一次，不是只补第一张（LP 6737 / Ato 6738）：
     /// 轮播会自己往后翻，翻到没补过的那几张，集数就是空的——「有时有有时没有」就是这么来的。
     private func enrichAllHeroes() async {
-        for hero in heroItems {
-            await enrichHero(hero.id)
+        let ids = heroItems.map(\.id).filter { !enrichedHeroIDs.contains($0) }
+        guard !ids.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids {
+                group.addTask {
+                    await self.enrichHero(id)
+                }
+            }
         }
     }
 
@@ -229,6 +275,16 @@ final class PopularController {
     }
 
     // MARK: - 取数（不碰 UI 状态，方便并行）
+
+    private static func fetchRow(named name: String) async -> [PopularPoster] {
+        switch name {
+        case "trending": return await fetchTrending()
+        case "season": return await fetchSeason()
+        case "ranked": return await fetchRanked()
+        case "collected": return await fetchCollected()
+        default: return []
+        }
+    }
 
     private static func fetchTrending() async -> [PopularPoster] {
         // 多要 5 条：焦点区拿走前 5，下面那行剔掉它们之后才还是满的 10 条。

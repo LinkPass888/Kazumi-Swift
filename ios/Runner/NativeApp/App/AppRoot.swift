@@ -58,6 +58,9 @@ struct AppRoot: View {
         }
         .task {
             guard failure == nil else { return }
+            // 首屏非紧急更新检查延后 1.5s，避免与推荐页首屏封面图争抢带宽。
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled else { return }
             await environment.updates.checkOnLaunch(
                 settings: environment.settings,
                 plugins: environment.plugins

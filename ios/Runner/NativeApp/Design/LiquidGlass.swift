@@ -28,14 +28,14 @@ extension View {
     ///
     /// 40×40 的正方形用胶囊形状渲染出来就是正圆，顶栏按钮因此不需要另写一份形状。
     func kazumiGlassCapsule(tint: Color? = nil, interactive: Bool = false) -> some View {
-        modifier(KazumiGlassShapeModifier(shape: AnyShape(Capsule(style: .continuous)), tint: tint, interactive: interactive))
+        modifier(KazumiGlassShapeModifier(shape: Capsule(style: .continuous), tint: tint, interactive: interactive))
     }
 
     /// 浮动卡片：选集面板、弹幕设置、详情页信息块。
     func kazumiGlassCard(cornerRadius: CGFloat = KazumiPalette.cardCornerRadius, tint: Color? = nil) -> some View {
         modifier(
             KazumiGlassShapeModifier(
-                shape: AnyShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)),
+                shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
                 tint: tint,
                 interactive: false
             )
@@ -48,8 +48,8 @@ extension View {
     }
 }
 
-private struct KazumiGlassShapeModifier: ViewModifier {
-    let shape: AnyShape
+private struct KazumiGlassShapeModifier<S: InsettableShape>: ViewModifier {
+    let shape: S
     let tint: Color?
     let interactive: Bool
 
@@ -61,16 +61,12 @@ private struct KazumiGlassShapeModifier: ViewModifier {
 
     /// 玻璃底下垫的那一层。
     ///
-    /// iOS 26 上系统 `glassEffect` 自己就是底，再垫一层 `ultraThinMaterial` 只会把它
-    /// 变成一块不透的亮纱——压在深色封面上尤其明显，看着就是「玻璃不透」（LP 2884 / 2893）。
-    /// 垫底本来就是给没有系统玻璃的低版本留的退路（Colo 2898），所以只在低版本上出现；
-    /// iOS 26 上只留一圈描边做边缘高光。
+    /// iOS 26 上系统 `glassEffect` 自己就是底，tint 也统一交由 `.glassEffect(.regular.tint(tint))`
+    /// 处理，不再重复叠 `shape.fill(tint.opacity(0.18))` 或 `ultraThinMaterial`；
+    /// 垫底只给没有系统玻璃的低版本留退路（Colo 2898），iOS 26 上只留一圈描边做边缘高光。
     @ViewBuilder
     private var backdrop: some View {
         if #available(iOS 26.0, *) {
-            if let tint {
-                shape.fill(tint.opacity(0.18))
-            }
             rim
         } else {
             if let tint {
@@ -81,15 +77,14 @@ private struct KazumiGlassShapeModifier: ViewModifier {
         }
     }
 
-    /// AnyShape 擦除了 InsettableShape 约束，只能用 stroke（strokeBorder 不可用）。
     private var rim: some View {
-        shape.stroke(Color.white.opacity(0.16), lineWidth: 0.5)
+        shape.strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5)
     }
 }
 
 /// iOS 26 原生玻璃效果，独立成 ViewModifier 以便编译期做可用性判断。
-private struct KazumiNativeGlassEffect: ViewModifier {
-    let shape: AnyShape
+private struct KazumiNativeGlassEffect<S: Shape>: ViewModifier {
+    let shape: S
     let tint: Color?
     let interactive: Bool
 

@@ -367,12 +367,13 @@ final class MPVEngine {
         log("硬解实际值（内核创建后）：requested=\(requestedHWDec) effective=\(effectiveHardwareDecode) actual=\(stringProperty("hwdec-current") ?? "未知")")
 
         // C API 只接受一个级别，不接受 msg-level 的分模块语法。
-        // v 收集解码 / 色彩 / 渲染；接收端白名单、脱敏、限流，不开 HTTP debug。
-        let logStatus = mpv_request_log_messages(mpv, "v")
+        // 生产默认 warn 降低事件泵日志唤醒开销；接收端仍保持白名单、脱敏、限流，不开 HTTP debug。
+        let logLevel = "warn"
+        let logStatus = mpv_request_log_messages(mpv, logLevel)
         if logStatus >= 0 {
-            log("内核日志订阅成功：级别=v rc=\(logStatus)")
+            log("内核日志订阅成功：级别=\(logLevel) rc=\(logStatus)")
         } else {
-            log("内核日志订阅失败：级别=v rc=\(logStatus)（\(String(cString: mpv_error_string(logStatus)))）")
+            log("内核日志订阅失败：级别=\(logLevel) rc=\(logStatus)（\(String(cString: mpv_error_string(logStatus)))）")
         }
         let clientVersion = mpv_client_api_version()
         log("内核版本 \(stringProperty("mpv-version") ?? "未知") / 客户端 API \(clientVersion >> 16).\(clientVersion & 0xffff)")
@@ -389,7 +390,7 @@ final class MPVEngine {
                 self.apply(snapshot)
             }
         } log: { [weak self] message in
-            Task { @MainActor in self?.log(message) }
+            Task { @MainActor in self?.emitSanitizedLog(message) }
         }
         pump.onCommandReply = { [weak self] id, error, rawFrame, eventAt, copiedAt, window in
             Task { @MainActor in
@@ -782,15 +783,34 @@ final class MPVEngine {
     // MARK: - 超分着色器
 
     /// 挂上一整串 Anime4K 着色器，顺序就是数组顺序（照 main 的管线）。
+    /// 通过单次异步 `mpv_set_property_async` 提交 `MPV_FORMAT_NODE_ARRAY`，
+    /// 避免在主线程连续同步下发 7 次 `mpv_command` 阻塞 UI。
     func setShaders(_ paths: [String]) {
-        // 以前这里是 `set` 一整串逗号拼接的路径。mpv 不会把那个逗号当列表分隔符，
-        // 它把整串当成**一个**文件名去打开——真机日志里就是 6 个路径连在一起报
-        // 「Cannot open file …a.glsl,…b.glsl,…」，等于一个着色器都没挂上。
-        // change-list 的语义就是「改这个列表」，所以先清空，再逐个 append：
-        // 一个文件一条记录，顺序就是数组顺序（照 main 的管线）。
-        command("change-list", ["glsl-shaders", "clr", ""])
-        for path in paths {
-            command("change-list", ["glsl-shaders", "append", path])
+        guard let handle else { return }
+        let strings = paths.compactMap { strdup($0) }
+        defer { for pointer in strings { free(pointer) } }
+        var values = strings.map { pointer -> mpv_node in
+            var node = mpv_node()
+            node.format = MPV_FORMAT_STRING
+            node.u.string = pointer
+            return node
+        }
+        var status: Int32 = -1
+        values.withUnsafeMutableBufferPointer { buffer in
+            var list = mpv_node_list(
+                num: Int32(buffer.count),
+                values: buffer.baseAddress,
+                keys: nil
+            )
+            withUnsafeMutablePointer(to: &list) { listStorage in
+                var node = mpv_node()
+                node.format = MPV_FORMAT_NODE_ARRAY
+                node.u.list = listStorage
+                status = mpv_set_property_async(handle, 0, "glsl-shaders", MPV_FORMAT_NODE, &node)
+            }
+        }
+        if status < 0 {
+            log("异步设置 glsl-shaders 失败：\(String(cString: mpv_error_string(status)))")
         }
     }
 
@@ -816,21 +836,25 @@ final class MPVEngine {
         if let url = raw.url { return (url, raw.note) }
         log(raw.note)
 
-        // 直通硬件帧不一定能由 screenshot-raw 下载成打包 RGB。这个切换只服务
-        // 用户主动截图；PiP 的 33ms feed 从不走本方法，且 PiP 开启的内核本来就
-        // 在创建时固定成 videotoolbox-copy。
-        #if !targetEnvironment(simulator)
-        if effectiveHardwareDecode == HardwareDecodeMode.videotoolbox.rawValue {
-            let viaCopy = await captureRawFrame(usingCopyDecoder: true)
-            if let url = viaCopy.url { return (url, viaCopy.note) }
-            log(viaCopy.note)
-        }
-        #endif
-
-        // 原始帧那条不成再退一步：试 VO 出图（真机上以前一直失败，留着当第二选择）。
+        // 第二选择：临时关闭 screenshot-sw，让 vo=gpu-next 直接在 GPU 侧按片源分辨率
+        // 读回纯视频帧（video 标志，不含字幕与 OSD）。直通硬件帧无需切换解码器、零卡顿。
         let viaVO = await captureFrameViaVO()
         if let url = viaVO.url { return (url, viaVO.note) }
         log(viaVO.note)
+
+        // 第三选择：仅在直通硬解且 GPU VO 出图也失败时，临时切到 videotoolbox-copy +
+        // vd-lavc-dr=no 重取原始帧；PiP 的 33ms feed 从不走本方法。
+        #if !targetEnvironment(simulator)
+        let isPassthrough = effectiveHardwareDecode == HardwareDecodeMode.videotoolbox.rawValue
+            || stringProperty("hwdec-current") == HardwareDecodeMode.videotoolbox.rawValue
+        if isPassthrough {
+            let viaCopy = await captureRawFrame(usingCopyDecoder: true)
+            if let url = viaCopy.url { return (url, viaCopy.note) }
+            log(viaCopy.note)
+            return (nil, "\(raw.note)；\(viaVO.note)；\(viaCopy.note)")
+        }
+        #endif
+
         return (nil, "\(raw.note)；\(viaVO.note)")
     }
 
@@ -839,31 +863,45 @@ final class MPVEngine {
         usingCopyDecoder: Bool = false
     ) async -> (url: URL?, note: String) {
         let started = Date()
+        let restoreDR = effectiveHardwareDecode == HardwareDecodeMode.videotoolboxCopy.rawValue ? "no" : "yes"
         if usingCopyDecoder {
+            setOptionForPlayback("vd-lavc-dr", "no")
             setOptionForPlayback("hwdec", HardwareDecodeMode.videotoolboxCopy.rawValue)
             _ = await waitForDecoder("videotoolbox-copy", timeout: 2)
         }
         defer {
             if usingCopyDecoder {
                 setOptionForPlayback("hwdec", effectiveHardwareDecode)
+                setOptionForPlayback("vd-lavc-dr", restoreDR)
             }
         }
-        let shot = await rawScreenshot()
+        var shot = await rawScreenshot()
+        // 刚切到 videotoolbox-copy 时当前显示帧可能仍是上一帧零拷贝表面，短等一帧再补取一次。
+        if shot.frame == nil, usingCopyDecoder {
+            try? await Task.sleep(for: .milliseconds(120))
+            shot = await rawScreenshot()
+        }
         guard let frame = shot.frame else {
             return (nil, "取帧失败：screenshot-raw 没回帧")
         }
-        guard let image = frame.makeCGImage() else {
-            return (nil, "取帧失败：像素格式认不得（\(frame.format)，\(frame.width)×\(frame.height)）")
-        }
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("kazumi-shot-\(UUID().uuidString).png")
-        guard let data = Self.pngData(from: image) else {
-            return (nil, "取帧失败：PNG 编不出来")
-        }
-        do {
-            try data.write(to: path)
-        } catch {
-            return (nil, "取帧失败：临时文件写不出去")
+        let writeError: String? = await Task.detached(priority: .userInitiated) {
+            guard let image = frame.makeCGImage() else {
+                return "取帧失败：像素格式认不得（\(frame.format)，\(frame.width)×\(frame.height)）"
+            }
+            guard let data = Self.pngData(from: image) else {
+                return "取帧失败：PNG 编不出来"
+            }
+            do {
+                try data.write(to: path)
+                return nil
+            } catch {
+                return "取帧失败：临时文件写不出去"
+            }
+        }.value
+        if let writeError {
+            return (nil, writeError)
         }
         let sourceText = lastSnapshot.videoWidth > 0 && lastSnapshot.videoHeight > 0
             ? "，片源 \(Int(lastSnapshot.videoWidth))×\(Int(lastSnapshot.videoHeight))"
@@ -1048,6 +1086,10 @@ final class MPVEngine {
         // 失败后**不**退回不带标志那条：不带标志时 mpv 默认把字幕烧进图里，而这个引擎
         // 从头到尾没设过 `sid`，流里只要有内嵌字幕轨它就会自动选中——那正是第 1 条
         // 明令不要的（Fuck 4704）。所以失败就报错，让人看见，不偷偷出一张带字幕的图。
+        // 内核启动时设了 screenshot-sw=yes，直通硬件帧走软件路径会直接报 -12；
+        // 这里临时关掉 screenshot-sw 让 vo=gpu-next 走 GPU 离屏读回，结束后恢复。
+        setOptionForPlayback("screenshot-sw", "no")
+        defer { setOptionForPlayback("screenshot-sw", "yes") }
         let result = await runAsyncCommand("screenshot-to-file", [path.path, "video"])
         guard result >= 0 else {
             let note = "截图失败：mpv 出图没成（video 标志，错误码 \(result)），共 \(Int(Date().timeIntervalSince(started) * 1000)) 毫秒"
@@ -1097,19 +1139,33 @@ final class MPVEngine {
     }
 
     /// CGImage → PNG，走 UIKit 的编码器（Catalyst 同样可用）。
-    static func pngData(from image: CGImage) -> Data? {
+    nonisolated static func pngData(from image: CGImage) -> Data? {
         UIImage(cgImage: image).pngData()
     }
 
     // MARK: - 收尾
 
+    private nonisolated static let teardownQueue = DispatchQueue(
+        label: "kazumi.mpv.teardown",
+        qos: .utility
+    )
+
     func stop() {
-        setPictureInPictureFrameFeedActive(false)
-        // 先作废这一代：挂起的取帧任务恢复时不能认成「新内核还活着」。
+        let wasPiPFeedActive = pictureInPictureFrameFeedActive
+        pictureInPictureFrameFeedActive = false
+        if wasPiPFeedActive {
+            reportPictureInPictureStatistics(final: true)
+            pipRawShotSubmissions.removeAll(keepingCapacity: true)
+        }
+        // 先作废这一代并立即解绑主线程持有的句柄与视图：
+        // 挂起的取帧任务恢复时立即看到 handle == nil，且主线程无需同步等待 mpv 线程退出。
         kernelGeneration &+= 1
         eventPumpGeneration &+= 1
-        pump?.stop()
+        let detachedPump = pump
         pump = nil
+        let detachedHandle = handle.map(SendableMPVHandle.init)
+        handle = nil
+        metalView = nil
         // 引擎要没了，还等着的命令不能继续挂着。
         failPendingCommands(-1)
         pipBGRACommandIDs.removeAll(keepingCapacity: true)
@@ -1117,18 +1173,30 @@ final class MPVEngine {
         // 一开机就走到诊断分支，也不该让迟到的取帧任务接着算。
         pipFrameMissSince = nil
         pipFrameSourceLogged = false
-        if let handle {
-            mpv_terminate_destroy(handle)
+
+        if let detachedPump {
+            detachedPump.stopAsync {
+                guard let detachedHandle else { return }
+                Self.teardownQueue.async {
+                    mpv_terminate_destroy(detachedHandle.pointer)
+                }
+            }
+        } else if let detachedHandle {
+            Self.teardownQueue.async {
+                mpv_terminate_destroy(detachedHandle.pointer)
+            }
         }
-        handle = nil
-        metalView = nil
     }
 
     // MARK: - 小工具
 
     /// 包括属性、命令和代理提示在内，交给上层前统一脱敏。
     private func log(_ message: String) {
-        let safe = MPVDiagnostics.sanitize(message)
+        emitSanitizedLog(MPVDiagnostics.sanitize(message))
+    }
+
+    /// 供已由 `MPVDiagnostics` / `MPVEventPump` 完成脱敏的日志直通上层，避免重复正则扫描。
+    private func emitSanitizedLog(_ safe: String) {
         if !safe.isEmpty { onLog?(safe) }
     }
 
@@ -1342,6 +1410,11 @@ private struct CommandRequest {
     let strings: [UnsafeMutablePointer<CChar>]
 }
 
+/// 跨队列移交已解绑的 `mpv_handle` 仅用于后台销毁。
+private struct SendableMPVHandle: @unchecked Sendable {
+    let pointer: OpaquePointer
+}
+
 /// 在 mpv 自己的线程上收事件，攒成快照再递回主线程。
 final class MPVEventPump: @unchecked Sendable {
     private static let queueKey = DispatchSpecificKey<ObjectIdentifier>()
@@ -1457,6 +1530,14 @@ final class MPVEventPump: @unchecked Sendable {
             stopOnQueue()
         } else {
             queue.sync { stopOnQueue() }
+        }
+    }
+
+    /// 异步在事件队列上停泵并在完成后回调，避免阻塞主线程。
+    func stopAsync(completion: (@Sendable () -> Void)? = nil) {
+        queue.async {
+            self.stopOnQueue()
+            completion?()
         }
     }
 
@@ -1747,8 +1828,8 @@ final class MPVEventPump: @unchecked Sendable {
                 let suppress = suppressRepeatedPictureInPictureReferenceError(
                     prefix: prefix, level: level, text: text
                 )
-                if let receipt = diagnostic.receipt { log(receipt) }
-                if let line = diagnostic.line, !suppress { log(line) }
+                if let receipt = diagnostic.receipt { emitSanitizedLog(receipt) }
+                if let line = diagnostic.line, !suppress { emitSanitizedLog(line) }
                 if let errorText = diagnostic.errorText {
                     lastCoreErrorText = errorText
                 }
@@ -1825,7 +1906,10 @@ final class MPVEventPump: @unchecked Sendable {
     }
 
     private func log(_ message: String) {
-        let safe = MPVDiagnostics.sanitize(message)
+        emitSanitizedLog(MPVDiagnostics.sanitize(message))
+    }
+
+    private func emitSanitizedLog(_ safe: String) {
         if !safe.isEmpty { onLog(safe) }
     }
 
@@ -1857,9 +1941,6 @@ final class MPVEventPump: @unchecked Sendable {
         mpv_get_property(mpv, "core-idle", MPV_FORMAT_FLAG, &idle)
         var ended: Int32 = 0
         mpv_get_property(mpv, "eof-reached", MPV_FORMAT_FLAG, &ended)
-        var params = mpv_node()
-        let hasVideo = mpv_get_property(mpv, "video-params", MPV_FORMAT_NODE, &params) >= 0
-        mpv_free_node_contents(&params)
         // 画面尺寸：dwidth/dheight 是「实际显示」的尺寸（anamorphic 也算过），
         // 拿不到就退回 width/height。全 0 表示还没有画面，上层回落到整块容器。
         var videoWidth: Int64 = 0
@@ -1870,6 +1951,7 @@ final class MPVEventPump: @unchecked Sendable {
             mpv_get_property(mpv, "width", MPV_FORMAT_INT64, &videoWidth)
             mpv_get_property(mpv, "height", MPV_FORMAT_INT64, &videoHeight)
         }
+        let hasVideo = videoWidth > 0 && videoHeight > 0
         var seeking: Int32 = 0
         mpv_get_property(mpv, "seeking", MPV_FORMAT_FLAG, &seeking)
         return MPVSnapshot(

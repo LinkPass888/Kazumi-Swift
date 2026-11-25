@@ -665,6 +665,7 @@ struct DanmakuSettingsScreen: View {
             VStack(spacing: 8) {
                 if let danmakuAPIBanner {
                     KazumiBanner(
+                        token: danmakuAPIBanner.id,
                         title: danmakuAPIBanner.title,
                         detail: danmakuAPIBanner.detail,
                         variant: danmakuAPIBanner.variant,
@@ -1553,6 +1554,7 @@ struct NetworkSettingsScreen: View {
         .overlay(alignment: .top) {
             if let banner {
                 KazumiBanner(
+                    token: banner.id,
                     title: banner.title,
                     detail: banner.detail,
                     variant: banner.variant,

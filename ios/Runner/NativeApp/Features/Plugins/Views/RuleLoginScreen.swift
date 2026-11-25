@@ -125,8 +125,10 @@ private struct RuleLoginWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
-        // 页面退出时再收一次，兜住「登录完直接下滑关掉」这条路径。
-        coordinator.harvest(from: webView)
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        // 页面退出时再收一次，兜住「登录完直接下滑关掉」这条路径，且不再回写 @Binding。
+        coordinator.harvest(from: webView, updateBinding: false)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -171,7 +173,7 @@ private struct RuleLoginWebView: UIViewRepresentable {
         }
 
         /// 把这次真的登上的 Cookie 交给规则网络层。
-        func harvest(from webView: WKWebView) {
+        func harvest(from webView: WKWebView, updateBinding: Bool = true) {
             guard !isHarvesting else { return }
             isHarvesting = true
             let store = webView.configuration.websiteDataStore.httpCookieStore
@@ -214,10 +216,12 @@ private struct RuleLoginWebView: UIViewRepresentable {
                     cookies: mapped,
                     userAgent: ua.isEmpty ? nil : ua
                 )
-                DispatchQueue.main.async {
-                    self.savedCount.wrappedValue = PluginCookieStore.shared
-                        .cookies(pluginName: self.pluginName, url: self.urlString)
-                        .count
+                if updateBinding {
+                    DispatchQueue.main.async {
+                        self.savedCount.wrappedValue = PluginCookieStore.shared
+                            .cookies(pluginName: self.pluginName, url: self.urlString)
+                            .count
+                    }
                 }
             }
         }

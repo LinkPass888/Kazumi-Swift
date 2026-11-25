@@ -24,7 +24,7 @@ final class PluginCookieStore: @unchecked Sendable {
     }
 
     /// 落盘用：Cookie 与 UA 一起存，重启后登录态还在。
-    private struct Snapshot: Codable {
+    private struct Snapshot: Codable, Sendable {
         var jars: [String: [Cookie]]
         var userAgents: [String: String]
     }
@@ -32,6 +32,7 @@ final class PluginCookieStore: @unchecked Sendable {
     private static let storageKey = "kazumi.rule.cookies.v1"
 
     private let lock = NSLock()
+    private let persistQueue = DispatchQueue(label: "com.kazumi.pluginCookieStore.persist", qos: .utility)
     private var jars: [String: [Cookie]] = [:]
     private var userAgents: [String: String] = [:]
 
@@ -41,37 +42,44 @@ final class PluginCookieStore: @unchecked Sendable {
 
     /// 与 cookie_jar 的 saveFromResponse 对齐：同名同域的 Cookie 覆盖旧值。
     func saveFromWebView(pluginName: String, pageUrl: String, cookieString: String, userAgent: String?) {
-        if let userAgent {
-            let trimmed = userAgent.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                lock.lock()
-                userAgents[pluginName] = trimmed
-                lock.unlock()
-            }
-        }
-        let trimmedCookies = cookieString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedCookies.isEmpty { return }
-        guard let host = URLComponents(string: pageUrl)?.host, !host.isEmpty else { return }
+        let trimmedUA = userAgent?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let validUA = (trimmedUA?.isEmpty == false) ? trimmedUA : nil
 
-        let parsed = parse(trimmedCookies, host: host)
-        if parsed.isEmpty { return }
+        let trimmedCookies = cookieString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsed: [Cookie]
+        if !trimmedCookies.isEmpty,
+           let host = URLComponents(string: pageUrl)?.host, !host.isEmpty {
+            parsed = parse(trimmedCookies, host: host)
+        } else {
+            parsed = []
+        }
+
+        guard validUA != nil || !parsed.isEmpty else { return }
 
         lock.lock()
-        var jar = jars[pluginName] ?? []
-        for cookie in parsed {
-            if let index = jar.firstIndex(where: { $0.name == cookie.name && $0.domain == cookie.domain && $0.path == cookie.path }) {
-                jar[index] = cookie
-            } else {
-                jar.append(cookie)
-            }
+        if let validUA {
+            userAgents[pluginName] = validUA
         }
-        jars[pluginName] = jar
+        if !parsed.isEmpty {
+            var jar = jars[pluginName] ?? []
+            for cookie in parsed {
+                if let index = jar.firstIndex(where: { $0.name == cookie.name && $0.domain == cookie.domain && $0.path == cookie.path }) {
+                    jar[index] = cookie
+                } else {
+                    jar.append(cookie)
+                }
+            }
+            jars[pluginName] = jar
+        }
+        let snapshot = Snapshot(jars: jars, userAgents: userAgents)
         lock.unlock()
-        persist()
+        persist(snapshot)
 
-        KazumiLog.plugin.info(
-            "[PluginCookieStore] Saved \(parsed.count) cookies for \(pluginName, privacy: .public)"
-        )
+        if !parsed.isEmpty {
+            KazumiLog.plugin.info(
+                "[PluginCookieStore] Saved \(parsed.count) cookies for \(pluginName, privacy: .public)"
+            )
+        }
     }
 
     /// 登录 WebView 用完把整份 Cookie 交给这里：网络层的 Cookie 对象带真实的 domain/path，
@@ -100,8 +108,9 @@ final class PluginCookieStore: @unchecked Sendable {
             }
         }
         jars[pluginName] = jar
+        let snapshot = Snapshot(jars: jars, userAgents: userAgents)
         lock.unlock()
-        persist()
+        persist(snapshot)
         KazumiLog.plugin.info(
             "[PluginCookieStore] Login saved \(cookies.count) cookies for \(pluginName, privacy: .public)"
         )
@@ -115,19 +124,35 @@ final class PluginCookieStore: @unchecked Sendable {
         lock.lock()
         let snapshot = Snapshot(jars: jars, userAgents: userAgents)
         lock.unlock()
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        UserDefaults.standard.set(data, forKey: Self.storageKey)
+        persist(snapshot)
+    }
+
+    private func persist(_ snapshot: Snapshot) {
+        persistQueue.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            UserDefaults.standard.set(data, forKey: Self.storageKey)
+        }
     }
 
     private func restore() {
         guard let data = UserDefaults.standard.data(forKey: Self.storageKey),
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
-        jars = snapshot.jars
+        var normalizedJars: [String: [Cookie]] = [:]
+        normalizedJars.reserveCapacity(snapshot.jars.count)
+        for (pluginName, jar) in snapshot.jars {
+            normalizedJars[pluginName] = jar.map { cookie in
+                var normalized = cookie
+                normalized.domain = Self.normalizedDomain(cookie.domain)
+                return normalized
+            }
+        }
+        jars = normalizedJars
         userAgents = snapshot.userAgents
     }
 
     /// 解析 `a=b; c=d` 形式的字符串（document.cookie 的格式）。
     private func parse(_ raw: String, host: String) -> [Cookie] {
+        let normalizedHost = Self.normalizedDomain(host)
         var cookies: [Cookie] = []
         for part in raw.split(separator: ";", omittingEmptySubsequences: false) {
             let trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -136,7 +161,7 @@ final class PluginCookieStore: @unchecked Sendable {
             let name = String(trimmed[trimmed.startIndex..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
             if name.isEmpty { continue }
             let value = String(trimmed[trimmed.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            cookies.append(Cookie(name: name, value: value, domain: host, path: "/"))
+            cookies.append(Cookie(name: name, value: value, domain: normalizedHost, path: "/"))
         }
         return cookies
     }
@@ -155,13 +180,13 @@ final class PluginCookieStore: @unchecked Sendable {
         let isHTTPS = components.scheme?.lowercased() == "https"
         let requestPath = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
         lock.lock()
-        defer { lock.unlock() }
-        guard let jar = jars[pluginName] else { return [] }
+        let jar = jars[pluginName]
+        lock.unlock()
+        guard let jar else { return [] }
         return jar.filter { cookie in
             if cookie.isSecure == true, !isHTTPS { return false }
-            // 域级 Cookie 存下来是带前导点的（`.cycani.org`）：不去点永远筛不上，
-            // 整条被静默丢掉（Fuck 5469）。
-            let domain = Self.normalizedDomain(cookie.domain)
+            // 写入与恢复阶段已统一归一化 domain（去前导点、转小写），此处直接比对。
+            let domain = cookie.domain
             let domainMatches = !host.isEmpty && (host == domain || host.hasSuffix(".\(domain)"))
             return domainMatches && pathMatches(requestPath: requestPath, cookiePath: cookie.path)
         }
@@ -198,15 +223,17 @@ final class PluginCookieStore: @unchecked Sendable {
         lock.lock()
         jars[pluginName] = nil
         userAgents[pluginName] = nil
+        let snapshot = Snapshot(jars: jars, userAgents: userAgents)
         lock.unlock()
-        persist()
+        persist(snapshot)
     }
 
     func clearAll() {
         lock.lock()
         jars.removeAll()
         userAgents.removeAll()
+        let snapshot = Snapshot(jars: jars, userAgents: userAgents)
         lock.unlock()
-        persist()
+        persist(snapshot)
     }
 }

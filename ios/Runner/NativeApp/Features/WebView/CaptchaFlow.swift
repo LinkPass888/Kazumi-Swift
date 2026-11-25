@@ -37,6 +37,12 @@ final class CaptchaFlow {
         case cancelled
     }
 
+    private static let queryComponentAllowed: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return allowed
+    }()
+
     let plugin: Plugin
     private(set) var phase: Phase = .preparing
     private(set) var captchaImage: Foundation.Data?
@@ -140,6 +146,8 @@ final class CaptchaFlow {
     /// 用户取消：保存已拿到的 Cookie 后按取消语义收尾。
     func cancel() async {
         timeoutTask?.cancel()
+        timeoutTask = nil
+        stopObserving()
         await service.cancelAndSave(pluginName: plugin.name)
         phase = .cancelled
         service.dispose()
@@ -147,8 +155,8 @@ final class CaptchaFlow {
 
     func dispose() {
         timeoutTask?.cancel()
-        for task in observerTasks { task.cancel() }
-        observerTasks.removeAll()
+        timeoutTask = nil
+        stopObserving()
         service.dispose()
     }
 
@@ -168,6 +176,11 @@ final class CaptchaFlow {
         observerTasks.append(imageTask)
     }
 
+    private func stopObserving() {
+        for task in observerTasks { task.cancel() }
+        observerTasks.removeAll()
+    }
+
     private func appendLog(_ message: String) {
         log.append(message)
         if log.count > 200 { log.removeFirst(log.count - 200) }
@@ -185,6 +198,7 @@ final class CaptchaFlow {
             try? await Task.sleep(for: .seconds(seconds))
             guard let self, !Task.isCancelled, !self.isFinalizing else { return }
             guard self.phase == .verifying else { return }
+            self.stopObserving()
             self.phase = .failed(CaptchaFlowError.timedOut.localizedDescription)
             self.service.dispose()
         }
@@ -194,12 +208,12 @@ final class CaptchaFlow {
         guard phase != .completed, phase != .cancelled else { return }
         phase = .completed
         timeoutTask?.cancel()
+        timeoutTask = nil
+        stopObserving()
         onFinished(html)
     }
 
     private func encodeQueryComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        value.addingPercentEncoding(withAllowedCharacters: Self.queryComponentAllowed) ?? value
     }
 }

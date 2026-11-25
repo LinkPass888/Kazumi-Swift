@@ -399,6 +399,7 @@ struct PlayerScreen: View {
                             sawLandscape = true
                             landscapeExitTask?.cancel()
                             landscapeExitTask = nil
+                            surface.requestRender()
                         } else if !usesInlineFullscreen, isFullscreen, sawLandscape {
                             sawLandscape = false
                             // 等竖屏稳住再退：转屏途中会报几帧中间尺寸，见一帧竖的
@@ -550,6 +551,7 @@ struct PlayerScreen: View {
             if !fullscreen, showsEpisodesPanel {
                 closeEpisodesPanel()
             }
+            surface.requestRender()
         }
         .onChange(of: controller?.phase) { _, phase in
             if phase == .ready {
@@ -1181,12 +1183,15 @@ struct PlayerScreen: View {
     }
 
     private var boxAspectRatio: CGFloat {
-        if isFullscreen, containerSize.width > 0, containerSize.height > 0 {
-            let window = fullscreenVideoSize
+        if isFullscreen {
+            let window = hostWindowSize(fallback: containerSize)
             if window.width > 0, window.height > 0 {
                 return window.width / window.height
             }
-            return containerSize.width / containerSize.height
+            if containerSize.width > 0, containerSize.height > 0 {
+                return containerSize.width / containerSize.height
+            }
+            return 16.0 / 9.0
         }
         if isWideSplitLayout {
             let totalWidth = max(1, containerSize.width)
@@ -1301,7 +1306,7 @@ struct PlayerScreen: View {
                     usesWideTransport: proxy.size.width >= 600 || (isFullscreen && !usesInlineFullscreen)
                 )
                 let maskWidth: CGFloat? = isFullscreen
-                    ? fullscreenVideoSize.width + Self.maskTopOvershoot * 2
+                    ? proxy.size.width + Self.maskTopOvershoot * 2
                     : nil
                 controlLayer(controller, width: proxy.size.width)
                     .frame(width: proxy.size.width, height: proxy.size.height)
@@ -1395,21 +1400,9 @@ struct PlayerScreen: View {
         }
     }
 
-    private var fullscreenVideoSize: CGSize {
-        guard isFullscreen else { return .zero }
-        return CGSize(
-            width: containerSize.width + containerInsets.leading + containerInsets.trailing,
-            height: containerSize.height + containerInsets.top + containerInsets.bottom
-        )
-    }
-
     private func interactiveSurface(_ controller: PlayerController) -> some View {
         GeometryReader { proxy in
-            let videoBoxSize: CGSize = if isFullscreen && !usesInlineFullscreen {
-                fullscreenVideoSize
-            } else {
-                proxy.size
-            }
+            let videoBoxSize = proxy.size
             let gestureWidth = max(1, proxy.size.width)
             let gestureHeight = max(1, proxy.size.height)
 
@@ -2472,7 +2465,7 @@ struct PlayerScreen: View {
         let syncEnabled = settings.bangumiSyncEnable
         let showToast = settings.bangumiImmediateSyncToastEnable
         Task {
-            if syncEnabled {
+            if syncEnabled, type != .none {
                 if showToast { surface.toastMessage = String(localized: "正在同步到 Bangumi...") }
                 let pushed = await environment.bangumiSync.pushCollectible(
                     bangumiID: bangumiID,
@@ -2488,6 +2481,9 @@ struct PlayerScreen: View {
                 entry.type = type.rawValue
                 entry.updatedAt = Date()
                 environment.library.upsert(entry)
+                if syncEnabled, type == .none {
+                    surface.toastMessage = String(localized: "Bangumi 不支持在 App 内取消追番，请到网站删除")
+                }
             } else if type == .none {
                 // 本来就没收藏，取消追番就什么也不用改。
             } else if await addToLibrary(type) {
@@ -3139,25 +3135,19 @@ struct PlayerScreen: View {
     /// - 非全屏底沿 `0` 额外留白，全屏避开左右与底部安全区及屏幕圆角。
     private func landscapeTransport(_ controller: PlayerController) -> some View {
         let activeSegments = settings.aniSkipLookup ? controller.skipSegments : .empty
-        let hasHours = surface.duration >= 3600
-        let timeMinWidth: CGFloat = hasHours ? 54 : 38
 
         return VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Text(timeText(isScrubbing ? scrubValue : surface.currentTime))
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(1)
-                    .frame(minWidth: timeMinWidth, alignment: .leading)
-
-                scrubber(height: 36, skipSegments: activeSegments)
-
-                Text(timeText(surface.duration))
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.75))
-                    .lineLimit(1)
-                    .frame(minWidth: timeMinWidth, alignment: .trailing)
-            }
+            PlayerLandscapeProgressRowView(
+                surface: surface,
+                isVisible: controlsShown,
+                skipSegments: activeSegments,
+                markerColor: KazumiPalette.accent(for: .dark, theme: settings.themeColor).opacity(0.92),
+                isScrubbing: $isScrubbing,
+                scrubValue: $scrubValue,
+                scrubFingerX: $scrubFingerX,
+                onScrub: onScrub,
+                formatTime: timeText
+            )
             .padding(.leading, controlLeadingPadding)
             .padding(.trailing, controlTrailingPadding)
             .frame(height: 36)
@@ -3192,11 +3182,13 @@ struct PlayerScreen: View {
 
     /// `当前 / 总长`，12 号白色、等宽数字（紧凑底栏在进度条右边）。
     private var timeLabel: some View {
-        Text("\(timeText(isScrubbing ? scrubValue : surface.currentTime)) / \(timeText(surface.duration))")
-            .font(.system(size: 12, weight: .medium).monospacedDigit())
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .fixedSize()
+        PlayerCompactTimeLabelView(
+            surface: surface,
+            isVisible: controlsShown,
+            isScrubbing: isScrubbing,
+            scrubValue: scrubValue,
+            formatTime: timeText
+        )
     }
 
     /// 桌面端独立静音切换与悬浮展开音量滑块（§8）。
@@ -3521,81 +3513,24 @@ struct PlayerScreen: View {
     }
 
     /// 进度条（§6）：支持在轨道上绘制已获取的 AniSkip 片头/片尾浅色高亮区间锚点，拖拽时即可预判位置。
+    /// 拆为独立子 View，隔离 `surface.currentTime`/`surface.duration` 的 Observation 作用域，
+    /// 控制栏隐藏时不再触发整个 `PlayerScreen.body` 的 4Hz 重算。
     private func scrubber(
         height: CGFloat = 44,
         skipSegments: SkipSegments = .empty
     ) -> some View {
-        let total = max(surface.duration, 0.001)
-        let current = min(max(isScrubbing ? scrubValue : surface.currentTime, 0), total)
-        let progress = total > 0 ? min(max(current / total, 0), 1) : 0
-        let markerRanges = [skipSegments.opening, skipSegments.ending].compactMap { $0 }
-
-        return GeometryReader { proxy in
-            let width = max(proxy.size.width, 1)
-            let bubbleWidth: CGFloat = 72
-            let bubbleX = min(max(scrubFingerX - bubbleWidth / 2, 0), max(width - bubbleWidth, 0))
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.3))
-                    .frame(height: 4)
-                Capsule()
-                    .fill(.white)
-                    .frame(width: width * progress, height: 4)
-
-                if surface.duration > 0, !markerRanges.isEmpty {
-                    ForEach(Array(markerRanges.enumerated()), id: \.offset) { _, range in
-                        let startRatio = min(max(range.start / total, 0), 1)
-                        let endRatio = min(max(range.end / total, startRatio), 1)
-                        let markerX = width * startRatio
-                        let markerWidth = max(6, min(width - markerX, width * (endRatio - startRatio)))
-                        Capsule()
-                            .fill(KazumiPalette.accent(for: .dark, theme: settings.themeColor).opacity(0.92))
-                            .frame(width: markerWidth, height: 4)
-                            .offset(x: markerX)
-                            .allowsHitTesting(false)
-                    }
-                }
-
-                Color.clear
-                    .contentShape(Rectangle())
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !isScrubbing { onScrub(true) }
-                        let x = min(max(value.location.x, 0), width)
-                        scrubFingerX = x
-                        let ratio = x / width
-                        scrubValue = Double(ratio) * total
-                    }
-                    .onEnded { _ in onScrub(false) }
-            )
-            .overlay(alignment: .topLeading) {
-                if isScrubbing {
-                    scrubTimeBubble
-                        .frame(width: bubbleWidth)
-                        .offset(x: bubbleX, y: -20)
-                        .allowsHitTesting(false)
-                }
-            }
-        }
-        .frame(height: height)
-        .accessibilityElement()
-        .accessibilityLabel(String(localized: "播放进度"))
-        .accessibilityValue(timeText(current))
-    }
-
-    /// 拖动时浮在轨道上方的那条目标时间：跟其他时间同一个格式，松手就收。
-    private var scrubTimeBubble: some View {
-        Text(timeText(scrubValue))
-            .font(.caption.weight(.semibold))
-            .monospacedDigit()
-            .foregroundStyle(.black)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(.white.opacity(0.92), in: Capsule())
+        PlayerScrubberView(
+            surface: surface,
+            isVisible: controlsShown,
+            height: height,
+            skipSegments: skipSegments,
+            markerColor: KazumiPalette.accent(for: .dark, theme: settings.themeColor).opacity(0.92),
+            isScrubbing: $isScrubbing,
+            scrubValue: $scrubValue,
+            scrubFingerX: $scrubFingerX,
+            onScrub: onScrub,
+            formatTime: timeText
+        )
     }
 
     private func speedText(_ value: Double) -> String { PlaybackSpeed.label(value) }
@@ -5713,5 +5648,170 @@ private func persistWatchProgress(
             name: item.displayName,
             imageURL: item.largeImage
         )
+    }
+}
+
+
+// MARK: - 进度条与时间标签（Observation 隔离轻量视图）
+
+private struct PlayerScrubberView: View {
+    let surface: PlayerSurfaceModel
+    let isVisible: Bool
+    let height: CGFloat
+    let skipSegments: SkipSegments
+    let markerColor: Color
+    @Binding var isScrubbing: Bool
+    @Binding var scrubValue: Double
+    @Binding var scrubFingerX: CGFloat
+    let onScrub: (Bool) -> Void
+    let formatTime: (Double) -> String
+
+    var body: some View {
+        if isVisible {
+            let total = max(surface.duration, 0.001)
+            let current = min(max(isScrubbing ? scrubValue : surface.currentTime, 0), total)
+            let progress = total > 0 ? min(max(current / total, 0), 1) : 0
+            let markerRanges = [skipSegments.opening, skipSegments.ending].compactMap { $0 }
+
+            GeometryReader { proxy in
+                let width = max(proxy.size.width, 1)
+                let bubbleWidth: CGFloat = 72
+                let bubbleX = min(max(scrubFingerX - bubbleWidth / 2, 0), max(width - bubbleWidth, 0))
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.3))
+                        .frame(height: 4)
+                    Capsule()
+                        .fill(.white)
+                        .frame(width: width * progress, height: 4)
+
+                    if surface.duration > 0, !markerRanges.isEmpty {
+                        ForEach(Array(markerRanges.enumerated()), id: \.offset) { _, range in
+                            let startRatio = min(max(range.start / total, 0), 1)
+                            let endRatio = min(max(range.end / total, startRatio), 1)
+                            let markerX = width * startRatio
+                            let markerWidth = max(6, min(width - markerX, width * (endRatio - startRatio)))
+                            Capsule()
+                                .fill(markerColor)
+                                .frame(width: markerWidth, height: 4)
+                                .offset(x: markerX)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                    Color.clear
+                        .contentShape(Rectangle())
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            if !isScrubbing { onScrub(true) }
+                            let x = min(max(value.location.x, 0), width)
+                            scrubFingerX = x
+                            let ratio = x / width
+                            scrubValue = Double(ratio) * total
+                        }
+                        .onEnded { _ in onScrub(false) }
+                )
+                .overlay(alignment: .topLeading) {
+                    if isScrubbing {
+                        Text(formatTime(scrubValue))
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.white.opacity(0.92), in: Capsule())
+                            .frame(width: bubbleWidth)
+                            .offset(x: bubbleX, y: -20)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+            .frame(height: height)
+            .accessibilityElement()
+            .accessibilityLabel(String(localized: "播放进度"))
+            .accessibilityValue(formatTime(current))
+        } else {
+            Color.clear
+                .frame(height: height)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+private struct PlayerCompactTimeLabelView: View {
+    let surface: PlayerSurfaceModel
+    let isVisible: Bool
+    let isScrubbing: Bool
+    let scrubValue: Double
+    let formatTime: (Double) -> String
+
+    var body: some View {
+        if isVisible {
+            Text("\(formatTime(isScrubbing ? scrubValue : surface.currentTime)) / \(formatTime(surface.duration))")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .fixedSize()
+        } else {
+            Text("00:00 / 00:00")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .hidden()
+                .lineLimit(1)
+                .fixedSize()
+        }
+    }
+}
+
+private struct PlayerLandscapeProgressRowView: View {
+    let surface: PlayerSurfaceModel
+    let isVisible: Bool
+    let skipSegments: SkipSegments
+    let markerColor: Color
+    @Binding var isScrubbing: Bool
+    @Binding var scrubValue: Double
+    @Binding var scrubFingerX: CGFloat
+    let onScrub: (Bool) -> Void
+    let formatTime: (Double) -> String
+
+    var body: some View {
+        if isVisible {
+            let hasHours = surface.duration >= 3600
+            let timeMinWidth: CGFloat = hasHours ? 54 : 38
+
+            HStack(spacing: 10) {
+                Text(formatTime(isScrubbing ? scrubValue : surface.currentTime))
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .frame(minWidth: timeMinWidth, alignment: .leading)
+
+                PlayerScrubberView(
+                    surface: surface,
+                    isVisible: true,
+                    height: 36,
+                    skipSegments: skipSegments,
+                    markerColor: markerColor,
+                    isScrubbing: $isScrubbing,
+                    scrubValue: $scrubValue,
+                    scrubFingerX: $scrubFingerX,
+                    onScrub: onScrub,
+                    formatTime: formatTime
+                )
+
+                Text(formatTime(surface.duration))
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(1)
+                    .frame(minWidth: timeMinWidth, alignment: .trailing)
+            }
+        } else {
+            Color.clear
+                .frame(height: 36)
+                .allowsHitTesting(false)
+        }
     }
 }

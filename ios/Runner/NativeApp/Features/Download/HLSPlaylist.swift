@@ -18,7 +18,7 @@ enum HLSPlaylist {
         var best: (bandwidth: Int, url: URL)?
         var pendingBandwidth = 0
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.hasPrefix("#EXT-X-STREAM-INF") {
                 pendingBandwidth = bandwidth(from: line)
                 continue
@@ -93,7 +93,7 @@ enum HLSPlaylist {
         var lines: [String] = []
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
 
             // 加密的先拦下来。
             if line.hasPrefix("#EXT-X-KEY") {
@@ -163,12 +163,12 @@ enum HLSPlaylist {
         if let comma = value.firstIndex(of: ",") {
             value = String(value[..<comma])
         }
-        return value.trimmingCharacters(in: .whitespaces)
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 相对地址按播放列表自己的位置补全（分片常是相对路径）。
     private static func resolve(_ raw: String, against base: URL) -> URL? {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if let absolute = URL(string: trimmed), absolute.scheme != nil { return absolute }
         return URL(string: trimmed, relativeTo: base)?.absoluteURL

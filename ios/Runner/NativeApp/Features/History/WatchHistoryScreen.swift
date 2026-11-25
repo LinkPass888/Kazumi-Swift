@@ -27,18 +27,20 @@ struct WatchHistoryScreen: View {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    private var filteredRecords: [WatchRecord] {
+    private func filteredRecords(from base: [WatchRecord]) -> [WatchRecord] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return records }
-        return records.filter {
+        guard !q.isEmpty else { return base }
+        return base.filter {
             $0.bangumiName.localizedStandardContains(q)
                 || $0.sourceRuleName.localizedStandardContains(q)
         }
     }
 
     var body: some View {
-        Group {
-            if records.isEmpty {
+        let allRecords = records
+        let visibleRecords = filteredRecords(from: allRecords)
+        return Group {
+            if allRecords.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 38, weight: .semibold))
@@ -51,7 +53,7 @@ struct WatchHistoryScreen: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if filteredRecords.isEmpty {
+            } else if visibleRecords.isEmpty {
                 ContentUnavailableView.search(text: searchText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -66,14 +68,14 @@ struct WatchHistoryScreen: View {
                                 if isWide {
                                     // 宽屏对齐时间表页（§6.1）：700 起 2 列、超宽 3 列，列距 12、行距 10。
                                     LazyVGrid(columns: columns, spacing: 10) {
-                                        ForEach(filteredRecords) { record in
+                                        ForEach(visibleRecords) { record in
                                             card(record)
                                         }
                                     }
                                     .id(columns.count)
                                 } else {
                                     LazyVStack(spacing: 8) {
-                                        ForEach(filteredRecords) { record in
+                                        ForEach(visibleRecords) { record in
                                             card(record)
                                         }
                                     }
@@ -90,11 +92,11 @@ struct WatchHistoryScreen: View {
                     .safeAreaInset(edge: .bottom) {
                         if isSelecting {
                             HStack(spacing: 12) {
-                                Button(selectedIDs.count == filteredRecords.count ? "取消全选" : "全选") {
-                                    if selectedIDs.count == filteredRecords.count {
+                                Button(selectedIDs.count == visibleRecords.count ? "取消全选" : "全选") {
+                                    if selectedIDs.count == visibleRecords.count {
                                         selectedIDs.removeAll()
                                     } else {
-                                        selectedIDs = Set(filteredRecords.map(\.id))
+                                        selectedIDs = Set(visibleRecords.map(\.id))
                                     }
                                 }
                                 .buttonStyle(.bordered)
@@ -126,7 +128,7 @@ struct WatchHistoryScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "搜索番名或规则")
         .toolbar {
-            if !records.isEmpty {
+            if !allRecords.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         withAnimation(.easeOut(duration: 0.18)) {
@@ -154,7 +156,7 @@ struct WatchHistoryScreen: View {
         }
         .confirmationDialog("确定清空全部观看历史？", isPresented: $isConfirmingClear, titleVisibility: .visible) {
             Button("清空全部", role: .destructive) {
-                library.removeHistory(recordIDs: Set(records.map(\.id)))
+                library.removeHistory(recordIDs: Set(allRecords.map(\.id)))
             }
             Button("取消", role: .cancel) {}
         }

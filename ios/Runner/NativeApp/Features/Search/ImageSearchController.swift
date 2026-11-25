@@ -8,6 +8,7 @@
 //  结果按相似度倒序（原版在页面里排序，这里放到状态层，避免每次重算）。
 //
 
+import ImageIO
 import Observation
 import UIKit
 
@@ -89,14 +90,41 @@ final class ImageSearchController {
     }
 }
 
-/// 已选中的本地图片：保留原始 UIImage 用于预览，上传时统一转成 JPEG。
+/// 已选中的本地图片：保留缩放后的 UIImage 用于预览，并持有后台预压缩好的 JPEG 上传数据。
 /// UIKit 视图层与 @MainActor 的控制器都在主线程，因此标记 @unchecked Sendable。
 struct PickedImage: @unchecked Sendable {
     let image: UIImage
     let fileName: String
+    /// trace.moe 只接受 JPEG，后台按长边 ≤ 1600px、质量 0.85 预先压缩后缓存。
+    let jpegData: Data
 
-    /// trace.moe 只接受 JPEG，原版也固定按 image/jpeg 上传。
-    var jpegData: Data {
-        image.jpegData(compressionQuality: 0.9) ?? Data()
+    /// 在后台线程用 ImageIO 直接解码缩略图（长边上限 1600px）并编码为 JPEG（质量 0.85）。
+    static func prepare(from rawData: Data, fileName: String) -> PickedImage? {
+        let decoded: UIImage? = {
+            guard let source = CGImageSourceCreateWithData(rawData as CFData, nil) else {
+                return UIImage(data: rawData)
+            }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: 1600,
+            ]
+            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                return UIImage(cgImage: cgImage)
+            }
+            let fallbackOptions: [CFString: Any] = [
+                kCGImageSourceShouldCacheImmediately: true,
+            ]
+            if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, fallbackOptions as CFDictionary) {
+                return UIImage(cgImage: cgImage)
+            }
+            return UIImage(data: rawData)
+        }()
+        guard let image = decoded,
+              let jpeg = image.jpegData(compressionQuality: 0.85),
+              !jpeg.isEmpty
+        else { return nil }
+        return PickedImage(image: image, fileName: fileName, jpegData: jpeg)
     }
 }

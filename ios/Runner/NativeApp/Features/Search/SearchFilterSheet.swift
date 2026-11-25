@@ -597,9 +597,11 @@ struct SearchFilterSheet: View {
         collectExpanded = false
     }
 
+    private static let gregorianCalendar = Calendar(identifier: .gregorian)
+
     /// 近 20 年、当前季度之后的都不出现；键是 2026Q1，显示是「2026 冬季」。
     private var seasonOptions: [(value: String, label: String)] {
-        let calendar = Calendar(identifier: .gregorian)
+        let calendar = Self.gregorianCalendar
         let now = Date()
         let year = calendar.component(.year, from: now)
         let seasonNames = ["冬季", "春季", "夏季", "秋季"]
@@ -777,13 +779,18 @@ private struct DateRangePickerSheet: View {
     @State private var end: Date
     @Environment(\.dismiss) private var dismiss
 
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
     init(initial: SearchDateRange?, onApply: @escaping (SearchDateRange) -> Void) {
         self.initial = initial
         self.onApply = onApply
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let parsedStart = initial.flatMap { formatter.date(from: $0.start) }
-        let parsedEnd = initial.flatMap { formatter.date(from: $0.end) }
+        let parsedStart = initial.flatMap { Self.dateFormatter.date(from: $0.start) }
+        let parsedEnd = initial.flatMap { Self.dateFormatter.date(from: $0.end) }
         _start = State(initialValue: parsedStart ?? Date())
         _end = State(initialValue: parsedEnd ?? Date())
     }
@@ -802,12 +809,10 @@ private struct DateRangePickerSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("完成") {
-                        let formatter = DateFormatter()
-                        formatter.dateFormat = "yyyy-MM-dd"
                         onApply(
                             SearchDateRange(
-                                start: formatter.string(from: start),
-                                end: formatter.string(from: end)
+                                start: Self.dateFormatter.string(from: start),
+                                end: Self.dateFormatter.string(from: end)
                             )
                         )
                         dismiss()

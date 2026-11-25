@@ -275,16 +275,55 @@ struct RemovedEntry: Codable, Hashable, Sendable {
 /// 持久化对应原版的 Hive box（`collect` / `history`）：这里换成
 /// Application Support/Kazumi/library.json 这一个文件，字段与
 /// WebDAV 备份（`WebDAVClient.Payload`）保持一致，备份恢复时直接覆盖即可。
+/// 落盘用的容器；`version` 与 WebDAV 备份一样从 1 起。
+private struct LibrarySnapshot: Codable, Sendable {
+    var version: Int = 1
+    var savedAt: Date = Date()
+    var entries: [LibraryEntry]
+    var history: [WatchRecord]
+    var removedEntries: [RemovedEntry]?
+}
+
+/// 后台串行落盘执行器：复用单个 `JSONEncoder` 并在独立 actor 上执行原子写盘，
+/// 避免主线程承担整份追番/历史 JSON 编码与同步磁盘 I/O。
+private actor LibraryPersistenceActor {
+    private let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return encoder
+    }()
+
+    private var ensuredDirectory: URL?
+    private var lastWrittenGeneration: UInt64 = 0
+
+    func write(_ snapshot: LibrarySnapshot, to fileURL: URL, generation: UInt64) {
+        guard generation >= lastWrittenGeneration else { return }
+        lastWrittenGeneration = generation
+        do {
+            let directory = fileURL.deletingLastPathComponent()
+            if ensuredDirectory != directory {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                ensuredDirectory = directory
+            }
+            let data = try encoder.encode(snapshot)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            ensuredDirectory = nil
+            KazumiLog.storage.error(
+                "Library: 写入失败 \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class LibraryStore {
-    /// 落盘用的容器；`version` 与 WebDAV 备份一样从 1 起。
-    private struct Snapshot: Codable, Sendable {
-        var version: Int = 1
-        var savedAt: Date = Date()
-        var entries: [LibraryEntry]
-        var history: [WatchRecord]
-        var removedEntries: [RemovedEntry]?
+    private struct DecodedPayload: Sendable {
+        let entries: [LibraryEntry]
+        let history: [WatchRecord]
+        let removedEntries: [RemovedEntry]
     }
 
     /// 追番 / 观看历史的存储文件：Application Support/Kazumi/library.json。
@@ -299,6 +338,19 @@ final class LibraryStore {
 
     /// 「在看」列表变动时的回调，用于自动重排本地更新提醒。
     @ObservationIgnored var onWatchingChanged: (() -> Void)?
+
+    // MARK: - 辅助索引（O(1) 查询）
+    @ObservationIgnored private var entryIndexByID: [Int: Int] = [:]
+    @ObservationIgnored private var historyIndexByID: [String: Int] = [:]
+    @ObservationIgnored private var latestHistoryByBangumiID: [Int: WatchRecord] = [:]
+
+    // MARK: - 异步加载与串行落盘状态
+    @ObservationIgnored private let persistence = LibraryPersistenceActor()
+    @ObservationIgnored private var pendingSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var latestSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var saveGeneration: UInt64 = 0
+    @ObservationIgnored private var hasLoaded = false
+    @ObservationIgnored private var loadTask: Task<Void, Never>?
 
     private let fileURL: URL
 
@@ -319,7 +371,11 @@ final class LibraryStore {
     }
 
     func entry(for bangumiID: Int) -> LibraryEntry? {
-        entries.first { $0.id == bangumiID }
+        // 先触达被观察属性 `entries`，确保目标尚未收藏（索引返回 nil）或异步加载完成前，
+        // SwiftUI 视图仍能注册 Observation 依赖，收藏状态变化时立即刷新（如详情页追番胶囊）。
+        let currentEntries = entries
+        guard let index = entryIndexByID[bangumiID], index < currentEntries.count else { return nil }
+        return currentEntries[index]
     }
 
     /// 这部剧在这条规则上接着看的位置：第几集 + 第几条线路。没有记录就是 nil。
@@ -338,23 +394,40 @@ final class LibraryStore {
     /// 详情页 / 播放器只关心「这部剧看到哪儿了」，规则名不同就比不出来，
     /// 所以这里不限定规则，跟老格式「一部番只有一条记录」时的结果一致。
     func record(for bangumiID: Int) -> WatchRecord? {
-        history.filter { $0.bangumiID == bangumiID }.max { $0.updatedAt < $1.updatedAt }
+        // 先触达 `history` 注册 Observation 依赖，避免只读 @ObservationIgnored 索引导致视图不刷新。
+        _ = history
+        return latestHistoryByBangumiID[bangumiID]
     }
 
     /// 这部剧在这条规则上的那一份记录。
     func record(for bangumiID: Int, pluginName: String) -> WatchRecord? {
-        history.first { $0.bangumiID == bangumiID && $0.sourceRuleName == pluginName }
+        let currentHistory = history
+        let key = "\(pluginName)\(bangumiID)::online"
+        guard let index = historyIndexByID[key], index < currentHistory.count else { return nil }
+        return currentHistory[index]
     }
 
     /// 最近看过的 N 部番剧（与「我的」页观看历史卡片同一口径：按 `updatedAt` 倒序、按 `bangumiID` 去重）。
+    /// 单趟 O(M) Top-K 扫描，避免每次访问都全量排序。
     func recentTopRecords(limit: Int = 3) -> [WatchRecord] {
-        guard limit > 0 else { return [] }
-        var seen = Set<Int>()
+        _ = history
+        guard limit > 0, !latestHistoryByBangumiID.isEmpty else { return [] }
         var picked: [WatchRecord] = []
-        for record in history.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            guard seen.insert(record.bangumiID).inserted else { continue }
-            picked.append(record)
-            if picked.count >= limit { break }
+        picked.reserveCapacity(min(limit, latestHistoryByBangumiID.count))
+        for record in latestHistoryByBangumiID.values {
+            if picked.count == limit, let tail = picked.last, record.updatedAt <= tail.updatedAt {
+                continue
+            }
+            var insertAt = picked.count
+            while insertAt > 0, record.updatedAt > picked[insertAt - 1].updatedAt {
+                insertAt -= 1
+            }
+            if insertAt < limit {
+                picked.insert(record, at: insertAt)
+                if picked.count > limit {
+                    picked.removeLast()
+                }
+            }
         }
         return picked
     }
@@ -366,8 +439,64 @@ final class LibraryStore {
         for idx in history.indices {
             if !keepIDs.contains(history[idx].id), history[idx].detailURL != nil {
                 history[idx].detailURL = nil
+                let updated = history[idx]
+                if latestHistoryByBangumiID[updated.bangumiID]?.id == updated.id {
+                    latestHistoryByBangumiID[updated.bangumiID] = updated
+                }
             }
         }
+    }
+
+    // MARK: - 索引维护
+
+    private func rebuildEntryIndex() {
+        entryIndexByID = Dictionary(minimumCapacity: entries.count)
+        for (idx, entry) in entries.enumerated() {
+            entryIndexByID[entry.id] = idx
+        }
+    }
+
+    private func rebuildHistoryIndices() {
+        historyIndexByID = Dictionary(minimumCapacity: history.count)
+        latestHistoryByBangumiID = [:]
+        for (idx, record) in history.enumerated() {
+            historyIndexByID[record.id] = idx
+            if let existing = latestHistoryByBangumiID[record.bangumiID] {
+                if record.updatedAt > existing.updatedAt {
+                    latestHistoryByBangumiID[record.bangumiID] = record
+                }
+            } else {
+                latestHistoryByBangumiID[record.bangumiID] = record
+            }
+        }
+    }
+
+    private func updateLatestHistory(for record: WatchRecord) {
+        if let existing = latestHistoryByBangumiID[record.bangumiID] {
+            if record.id == existing.id {
+                if record.updatedAt >= existing.updatedAt {
+                    latestHistoryByBangumiID[record.bangumiID] = record
+                } else {
+                    recomputeLatestHistory(for: record.bangumiID)
+                }
+            } else if record.updatedAt > existing.updatedAt {
+                latestHistoryByBangumiID[record.bangumiID] = record
+            }
+        } else {
+            latestHistoryByBangumiID[record.bangumiID] = record
+        }
+    }
+
+    private func recomputeLatestHistory(for bangumiID: Int) {
+        var best: WatchRecord?
+        for record in history where record.bangumiID == bangumiID {
+            if let current = best {
+                if record.updatedAt > current.updatedAt { best = record }
+            } else {
+                best = record
+            }
+        }
+        latestHistoryByBangumiID[bangumiID] = best
     }
 
     /// 写一次播放进度（播放器唯一该用的入口）。
@@ -392,18 +521,18 @@ final class LibraryStore {
         at date: Date = Date()
     ) {
         let slot = String(episodeNumber)
-        // 先找「这条规则 + 这部番」那一份。
-        var storedIndex = history.firstIndex {
-            $0.bangumiID == bangumiID && $0.sourceRuleName == pluginName
-        }
+        let exactKey = "\(pluginName)\(bangumiID)::online"
+        // 先找「这条规则 + 这部番」那一份（O(1) 索引查找）。
+        var storedIndex: Int? = historyIndexByID[exactKey].flatMap { $0 < history.count ? $0 : nil }
         if storedIndex == nil, !pluginName.isEmpty {
             // 迁移过来的老格式记录没存来源规则（空串）。这次播放用的规则就是它的来源，
             // 认下来沿用那一份；不认的话同一部番会在历史列表里出现两遍。
-            let emptyRule = history.indices.filter {
-                history[$0].bangumiID == bangumiID && history[$0].sourceRuleName.isEmpty
+            let emptyKey = "\(bangumiID)::online"
+            if let legacyIndex = historyIndexByID[emptyKey], legacyIndex < history.count {
+                storedIndex = legacyIndex
             }
-            if emptyRule.count == 1 { storedIndex = emptyRule[0] }
         }
+        let previousID = storedIndex.map { history[$0].id }
         var record = storedIndex.map { history[$0] } ?? WatchRecord(
             bangumiID: bangumiID,
             bangumiName: bangumiName,
@@ -441,10 +570,17 @@ final class LibraryStore {
         }
         if let storedIndex {
             history[storedIndex] = record
-        } else if let index = history.firstIndex(where: { $0.id == record.id }) {
+            if let previousID, previousID != record.id {
+                historyIndexByID.removeValue(forKey: previousID)
+                historyIndexByID[record.id] = storedIndex
+            }
+            updateLatestHistory(for: record)
+        } else if let index = historyIndexByID[record.id], index < history.count {
             history[index] = record
+            updateLatestHistory(for: record)
         } else {
             history.insert(record, at: 0)
+            rebuildHistoryIndices()
         }
         pruneRecentDetailURLs(limit: 3)
         save(debounce: true)
@@ -452,69 +588,148 @@ final class LibraryStore {
 
     // MARK: - 持久化
 
-    /// 启动时读回上次的追番与历史；文件不存在或损坏时保持空表。
+    /// 启动时同步读回上次的追番与历史（保留给单测及快捷指令意图调用）；文件不存在或损坏时保持空表。
     func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+        hasLoaded = true
+        if let decoded = Self.readAndDecodeSnapshot(from: fileURL) {
+            entries = decoded.entries
+            history = decoded.history
+            removedEntries = decoded.removedEntries
+            rebuildEntryIndex()
+            rebuildHistoryIndices()
+            pruneRecentDetailURLs(limit: 3)
+            KazumiLog.storage.info(
+                "Library: 载入 \(self.entries.count, privacy: .public) 条追番 / \(self.history.count, privacy: .public) 条历史"
+            )
+        } else {
             entries = []
             history = []
+            removedEntries = []
+            rebuildEntryIndex()
+            rebuildHistoryIndices()
+        }
+    }
+
+    /// 异步读盘加载：在后台完成读盘、JSON 解码与去重，再切回 `@MainActor` 写入快照并建立索引。
+    func loadAsync() async {
+        if hasLoaded { return }
+        if let existing = loadTask {
+            await existing.value
             return
+        }
+        let url = fileURL
+        let task = Task { @MainActor [weak self] in
+            let decoded = await Task.detached(priority: .userInitiated) {
+                Self.readAndDecodeSnapshot(from: url)
+            }.value
+            guard let self else { return }
+            self.hasLoaded = true
+            if let decoded {
+                // 若异步载入期间本机已有写入，合并而非覆盖用户刚产生的变更。
+                if self.entries.isEmpty && self.history.isEmpty && self.removedEntries.isEmpty {
+                    self.entries = decoded.entries
+                    self.history = decoded.history
+                    self.removedEntries = decoded.removedEntries
+                } else {
+                    self.entries = Self.deduplicated(decoded.entries + self.entries)
+                    self.history = Self.deduplicated(decoded.history + self.history)
+                    var removalByID: [Int: RemovedEntry] = [:]
+                    for item in decoded.removedEntries + self.removedEntries {
+                        if let existing = removalByID[item.id], existing.removedAt >= item.removedAt {
+                            continue
+                        }
+                        removalByID[item.id] = item
+                    }
+                    let collected = Set(self.entries.map(\.id))
+                    self.removedEntries = removalByID.values.filter { !collected.contains($0.id) }
+                }
+                self.rebuildEntryIndex()
+                self.rebuildHistoryIndices()
+                self.pruneRecentDetailURLs(limit: 3)
+                KazumiLog.storage.info(
+                    "Library: 载入 \(self.entries.count, privacy: .public) 条追番 / \(self.history.count, privacy: .public) 条历史"
+                )
+            } else if self.entries.isEmpty && self.history.isEmpty {
+                self.entries = []
+                self.history = []
+                self.rebuildEntryIndex()
+                self.rebuildHistoryIndices()
+            }
+        }
+        loadTask = task
+        await task.value
+        loadTask = nil
+    }
+
+    nonisolated private static func readAndDecodeSnapshot(from fileURL: URL) -> DecodedPayload? {
+        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+            return DecodedPayload(entries: [], history: [], removedEntries: [])
         }
         do {
             let data = try Data(contentsOf: fileURL)
-            let snapshot = try Self.decoder().decode(Snapshot.self, from: data)
+            let snapshot = try decoder().decode(LibrarySnapshot.self, from: data)
             // 读回时就收敛重复 ID：旧版本可能已经写进过重复记录，
             // 展示层拿到的必须是一份干净的、ID 唯一的数据。
-            entries = Self.deduplicated(snapshot.entries)
-            history = Self.deduplicated(snapshot.history)
-            pruneRecentDetailURLs(limit: 3)
-            removedEntries = snapshot.removedEntries ?? []
-            KazumiLog.storage.info(
-                "Library: 载入 \(self.entries.count, privacy: .public) 条追番 / \(self.history.count, privacy: .public) 条历史"
+            return DecodedPayload(
+                entries: deduplicated(snapshot.entries),
+                history: deduplicated(snapshot.history),
+                removedEntries: snapshot.removedEntries ?? []
             )
         } catch {
             // 文件损坏时不阻塞启动：从空表开始，下次写入会覆盖掉坏文件。
             KazumiLog.storage.error(
                 "Library: 读取失败 \(error.localizedDescription, privacy: .public)"
             )
-            entries = []
-            history = []
+            return nil
         }
     }
 
-    @ObservationIgnored private var pendingSaveTask: Task<Void, Never>?
-
-    /// 立即将缓冲的变更写回磁盘。
+    /// 立即将防抖缓冲中的变更投递到后台串行落盘队列（供退后台 / 失活调用，避免 500ms 窗口内丢进度）。
     func flush() {
+        guard pendingSaveTask != nil else { return }
         pendingSaveTask?.cancel()
         pendingSaveTask = nil
         saveNow()
     }
 
-    /// 写回磁盘。默认立即落盘；高频写入（如播放中定期落进度）支持防抖，
-    /// 避免密集触发整份 JSON 编码与同步磁盘 I/O。
+    /// 立即触发待落盘变更并等待后台串行落盘任务排空完成。
+    func flushAndWait() async {
+        flush()
+        await latestSaveTask?.value
+    }
+
+    /// 写回磁盘。默认立即投递后台落盘；高频写入（如播放中定期落进度）支持 500ms 防抖，
+    /// 避免密集触发整份 JSON 编码与磁盘 I/O。
     private func save(debounce: Bool = false) {
         if debounce {
             pendingSaveTask?.cancel()
             pendingSaveTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
                 guard !Task.isCancelled else { return }
+                self?.pendingSaveTask = nil
                 self?.saveNow()
             }
         } else {
-            flush()
+            pendingSaveTask?.cancel()
+            pendingSaveTask = nil
+            saveNow()
         }
     }
 
     private func saveNow() {
-        do {
-            let directory = fileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let snapshot = Snapshot(entries: entries, history: history, removedEntries: removedEntries)
-            try Self.encoder().encode(snapshot).write(to: fileURL, options: .atomic)
-        } catch {
-            KazumiLog.storage.error(
-                "Library: 写入失败 \(error.localizedDescription, privacy: .public)"
-            )
+        saveGeneration &+= 1
+        let generation = saveGeneration
+        let snapshot = LibrarySnapshot(
+            entries: entries,
+            history: history,
+            removedEntries: removedEntries
+        )
+        let url = fileURL
+        let actor = persistence
+        let previous = latestSaveTask
+        latestSaveTask = Task.detached(priority: .utility) {
+            await previous?.value
+            await actor.write(snapshot, to: url, generation: generation)
         }
     }
 
@@ -547,6 +762,8 @@ final class LibraryStore {
         let previousWatching = watchingSignature
         self.entries = Self.deduplicated(entries)
         self.history = Self.deduplicated(history)
+        rebuildEntryIndex()
+        rebuildHistoryIndices()
         pruneRecentDetailURLs(limit: 3)
         if let removals {
             let collected = Set(self.entries.map(\.id))
@@ -571,12 +788,10 @@ final class LibraryStore {
         if removedEntries.contains(where: { $0.id == entry.id }) {
             removedEntries.removeAll { $0.id == entry.id }
         }
-        if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+        if let index = entryIndexByID[entry.id], index < entries.count {
             entries[index] = entry
-            // 同一部番如果因为合并 / 恢复被写进多份，这里顺手并掉多余的几份：
-            // `ForEach` 遇到重复 ID 会直接崩溃，列表里也会出现两张一样的卡片。
-            entries = Self.deduplicated(entries)
         } else {
+            entryIndexByID[entry.id] = entries.count
             entries.append(entry)
         }
         save()
@@ -613,6 +828,7 @@ final class LibraryStore {
             }
         }
         self.entries = result
+        rebuildEntryIndex()
         save()
         if watchingSignature != previousWatching {
             onWatchingChanged?()
@@ -622,6 +838,7 @@ final class LibraryStore {
     func remove(bangumiID: Int) {
         let previousWatching = watchingSignature
         entries.removeAll { $0.id == bangumiID }
+        rebuildEntryIndex()
         // 记下取消的时刻：不带这一条，下次同步就会从云盘把它加回来。
         removedEntries.removeAll { $0.id == bangumiID }
         removedEntries.append(RemovedEntry(id: bangumiID, removedAt: Date()))
@@ -636,10 +853,13 @@ final class LibraryStore {
     /// 不是拿新的整条盖掉旧的——那样会把这部番看过的其它集的进度抹了
     /// （main 那边一条记录里就装着每一集的进度）。
     func upsert(_ record: WatchRecord) {
-        if let index = history.firstIndex(where: { $0.id == record.id }) {
-            history[index] = Self.merged(history[index], record)
+        if let index = historyIndexByID[record.id], index < history.count {
+            let mergedRecord = Self.merged(history[index], record)
+            history[index] = mergedRecord
+            updateLatestHistory(for: mergedRecord)
         } else {
             history.insert(record, at: 0)
+            rebuildHistoryIndices()
         }
         pruneRecentDetailURLs(limit: 3)
         save()
@@ -664,6 +884,9 @@ final class LibraryStore {
             }
             if dirty {
                 history[index] = record
+                if latestHistoryByBangumiID[bangumiID]?.id == record.id {
+                    latestHistoryByBangumiID[bangumiID] = record
+                }
                 changed = true
             }
         }
@@ -675,12 +898,14 @@ final class LibraryStore {
     /// 同一部番在别的规则下那份不该跟着走：用户删的是这一条来源的记录。
     func removeHistory(recordID: String) {
         history.removeAll { $0.id == recordID }
+        rebuildHistoryIndices()
         pruneRecentDetailURLs(limit: 3)
         save()
     }
 
     func removeHistory(recordIDs: Set<String>) {
         history.removeAll { recordIDs.contains($0.id) }
+        rebuildHistoryIndices()
         pruneRecentDetailURLs(limit: 3)
         save()
     }
@@ -688,6 +913,7 @@ final class LibraryStore {
     /// 删掉这部剧的全部记录（不分规则）。
     func removeHistory(bangumiID: Int) {
         history.removeAll { $0.bangumiID == bangumiID }
+        rebuildHistoryIndices()
         pruneRecentDetailURLs(limit: 3)
         save()
     }
@@ -700,7 +926,7 @@ final class LibraryStore {
     /// 三条路径都可能带进同一 ID 的两条记录。SwiftUI 的 `ForEach` 用 ID 做
     /// 身份，重复 ID 会让列表的差量更新错乱（表现为切换筛选后闪退），
     /// 因此在数据进入 store 的那一刻就收敛掉。
-    static func deduplicated(_ entries: [LibraryEntry]) -> [LibraryEntry] {
+    nonisolated static func deduplicated(_ entries: [LibraryEntry]) -> [LibraryEntry] {
         var indexByID: [Int: Int] = [:]
         var result: [LibraryEntry] = []
         for entry in entries {
@@ -716,7 +942,7 @@ final class LibraryStore {
         return result
     }
 
-    static func deduplicated(_ history: [WatchRecord]) -> [WatchRecord] {
+    nonisolated static func deduplicated(_ history: [WatchRecord]) -> [WatchRecord] {
         var indexByID: [String: Int] = [:]
         var result: [WatchRecord] = []
         for record in history {
@@ -738,7 +964,7 @@ final class LibraryStore {
     /// `HistorySyncCodec` 也是按每个 progress 的版本单独比的）；
     /// 最后看的那一集（集数、集标题、时间、名字、封面、时长）取自 `updatedAt`
     /// 新的那整条，这样列表上显示的「看到哪儿了」跟用户最后一次看的一致。
-    static func merged(_ lhs: WatchRecord, _ rhs: WatchRecord) -> WatchRecord {
+    nonisolated static func merged(_ lhs: WatchRecord, _ rhs: WatchRecord) -> WatchRecord {
         let (base, other) = lhs.updatedAt > rhs.updatedAt ? (lhs, rhs) : (rhs, lhs)
         var record = base
         if (record.detailURL ?? "").isEmpty, let otherURL = other.detailURL, !otherURL.isEmpty {
@@ -758,16 +984,7 @@ final class LibraryStore {
 
     // MARK: - 编解码
 
-    /// 与 WebDAV 备份保持同一套日期编码（ISO 8601），
-    /// 这样本地文件与备份文件可以互相替换、也能人工查看。
-    private static func encoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.withoutEscapingSlashes]
-        return encoder
-    }
-
-    private static func decoder() -> JSONDecoder {
+    private nonisolated static func decoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder

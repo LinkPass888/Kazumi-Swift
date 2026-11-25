@@ -70,6 +70,7 @@ struct SourceSheet: View {
     /// 正在修改检索词的来源；为空表示没有弹出输入框。
     @State private var keywordTarget: String?
     @State private var keywordDraft = ""
+    @State private var didSelectPlay = false
     /// 这一轮检索是不是已经起跑了：起跑点挪到「列表真的画出来之后」，
     /// 见下面 `list` 上的 `.task`。
     @State private var searchStarted = false
@@ -93,6 +94,7 @@ struct SourceSheet: View {
             }
             .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
             .onAppear {
+                didSelectPlay = false
                 if SheetTiming.appear == 0 { SheetTiming.appear = SheetTiming.now }
             }
             .navigationTitle(sheetTitle)
@@ -115,28 +117,36 @@ struct SourceSheet: View {
         .interactiveDismissDisabled(captchaFlow != nil)
         .overlay {
             if let box = captchaFlow {
-                ZStack {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            Task {
-                                switch box.flow.phase {
-                                case .completed: return
-                                case .failed, .cancelled: break
-                                default: await box.flow.cancel()
+                GeometryReader { proxy in
+                    // CaptchaSheet 内部含 NavigationStack + ScrollView，不限高度会垂直撑满全屏；
+                    // 约束在约半屏高度（360–440pt，随键盘/横屏可用空间自动收缩），大字号靠内部 ScrollView 滚动。
+                    let cardMaxHeight = min(
+                        max(proxy.size.height - 32, 240),
+                        min(max(proxy.size.height * 0.52, 360), 440)
+                    )
+                    ZStack {
+                        Color.black.opacity(0.4)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                Task {
+                                    switch box.flow.phase {
+                                    case .completed: return
+                                    case .failed, .cancelled: break
+                                    default: await box.flow.cancel()
+                                    }
+                                    captchaFlow = nil
                                 }
-                                captchaFlow = nil
                             }
-                        }
-                    // 不写死高度（Ato 6521）：卡片按可用空间自己撑，内容装不下由
-                    // 面板内部的 ScrollView 滚，大字号下也不会撑出卡片。
-                    CaptchaSheet(flow: box.flow) { captchaFlow = nil }
-                        .frame(maxWidth: 420)
-                        .background(KazumiPalette.heroBackground(for: colorScheme))
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .shadow(radius: 24)
-                        .padding(24)
+                        CaptchaSheet(flow: box.flow) { captchaFlow = nil }
+                            .frame(maxWidth: 420, maxHeight: cardMaxHeight)
+                            .background(KazumiPalette.heroBackground(for: colorScheme))
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .shadow(radius: 24)
+                            .padding(24)
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
                 }
+                .ignoresSafeArea(.keyboard)
             }
         }
         // 修改此来源的检索词（main 的 onSourceSearch）：只重检这一个来源。
@@ -312,6 +322,8 @@ struct SourceSheet: View {
                 Divider().padding(.leading, 14)
                 ForEach(Array(group.results.enumerated()), id: \.offset) { index, result in
                     Button {
+                        guard !didSelectPlay else { return }
+                        didSelectPlay = true
                         onPlay(group.name, result)
                     } label: {
                         HStack(spacing: 8) {

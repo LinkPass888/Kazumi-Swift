@@ -42,22 +42,22 @@ final class SkipSegmentPillModel {
     /// 弹出「下一集」（LP 2026-10-29 4798），放宽到 5 秒。
     static let postCreditsThreshold: Double = 5
 
-    /// 这一集的片头片尾。换集 / 重新查询时由外面推进来。
-    var segments: SkipSegments = .empty
-    /// 当前播放位置与总时长（秒），外面推进来。
-    var position: Double = 0
-    var duration: Double = 0
+    /// 这一集的片头片尾。换集 / 重新查询时由外面推进来（纯轮询输入，不直接触发 SwiftUI 刷新）。
+    @ObservationIgnored var segments: SkipSegments = .empty
+    /// 当前播放位置与总时长（秒），外面推进来（4Hz 写入，仅通过 `update()` 驱动展示态）。
+    @ObservationIgnored var position: Double = 0
+    @ObservationIgnored var duration: Double = 0
     /// 用户正在拖进度：弹窗收起来、不自动跳，松手再恢复。
-    var isScrubbing = false
+    @ObservationIgnored var isScrubbing = false
     /// 起播是否已经稳定（首帧出来、时间轴开始走）。
     ///
     /// 加载阶段 `position` 一直是 0，AniSkip 又可能先一步回来；拿这个 0 去判
     /// 片头，会在起播前就 seek，随后播放头又被拉回 0（「进度还没出来就跳片头，
     /// 然后从头播」）。所以首帧稳定前只记时间轴，不判区间、不自动跳。
-    var isPlaybackReady = false
+    @ObservationIgnored var isPlaybackReady = false
     /// 当前集后面还有没有下一集。末集在片尾贴结尾时不提示；片尾后还剩
     /// >5 秒才提示「跳过片尾」，有下一集才换成「下一集」倒数。
-    var hasNextEpisode = false
+    @ObservationIgnored var hasNextEpisode = false
 
     private(set) var kind: SkipKind?
     private(set) var range: SkipRange?
@@ -65,9 +65,9 @@ final class SkipSegmentPillModel {
     private(set) var countdownRemaining: Double = SkipSegmentPillModel.countdownSeconds
 
     /// 要 seek 到哪儿（秒）。外面消费掉就清。
-    private(set) var seekTarget: Double?
+    @ObservationIgnored private(set) var seekTarget: Double?
     /// 点了「下一集」：外面按计数消费。
-    private(set) var nextEpisodeRequest = 0
+    @ObservationIgnored private(set) var nextEpisodeRequest = 0
 
     /// 弹窗现在有没有内容。
     var isVisible: Bool { kind != nil }
@@ -80,11 +80,11 @@ final class SkipSegmentPillModel {
         countdownRemaining / SkipSegmentPillModel.countdownSeconds
     }
 
-    private var shownAt = Date()
-    private var cancelled: SkipRange?
-    private var skipped: SkipRange?
+    @ObservationIgnored private var shownAt = Date()
+    @ObservationIgnored private var cancelled: SkipRange?
+    @ObservationIgnored private var skipped: SkipRange?
     /// 上一跳看到的时间轴：换了就当作「这是新的一集」，取消 / 跳过记录作废。
-    private var lastSegments: SkipSegments?
+    @ObservationIgnored private var lastSegments: SkipSegments?
 
     /// 取走待执行的 seek 目标，取完就清。
     func consumeSeekTarget() -> Double? {
@@ -191,7 +191,10 @@ final class SkipSegmentPillModel {
                 }
                 return
             }
-            countdownRemaining = min(max(range.start - position, 0), Self.countdownSeconds)
+            let remaining = min(max(range.start - position, 0), Self.countdownSeconds)
+            if countdownRemaining != remaining {
+                countdownRemaining = remaining
+            }
             return
         }
 
@@ -227,10 +230,12 @@ final class SkipSegmentPillModel {
     }
 
     private func hide() {
-        kind = nil
-        range = nil
-        mode = .countdown
-        countdownRemaining = Self.countdownSeconds
+        if kind != nil { kind = nil }
+        if range != nil { range = nil }
+        if mode != .countdown { mode = .countdown }
+        if countdownRemaining != Self.countdownSeconds {
+            countdownRemaining = Self.countdownSeconds
+        }
     }
 
     private func performSkip(kind: SkipKind, range: SkipRange, auto: Bool) {

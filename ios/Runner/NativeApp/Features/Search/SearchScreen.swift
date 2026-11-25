@@ -30,6 +30,8 @@ struct SearchScreen: View {
     @State private var notShowAbandoned = UserDefaults.standard.bool(forKey: "kazumi.settings.searchNotShowAbandoned")
     @FocusState private var isInputFocused: Bool
     @State private var didAutoFocusOnAppear = false
+    /// 缓存最近搜索及其可读文案，避免搜索框每次击键重读磁盘并反复跑 9 个正则。
+    @State private var recentItems: [RecentSearchItem] = []
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(AppRouter.self) private var router
@@ -176,6 +178,7 @@ struct SearchScreen: View {
             }
         }
         .onAppear {
+            reloadRecentItems()
             if let picked = router.pendingSearchKeyword {
                 router.pendingSearchKeyword = nil
                 input = picked
@@ -295,11 +298,22 @@ struct SearchScreen: View {
         .frame(maxWidth: .infinity)
     }
 
+    private struct RecentSearchItem: Identifiable, Hashable {
+        let query: String
+        let label: String
+        var id: String { query }
+    }
+
+    private func reloadRecentItems() {
+        recentItems = SearchHistoryStore.load().prefix(8).map { keyword in
+            RecentSearchItem(query: keyword, label: readable(keyword))
+        }
+    }
+
     /// 最近搜索：与原版一致，最多 10 条，点击即搜。
     @ViewBuilder
     private var recentSearches: some View {
-        let recents = SearchHistoryStore.load()
-        if !recents.isEmpty {
+        if !recentItems.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("最近搜索")
@@ -315,14 +329,14 @@ struct SearchScreen: View {
                 // 宽度拉长，一行装不下就整颗换到下一行——不再挤在等宽格子里把番名
                 // 折成两行。只有单颗比整行还宽时才在胶囊里折行，绝不出现省略号。
                 KazumiFlowLayout(spacing: 8, rowSpacing: 8) {
-                    ForEach(recents.prefix(8), id: \.self) { keyword in
+                    ForEach(recentItems) { item in
                         Button {
                             // LP 3072：历史里那条写人话（后宫），点它搜索框里要放查询串
                             // （tag:后宫），按条件查找里那颗标签也就是选中的——都走同一份状态。
-                            input = keyword
-                            submit(keyword)
+                            input = item.query
+                            submit(item.query)
                         } label: {
-                            Text(readable(keyword))
+                            Text(item.label)
                                 .font(.footnote)
                                 .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -359,8 +373,9 @@ struct SearchScreen: View {
     }
 
     /// 结果表头：标题 + 结果数 + 排序 + 筛选入口，一行读完（LP 3068）。
-    private var resultsHeader: some View {
+    private func resultsHeader(shownCount: Int) -> some View {
         let state = SearchParser(submittedQuery ?? "").toFilterState()
+        let countLabel = countText(shownCount: shownCount)
         // LP 3068：「搜索结果」右边只放搜到多少部，条件串本身不在这儿重复一遍
         // （它就在上面搜索框里，能直接改）。
         return VStack(alignment: .leading, spacing: 6) {
@@ -371,7 +386,7 @@ struct SearchScreen: View {
                 HStack(spacing: 4) {
                     Text("搜索结果")
                         .font(.headline)
-                    Text(countText)
+                    Text(countLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.leading, 4)
@@ -385,7 +400,7 @@ struct SearchScreen: View {
                 HStack(spacing: 4) {
                     Text("搜索结果")
                         .font(.headline)
-                    Text(countText)
+                    Text(countLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -431,14 +446,13 @@ struct SearchScreen: View {
     }
 
     /// 结果数那行：搜索中 / 共几部 / 被隐藏了几部（与 main 同一句）。
-    private var countText: String {
-        let all = controller.bangumiList
-        if controller.isLoading && all.isEmpty { return String(localized: "正在搜索…") }
-        let shown = visibleItems.count
-        if shown < all.count {
-            return String(localized: "\(String(describing: shown)) 部番剧 · 隐藏 \(String(describing: all.count - shown)) 部")
+    private func countText(shownCount: Int) -> String {
+        let allCount = controller.bangumiList.count
+        if controller.isLoading && allCount == 0 { return String(localized: "正在搜索…") }
+        if shownCount < allCount {
+            return String(localized: "\(String(describing: shownCount)) 部番剧 · 隐藏 \(String(describing: allCount - shownCount)) 部")
         }
-        return String(localized: "\(String(describing: shown)) 部番剧")
+        return String(localized: "\(String(describing: shownCount)) 部番剧")
     }
 
     /// 排序：按热度 / 排名 / 评分 / 匹配（原版是同一颗菜单，改完立刻重搜）。
@@ -483,7 +497,8 @@ struct SearchScreen: View {
 
     @ViewBuilder
     private var results: some View {
-        resultsHeader
+        let items = visibleItems
+        resultsHeader(shownCount: items.count)
 
         if controller.isLoading && controller.bangumiList.isEmpty {
             ProgressView()
@@ -503,7 +518,7 @@ struct SearchScreen: View {
             .padding(.top, 60)
         } else {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                ForEach(visibleItems) { item in
+                ForEach(items) { item in
                     SearchResultCard(item: item, width: cardWidth, zoomNamespace: zoomNamespace)
                         .task { await loadMoreIfNeeded(current: item) }
                 }
@@ -513,7 +528,7 @@ struct SearchScreen: View {
 
             Color.clear
                 .frame(height: 1)
-                .task(id: "\(controller.bangumiList.count)/\(visibleItems.count)") {
+                .task(id: "\(controller.bangumiList.count)/\(items.count)") {
                     await loadMoreIfNeeded()
                 }
         }
@@ -565,7 +580,10 @@ struct SearchScreen: View {
         // 面板点「查看结果」时会把条件串写回输入框（LP 3048，格式同 main），
         // 用户改一个字就能接着搜；打字搜索这条路不动输入框。
         submittedQuery = query
-        if !query.isEmpty { SearchHistoryStore.record(query) }
+        if !query.isEmpty {
+            SearchHistoryStore.record(query)
+            reloadRecentItems()
+        }
         Task { await controller.searchBangumi(query, type: "init") }
     }
 

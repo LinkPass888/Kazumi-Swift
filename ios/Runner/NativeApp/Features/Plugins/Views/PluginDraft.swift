@@ -40,6 +40,7 @@ struct PluginDraft {
 
     // API 搜索
     var searchMethod = "GET"
+    var searchAPIURL = ""
     var searchHeaders = ""
     var searchQuery = ""
     var searchBodyType: ApiBodyType = .none
@@ -108,6 +109,8 @@ struct PluginDraft {
 
         let search = plugin.searchApiConfig
         searchMethod = search.request.method
+        let apiSearchURL = search.request.url.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchAPIURL = apiSearchURL.isEmpty ? plugin.searchURL : search.request.url
         searchHeaders = Self.jsonText(search.request.headers)
         searchQuery = Self.jsonText(search.request.query)
         searchBodyType = search.request.bodyType
@@ -200,7 +203,7 @@ struct PluginDraft {
         let config = ApiSearchConfig(
             request: ApiRequestConfig(
                 method: searchMethod.uppercased(),
-                url: value(searchURL),
+                url: value(searchAPIURL),
                 headers: try parseJSONMap(searchHeaders, label: String(localized: "搜索请求头")),
                 query: try parseJSONMap(searchQuery, label: String(localized: "搜索查询参数")),
                 bodyType: searchBodyType,

@@ -389,7 +389,7 @@ struct ProfileScreen: View {
     // MARK: - 分组列表
 
     private struct Row: Identifiable {
-        let id = UUID()
+        var id: String { symbol }
         var symbol: String
         var title: LocalizedStringKey
         var route: AppRoute

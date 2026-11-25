@@ -45,6 +45,8 @@ struct DownloadEpisode: Codable, Identifiable, Sendable, Hashable {
     var progress: Double
     var totalBytes: Int64
     var downloadedBytes: Int64
+    /// HLS 总分片数（重启时据此按磁盘有效分片数精确重建暂停进度，避免多任务强杀后显示回退）。
+    var totalSegments: Int? = nil
     /// 失败原因，界面上说人话。
     var errorMessage: String?
     /// 落盘后的相对文件名（相对这条记录的目录）。
@@ -83,6 +85,7 @@ struct DownloadEpisode: Codable, Identifiable, Sendable, Hashable {
         progress: Double = 0,
         totalBytes: Int64 = 0,
         downloadedBytes: Int64 = 0,
+        totalSegments: Int? = nil,
         errorMessage: String? = nil,
         fileName: String? = nil,
         directoryPath: String? = nil,
@@ -96,6 +99,7 @@ struct DownloadEpisode: Codable, Identifiable, Sendable, Hashable {
         self.progress = progress
         self.totalBytes = totalBytes
         self.downloadedBytes = downloadedBytes
+        self.totalSegments = totalSegments
         self.errorMessage = errorMessage
         self.fileName = fileName
         self.directoryPath = directoryPath

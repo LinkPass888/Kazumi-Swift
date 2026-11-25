@@ -14,16 +14,68 @@
 
 import Foundation
 import Fuzi
+import os
 
 // 类型名一律写 `Fuzi.XMLElement`：macOS 侧 Foundation 也导出了同名的 `XMLElement`
 // （iOS 侧没有），两边一起 import 时裸写这个名字在 macOS 上会报
 // "ambiguous for type lookup in this context"，写全名两边都对。
 
 struct XPathRuleStrategy: Sendable {
+    private static let queryComponentAllowed: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return allowed
+    }()
+
+    private static let captchaRegexCacheLimit = 64
+    private static let captchaRegexCache = OSAllocatedUnfairLock<[String: NSRegularExpression]>(initialState: [:])
+
+    private static let attrContainsPattern = try! NSRegularExpression(
+        pattern: #"@([A-Za-z_][\w:.-]*)\s*\*=\s*('[^']*'|"[^"]*")"#
+    )
+    private static let attrPrefixPattern = try! NSRegularExpression(
+        pattern: #"@([A-Za-z_][\w:.-]*)\s*\^=\s*('[^']*'|"[^"]*")"#
+    )
+    private static let attrSuffixPattern = try! NSRegularExpression(
+        pattern: #"@([A-Za-z_][\w:.-]*)\s*\$=\s*('[^']*'|"[^"]*")"#
+    )
+
+    /// 兼容上游 Flutter `xpath_selector` 的扩展属性谓词（`*=` / `^=` / `$=`），
+    /// 改写为 libxml2 原生支持的标准 XPath 1.0 表达式（如 `@class*='foo'` → `contains(@class, 'foo')`）。
+    nonisolated static func normalizeXPath(_ expression: String) -> String {
+        guard expression.contains("*=") || expression.contains("^=") || expression.contains("$=") else {
+            return expression
+        }
+        var result = expression
+        if result.contains("*=") {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = attrContainsPattern.stringByReplacingMatches(
+                in: result, options: [], range: range, withTemplate: "contains(@$1, $2)"
+            )
+        }
+        if result.contains("^=") {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = attrPrefixPattern.stringByReplacingMatches(
+                in: result, options: [], range: range, withTemplate: "starts-with(@$1, $2)"
+            )
+        }
+        if result.contains("$=") {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = attrSuffixPattern.stringByReplacingMatches(
+                in: result,
+                options: [],
+                range: range,
+                withTemplate: "substring(@$1, string-length(@$1) - string-length($2) + 1) = $2"
+            )
+        }
+        return result
+    }
+
     /// 上游 `xpath_selector` 在节点上下文里把 `//x` 解释为当前节点的后代；
     /// Fuzi/libxml2 则会从文档根开始。规则按上游语义编写，只在节点内求值时补成 `.//x`。
     nonisolated static func contextRelativeSelector(_ expression: String) -> String {
-        expression.hasPrefix("//") ? "." + expression : expression
+        let normalized = normalizeXPath(expression)
+        return normalized.hasPrefix("//") ? "." + normalized : normalized
     }
 
     func prepareSearchRequest(_ config: RuleExecutionConfig, keyword: String) throws -> PreparedRuleRequest {
@@ -70,7 +122,13 @@ struct XPathRuleStrategy: Sendable {
         return PreparedRuleRequest(method: "GET", url: url)
     }
 
-    func parseSearch(_ raw: String, config: RuleExecutionConfig) throws -> RuleSearchParseResult {
+    /// 直接调用策略时默认保留 `matchedFragments`（兼容单元测试），
+    /// 生产搜索经由 `RuleEngine.search` 显式传入 `includeFragments: false` 跳过 `rawXML` 序列化。
+    func parseSearch(
+        _ raw: String,
+        config: RuleExecutionConfig,
+        includeFragments: Bool = true
+    ) throws -> RuleSearchParseResult {
         let html = try documentElement(raw)
         // Fuzi 的节点用 unowned 指向所属文档：文档必须先于节点活着。
         // 若文档只是 documentElement 里的局部变量，它会在函数返回时释放，
@@ -84,17 +142,18 @@ struct XPathRuleStrategy: Sendable {
         var items: [SearchItem] = []
         var fragments: [String] = []
         var diagnostics: [String] = []
+        let searchListExpr = Self.normalizeXPath(config.searchList)
         let nodes = try runSelector(.searchList, expression: config.searchList) {
-            Array(root.xpath(config.searchList))
+            Array(root.xpath(searchListExpr))
         }
+        let searchName = Self.contextRelativeSelector(config.searchName)
+        let searchResult = Self.contextRelativeSelector(config.searchResult)
 
         for (index, node) in nodes.enumerated() {
             do {
-                let searchName = Self.contextRelativeSelector(config.searchName)
                 let name = try runSelector(.searchName, expression: config.searchName) { () -> Fuzi.XMLElement? in
                     node.xpath(searchName).first
                 }?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let searchResult = Self.contextRelativeSelector(config.searchResult)
                 let source = try runSelector(.searchResult, expression: config.searchResult) { () -> Fuzi.XMLElement? in
                     node.xpath(searchResult).first
                 }?.attr("href")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -103,7 +162,9 @@ struct XPathRuleStrategy: Sendable {
                     continue
                 }
                 items.append(SearchItem(name: name, src: source))
-                fragments.append(fragment(node))
+                if includeFragments {
+                    fragments.append(fragment(node))
+                }
             } catch let error as XPathRuleFormatError {
                 throw error
             } catch {
@@ -121,15 +182,17 @@ struct XPathRuleStrategy: Sendable {
         let root = html.root
         var roads: [Road] = []
         var diagnostics: [String] = []
+        let chapterRoadsExpr = Self.normalizeXPath(config.chapterRoads)
         let roadNodes = try runSelector(.chapterRoads, expression: config.chapterRoads) {
-            Array(root.xpath(config.chapterRoads))
+            Array(root.xpath(chapterRoadsExpr))
         }
+        let preparedBase = EpisodeURL.prepareBase(config.baseUrl)
+        let chapterResult = Self.contextRelativeSelector(config.chapterResult)
 
         for (roadIndex, roadNode) in roadNodes.enumerated() {
             do {
                 var urls: [String] = []
                 var names: [String] = []
-                let chapterResult = Self.contextRelativeSelector(config.chapterResult)
                 let episodeNodes = try runSelector(.chapterResult, expression: config.chapterResult) {
                     Array(roadNode.xpath(chapterResult))
                 }
@@ -140,7 +203,7 @@ struct XPathRuleStrategy: Sendable {
                         continue
                     }
                     let name = removeWhitespace(episode.stringValue)
-                    urls.append(EpisodeURL.normalize(baseUrl: config.baseUrl, raw: source))
+                    urls.append(EpisodeURL.normalize(base: preparedBase, raw: source))
                     names.append(name.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : name)
                 }
                 if urls.isEmpty {
@@ -173,10 +236,7 @@ struct XPathRuleStrategy: Sendable {
             case .text:
                 return raw.contains(detectValue)
             case .regex:
-                guard let regex = try? NSRegularExpression(
-                    pattern: detectValue,
-                    options: [.caseInsensitive, .dotMatchesLineSeparators]
-                ) else {
+                guard let regex = Self.compiledCaptchaRegex(for: detectValue) else {
                     return false
                 }
                 let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
@@ -210,6 +270,25 @@ struct XPathRuleStrategy: Sendable {
     }
 
     // MARK: - Helpers
+
+    private static func compiledCaptchaRegex(for pattern: String) -> NSRegularExpression? {
+        if let cached = captchaRegexCache.withLock({ $0[pattern] }) {
+            return cached
+        }
+        guard let compiled = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return nil
+        }
+        captchaRegexCache.withLock { cache in
+            if cache.count >= captchaRegexCacheLimit {
+                cache.removeAll(keepingCapacity: true)
+            }
+            cache[pattern] = compiled
+        }
+        return compiled
+    }
 
     /// 解析出的文档与它的根节点。两者必须一起被持有。
     struct ParsedHTML {
@@ -277,8 +356,6 @@ struct XPathRuleStrategy: Sendable {
 
     /// 对应 Dart 的 Uri.encodeQueryComponent。
     private func encodeQueryComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        value.addingPercentEncoding(withAllowedCharacters: Self.queryComponentAllowed) ?? value
     }
 }

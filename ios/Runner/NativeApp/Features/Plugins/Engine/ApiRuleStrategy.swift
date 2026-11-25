@@ -19,6 +19,12 @@ struct ApiRuleStrategy: Sendable {
     /// 正则字面量在 Swift 6 下的静态初始化约束）。
     private static let exactVariablePattern = try! NSRegularExpression(pattern: "^@([A-Za-z_][A-Za-z0-9_]*)$")
 
+    private static let componentAllowed: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return allowed
+    }()
+
     func decodeResponse(_ raw: String) throws -> JSONValue {
         do {
             return try JSONValue.decode(raw)
@@ -63,33 +69,36 @@ struct ApiRuleStrategy: Sendable {
         }
     }
 
-    func parseSearch(_ raw: String, config: ApiSearchConfig) throws -> RuleSearchParseResult {
+    func parseSearch(
+        _ raw: String,
+        config: ApiSearchConfig,
+        includeFragments: Bool = false
+    ) throws -> RuleSearchParseResult {
         try validateSearchConfig(config)
+        let listPath = try RestrictedJSONPath.compile(config.listPath)
+        let namePath = try RestrictedJSONPath.compile(config.namePath)
+        let sourcePath = try RestrictedJSONPath.compile(config.sourcePath)
         let document = try decodeResponse(raw)
-        let nodes = try RestrictedJSONPath.read(document, expression: config.listPath)
+        let nodes = listPath.read(in: document)
         let template = config.sourceTemplate
         var items: [SearchItem] = []
         var fragments: [String] = []
         var diagnostics: [String] = []
 
         for (index, node) in nodes.enumerated() {
-            do {
-                let name = stringValue(try RestrictedJSONPath.readFirst(node, expression: config.namePath))
-                let source = stringValue(try RestrictedJSONPath.readFirst(node, expression: config.sourcePath))
-                if name.isEmpty || source.isEmpty {
-                    diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 缺少名称或来源，已跳过"))
-                    continue
-                }
-                // 纯字符串替换，`@source` 可以紧跟字母（例如 `/GV@source`）。
-                let src = template.isEmpty
-                    ? source
-                    : template.replacingOccurrences(of: "@source", with: encodeComponent(source))
-                items.append(SearchItem(name: name, src: src))
+            let name = stringValue(namePath.readFirst(in: node))
+            let source = stringValue(sourcePath.readFirst(in: node))
+            if name.isEmpty || source.isEmpty {
+                diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 缺少名称或来源，已跳过"))
+                continue
+            }
+            // 纯字符串替换，`@source` 可以紧跟字母（例如 `/GV@source`）。
+            let src = template.isEmpty
+                ? source
+                : template.replacingOccurrences(of: "@source", with: encodeComponent(source))
+            items.append(SearchItem(name: name, src: src))
+            if includeFragments {
                 fragments.append(node.serialized(pretty: false))
-            } catch let error as ApiRuleFormatError {
-                throw error
-            } catch {
-                diagnostics.append(String(localized: "搜索节点 \(String(describing: index)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
         }
 
@@ -111,20 +120,21 @@ struct ApiRuleStrategy: Sendable {
             }
             rootVariables[key] = value
         }
+        let preparedBase = EpisodeURL.prepareBase(baseUrl)
         var diagnostics: [String] = []
         let roads = config.format == .delimited
             ? try parseDelimited(
                 document,
                 config: config,
                 rootVariables: rootVariables,
-                baseUrl: baseUrl,
+                preparedBase: preparedBase,
                 diagnostics: &diagnostics
             )
             : try parseNested(
                 document,
                 config: config,
                 rootVariables: rootVariables,
-                baseUrl: baseUrl,
+                preparedBase: preparedBase,
                 diagnostics: &diagnostics
             )
         return RuleChapterParseResult(roads: roads, diagnostics: diagnostics)
@@ -134,66 +144,62 @@ struct ApiRuleStrategy: Sendable {
         _ document: JSONValue,
         config: ApiChapterConfig,
         rootVariables: [String: JSONValue],
-        baseUrl: String,
+        preparedBase: EpisodeURL.Base,
         diagnostics: inout [String]
     ) throws -> [Road] {
         let hasRoads = !config.roadsPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let roadNamePath = (hasRoads && !config.roadNamePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ? try RestrictedJSONPath.compile(config.roadNamePath)
+            : nil
+        let episodesPath = try RestrictedJSONPath.compile(config.episodesPath)
+        let episodeNamePath = try RestrictedJSONPath.compile(config.episodeNamePath)
+        let episodeUrlPath = config.episodeUrlPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil
+            : try RestrictedJSONPath.compile(config.episodeUrlPath)
         let roadNodes: [JSONValue] = hasRoads
-            ? try RestrictedJSONPath.read(document, expression: config.roadsPath)
+            ? try RestrictedJSONPath.compile(config.roadsPath).read(in: document)
             : [document]
         var roads: [Road] = []
 
         for (roadIndex, roadNode) in roadNodes.enumerated() {
-            do {
-                let roadName: String = (hasRoads && !config.roadNamePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    ? stringValue(try RestrictedJSONPath.readFirst(roadNode, expression: config.roadNamePath))
-                    : ""
-                let episodeNodes = try RestrictedJSONPath.read(roadNode, expression: config.episodesPath)
-                var urls: [String] = []
-                var names: [String] = []
+            let roadName = roadNamePath.map { stringValue($0.readFirst(in: roadNode)) } ?? ""
+            let episodeNodes = episodesPath.read(in: roadNode)
+            var urls: [String] = []
+            var names: [String] = []
 
-                for (episodeIndex, episodeNode) in episodeNodes.enumerated() {
-                    do {
-                        let episodeName = stringValue(
-                            try RestrictedJSONPath.readFirst(episodeNode, expression: config.episodeNamePath)
-                        )
-                        let rawURL = config.episodeUrlPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? ""
-                            : stringValue(try RestrictedJSONPath.readFirst(episodeNode, expression: config.episodeUrlPath))
-                        let pageURL = try resolveEpisodeURL(
-                            config,
-                            rootVariables: rootVariables,
-                            rawURL: rawURL,
-                            roadIndex: roadIndex,
-                            episodeIndex: episodeIndex,
-                            baseUrl: baseUrl
-                        )
-                        if pageURL.isEmpty {
-                            diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
-                            continue
-                        }
-                        urls.append(pageURL)
-                        names.append(episodeName.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : episodeName)
-                    } catch let error as ApiRuleFormatError {
-                        throw error
-                    } catch {
-                        diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
+            for (episodeIndex, episodeNode) in episodeNodes.enumerated() {
+                do {
+                    let episodeName = stringValue(episodeNamePath.readFirst(in: episodeNode))
+                    let rawURL = episodeUrlPath.map { stringValue($0.readFirst(in: episodeNode)) } ?? ""
+                    let pageURL = try resolveEpisodeURL(
+                        config,
+                        rootVariables: rootVariables,
+                        rawURL: rawURL,
+                        roadIndex: roadIndex,
+                        episodeIndex: episodeIndex,
+                        preparedBase: preparedBase
+                    )
+                    if pageURL.isEmpty {
+                        diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
+                        continue
                     }
+                    urls.append(pageURL)
+                    names.append(episodeName.isEmpty ? String(localized: "第\(String(describing: episodeIndex + 1))集") : episodeName)
+                } catch let error as ApiRuleFormatError {
+                    throw error
+                } catch {
+                    diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集节点 \(String(describing: episodeIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
                 }
-                if urls.isEmpty {
-                    diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 没有有效剧集，已跳过"))
-                    continue
-                }
-                roads.append(Road(
-                    name: roadName.isEmpty ? String(localized: "播放线路\(String(describing: roads.count + 1))") : roadName,
-                    data: urls,
-                    identifier: names
-                ))
-            } catch let error as ApiRuleFormatError {
-                throw error
-            } catch {
-                diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 解析失败: \(String(describing: error.localizedDescription))"))
             }
+            if urls.isEmpty {
+                diagnostics.append(String(localized: "线路节点 \(String(describing: roadIndex)) 没有有效剧集，已跳过"))
+                continue
+            }
+            roads.append(Road(
+                name: roadName.isEmpty ? String(localized: "播放线路\(String(describing: roads.count + 1))") : roadName,
+                data: urls,
+                identifier: names
+            ))
         }
         return roads
     }
@@ -201,7 +207,7 @@ struct ApiRuleStrategy: Sendable {
         _ document: JSONValue,
         config: ApiChapterConfig,
         rootVariables: [String: JSONValue],
-        baseUrl: String,
+        preparedBase: EpisodeURL.Base,
         diagnostics: inout [String]
     ) throws -> [Road] {
         let namesValue = stringValue(try RestrictedJSONPath.readFirst(document, expression: config.roadNamesPath))
@@ -232,7 +238,7 @@ struct ApiRuleStrategy: Sendable {
                         rawURL: rawURL,
                         roadIndex: roadIndex,
                         episodeIndex: episodeIndex,
-                        baseUrl: baseUrl
+                        preparedBase: preparedBase
                     )
                     if pageURL.isEmpty {
                         diagnostics.append(String(localized: "线路 \(String(describing: roadIndex)) 的剧集条目 \(String(describing: episodeIndex)) 缺少 URL，已跳过"))
@@ -268,10 +274,10 @@ struct ApiRuleStrategy: Sendable {
         rawURL: String,
         roadIndex: Int,
         episodeIndex: Int,
-        baseUrl: String
+        preparedBase: EpisodeURL.Base
     ) throws -> String {
         guard let page = config.episodePage else {
-            return EpisodeURL.normalize(baseUrl: baseUrl, raw: rawURL)
+            return EpisodeURL.normalize(base: preparedBase, raw: rawURL)
         }
         let templateURL = page.url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !templateURL.isEmpty else {
@@ -301,7 +307,7 @@ struct ApiRuleStrategy: Sendable {
         components.queryItems = mergedQuery.isEmpty
             ? nil
             : mergedQuery.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
-        return EpisodeURL.normalize(baseUrl: baseUrl, raw: components.string ?? path)
+        return EpisodeURL.normalize(base: preparedBase, raw: components.string ?? path)
     }
 
     /// 校验章节规则；插件编辑器保存前也复用它。
@@ -375,33 +381,35 @@ struct ApiRuleStrategy: Sendable {
         variables: [String: JSONValue],
         encode: Bool = false
     ) throws -> String {
+        guard template.contains("@") else { return template }
         var output = ""
-        let characters = Array(template)
-        var index = 0
-        while index < characters.count {
-            let char = characters[index]
-            let previous = index > 0 ? characters[index - 1] : nil
+        output.reserveCapacity(template.count)
+        var index = template.startIndex
+        var previous: Character? = nil
+        while index < template.endIndex {
+            let char = template[index]
             let blockedPrefix = previous.map(isIdentifierCharacter) ?? false
             if char == "@" && !blockedPrefix {
-                var cursor = index + 1
-                if cursor < characters.count, isIdentifierStart(characters[cursor]) {
-                    var name = String(characters[cursor])
-                    cursor += 1
-                    while cursor < characters.count, isIdentifierCharacter(characters[cursor]) {
-                        name.append(characters[cursor])
-                        cursor += 1
+                let nameStart = template.index(after: index)
+                if nameStart < template.endIndex, isIdentifierStart(template[nameStart]) {
+                    var cursor = template.index(after: nameStart)
+                    while cursor < template.endIndex, isIdentifierCharacter(template[cursor]) {
+                        cursor = template.index(after: cursor)
                     }
+                    let name = String(template[nameStart..<cursor])
                     guard let value = variables[name] else {
                         throw ApiRuleFormatError(message: String(localized: "缺少模板变量 @\(String(describing: name))"))
                     }
                     let text = value.toStringValue
                     output.append(encode ? encodeComponent(text) : text)
+                    previous = template[template.index(before: cursor)]
                     index = cursor
                     continue
                 }
             }
             output.append(char)
-            index += 1
+            previous = char
+            index = template.index(after: index)
         }
         return output
     }
@@ -432,9 +440,7 @@ struct ApiRuleStrategy: Sendable {
 
     /// 对应 Dart 的 Uri.encodeComponent。
     private func encodeComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        value.addingPercentEncoding(withAllowedCharacters: Self.componentAllowed) ?? value
     }
 
     private func stringValue(_ value: JSONValue?) -> String {

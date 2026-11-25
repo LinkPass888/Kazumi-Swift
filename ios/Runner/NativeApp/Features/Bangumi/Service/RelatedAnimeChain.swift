@@ -50,7 +50,7 @@ enum RelatedAnimeChain {
         currentSubjectID: Int,
         maxDepth: Int = 12,
         maxFetchCount: Int = 20,
-        fetchRelations: @Sendable (Int) async -> [BangumiRelationItem]
+        fetchRelations: @escaping @Sendable (Int) async -> [BangumiRelationItem]
     ) async -> [BangumiRelationItem] {
         guard maxDepth >= 1, maxFetchCount >= 1 else { return [] }
 
@@ -105,9 +105,21 @@ enum RelatedAnimeChain {
 
             let budget = maxFetchCount - fetchCount
             let nodes = Array(frontier.prefix(budget))
-            var fetched: [[BangumiRelationItem]] = []
-            for node in nodes {
-                fetched.append(await fetchRelations(node.subjectID))
+            let fetched = await withTaskGroup(
+                of: (Int, [BangumiRelationItem]).self,
+                returning: [[BangumiRelationItem]].self
+            ) { group in
+                for (index, node) in nodes.enumerated() {
+                    let subjectID = node.subjectID
+                    group.addTask {
+                        (index, await fetchRelations(subjectID))
+                    }
+                }
+                var ordered = Array(repeating: [BangumiRelationItem](), count: nodes.count)
+                for await (index, items) in group where ordered.indices.contains(index) {
+                    ordered[index] = items
+                }
+                return ordered
             }
             fetchCount += nodes.count
 
