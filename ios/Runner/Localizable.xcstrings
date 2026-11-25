@@ -776,6 +776,26 @@
         }
       }
     },
+    "Bangumi 不支持在 App 内取消追番，请到网站删除": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bangumi 不支援在 App 內取消追番，請到網站刪除"
+          }
+        }
+      }
+    },
+    "未配置或未验证 Bangumi 账号": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未設定或未驗證 Bangumi 帳號"
+          }
+        }
+      }
+    },
     "Bangumi 收藏列表里没有 data 字段": {
       "localizations": {
         "zh-Hant": {
