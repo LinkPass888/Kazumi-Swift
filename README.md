@@ -66,6 +66,18 @@
 
 ### iOS / iPadOS
 
+**方式一：加软件源（推荐，装一次之后随版本更新）**
+
+在 [AltStore](https://altstore.io/)、SideStore 或 Feather 里添加下面这个源，之后在源里直接安装和更新 Kazumi：
+
+```
+https://linkpass888.github.io/Sideload/source.json
+```
+
+也可以打开 [侧载入口页](https://linkpass888.github.io/Sideload/) 点一下按钮自动加源。源里还有 CarCanvas 与 AirBeep。
+
+**方式二：手动下载 IPA**
+
 1. 从 [Releases](https://github.com/LinkPass888/Kazumi-Swift/releases/latest) 下载最新的 `Kazumi_ios_*_no_sign.ipa`
 2. 用 [AltStore](https://altstore.io/)、[Sideloadly](https://sideloadly.io/) 这类工具装进去，自备 Apple ID 签名
 
