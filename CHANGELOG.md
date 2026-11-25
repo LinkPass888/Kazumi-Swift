@@ -25,6 +25,8 @@
 
 - 部分番剧的详情页侧滑退出无法打断，按钮悬空慢淡出。这是 SwiftUI 原生转场机制的限制，暂时没有优化计划
 
+**安装：** 在 AltStore / SideStore / Feather 中添加软件源 `https://linkpass888.github.io/Sideload/source.json`，即可直接安装与更新，无需手动下载 IPA。入口页 <https://linkpass888.github.io/Sideload/>
+
 ## 3.1.2 (2026-11-23)
 
 ### 新增
