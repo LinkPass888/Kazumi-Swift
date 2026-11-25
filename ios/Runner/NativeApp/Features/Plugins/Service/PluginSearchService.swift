@@ -263,7 +263,11 @@ final class PluginSearchService {
             statuses[name] = .noResult
         case RuleError.searchFailed(let name, let message):
             KazumiLog.plugin.warning("PluginSearchService: search error for \(name, privacy: .public)")
-            KazumiLogBuffer.plugin("规则检索失败（\(name)）：\(message)")
+            if let message, !message.isEmpty {
+                KazumiLogBuffer.plugin("规则检索失败（\(name)）：\(message)")
+            } else {
+                KazumiLogBuffer.plugin("规则检索失败（\(name)）")
+            }
             statuses[name] = .error
         default:
             KazumiLog.plugin.warning("PluginSearchService: search error for \(plugin.name, privacy: .public)")

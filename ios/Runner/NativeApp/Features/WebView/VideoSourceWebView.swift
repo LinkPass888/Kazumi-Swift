@@ -563,14 +563,33 @@ extension VideoSourceWebView: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code == NSURLErrorCancelled { return }
-        KazumiLogBuffer.network("WebView 页面加载失败：\(error.localizedDescription)")
+        logNavigationFailure("WebView 页面加载失败", webView: webView, error: error)
         emit("WebView: error: \(error.localizedDescription)")
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code == NSURLErrorCancelled { return }
-        KazumiLogBuffer.network("WebView 预加载失败：\(error.localizedDescription)")
+        logNavigationFailure("WebView 预加载失败", webView: webView, error: error)
         emit("WebView: error: \(error.localizedDescription)")
+    }
+
+    private func logNavigationFailure(_ label: String, webView: WKWebView, error: Error) {
+        let failingURL = (error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? webView.url
+        let location = Self.sanitizedLogURL(failingURL).map { "（\($0)）" } ?? ""
+        KazumiLogBuffer.network("\(label)\(location)：\(error.localizedDescription)")
+    }
+
+    /// 剥离 query、fragment 与账号凭据后的页面主路径，仅用于日志排查。
+    private static func sanitizedLogURL(_ url: URL?) -> String? {
+        guard let url else { return nil }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.scheme.map { "\($0)://\(url.host ?? "")\(url.path)" }
+        }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.string
     }
 }
 
