@@ -152,22 +152,19 @@ struct LibraryScreen: View {
         return content(entries)
             // 只量视口尺寸（宽档分档要用高度）：网格的左右内边距各 16，减掉就是可用内容宽。
             // 这颗探针必须在 ScrollView 外面，理由见 content 里那段注释。
-            // LP 2026-10-24（后一条）：追番页整体上移到原来的高度——不用系统大标题了，
-            // 导航栏收起，标题照旧写在内容里，顶栏只剩控制条；「同步」仍留在控制条里。
-            // 顶栏改纯色底（同一条）：标题＋控制条铺页面底色并铺进状态栏，上滑不透内容。
+            // 标题统一交给系统导航栏；控制条仍留在原位置并沿用页面底色。
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    header
-                    controlBar(count: entries.count)
-                }
+                controlBar(count: entries.count)
                 .background(
                     KazumiPalette.background(for: colorScheme),
                     ignoresSafeAreaEdges: .top
                 )
             }
             .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("追番")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(KazumiPalette.background(for: colorScheme), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             // 「同步」不在工具栏：LP 2026-10-24 要它回到搜索按钮右边、两颗一起靠右。
             .task {
                 sort = CollectSort(rawValue: settings.librarySort) ?? .updateTime
@@ -190,30 +187,6 @@ struct LibraryScreen: View {
                 searchFocused = value
             }
             .overlay(alignment: .bottom) { toastView }
-    }
-
-    // MARK: - 头部
-
-    /// 「同步」不在这里：LP 2026-10-24 要它贴在控制条搜索按钮右边。
-    private var header: some View {
-        HStack(alignment: .center) {
-            Text("追番")
-                // C 档大标题改 inline（§六之二）：34 半粗 → 20 半粗。
-                .font(isShortTier ? Font.title3.weight(.semibold) : Font.largeTitle.weight(.semibold))
-
-            Spacer(minLength: 0)
-        }
-        // iPad 宽档标题边距 20，跟「我的」页系统大标题取齐（Colo 7261）；手机档照旧 16。
-        .padding(.horizontal, isWideTier ? 20 : 16)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        // Colo 3461：搜索状态下，搜索框以上这一整块是取消的**主要落点**——
-        // 面积固定、永远在、不随结果多少变。列表那边不再挂手势。
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard isSearching else { return }
-            cancelSearch()
-        }
     }
 
     // MARK: - 控制条

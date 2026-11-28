@@ -27,20 +27,9 @@ struct TimelineScreen: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AppRouter.self) private var router
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// 量到的页面尺寸（§6.0：列数与限宽都按容器算，不按整屏）。
     @State private var containerSize: CGSize = .zero
-
-    /// B 档：宽且不矮。
-    private var isWideTier: Bool {
-        containerSize.width >= 700 && containerSize.height >= 600
-    }
-
-    /// C 档：宽但矮（§六之二）。
-    private var isShortTier: Bool {
-        containerSize.width >= 700 && containerSize.height < 600
-    }
 
     /// 当前打开着详情的番剧 id（从导航栈里读）。
     @State private var detailItemID: Int?
@@ -120,25 +109,21 @@ struct TimelineScreen: View {
                 guard size.width > 0 else { return }
                 containerSize = size
             }
-            // 头部与星期条合成一块吸附在顶部：两块都是固定块，
-            // 只提 header 的话内容仍会从星期条下面硬切过去。
-            // LP 2026-10-24（后一条）：顶栏不要毛玻璃了，改纯色底。
-            // 这块（标题＋星期条）铺页面的底色，一直铺进状态栏，上滑时内容不从缝里透出来。
+            // 星期条吸附在顶部；标题统一交给系统导航栏。
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    header
-                    weekdaySelector
-                }
-                // `ignoresSafeAreaEdges: .top` 是关键（Colo 2026-10-24）：不加只从状态栏
-                // 下面那 62 点开始铺，最上面一条还是光的，内容照样从时钟后面穿过去。
-                .background(
-                    KazumiPalette.background(for: colorScheme),
-                    ignoresSafeAreaEdges: .top
-                )
+                weekdaySelector
             }
             .background(KazumiPalette.background(for: colorScheme).ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationTitle("新番")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbarBackground(KazumiPalette.background(for: colorScheme), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                seasonPickerButton
+                optionsButton
+            }
+        }
         .sheet(isPresented: $isShowingSeasonPicker) {
             seasonSheet
         }
@@ -216,65 +201,20 @@ struct TimelineScreen: View {
         }
     }
 
-    // MARK: - 头部
+    // MARK: - 导航栏操作
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 8) {
-            seasonTitleButton(expands: !isWideTier)
-            // 筛选钮一律靠右（LP 7182 / Ato 7179：iPad 横屏照抄手机竖屏的对齐；
-            // 原 §6.1 的 700 空档上限 + 尾部 Spacer 会把宽档按钮拽离右缘，撤）。
-            Spacer(minLength: 8)
-            optionsButton
-        }
-        // iPad 宽档标题边距 20，跟「我的」页系统大标题取齐（Colo 7261）；手机档照旧 16。
-        .padding(.horizontal, isWideTier ? 20 : 16)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-    }
-
-    /// 顶栏标题就是当前季度，和原版 `_buildSeasonPicker(inAppBar: true)` 一致。
-    /// 点击区域覆盖整块标题，当前季度 + 箭头即可。
-    private func seasonTitleButton(expands: Bool) -> some View {
+    /// 当前季度切换由系统工具栏承载，页面标题仍固定为「新番」。
+    private var seasonPickerButton: some View {
         Button {
             isShowingSeasonPicker = true
         } label: {
-            // LP 3058 定了名字「新番」（Camo 3055 推的）：两字、切到哪季都成立。
-            // 标题不再写季度，季度就落在下面一行小字里——页面上得看得见自己在看哪一季。
-            // 字号字重回大标题那档（34 半粗），菜单不变，点它还是弹放送季度。
-            // 季度小字放在标题右边、同一行（LP 3081）：放到标题下面会把标题顶上去，
-            // 而右上那颗按钮不会跟着动，两下就错位了。
-            // Ato 6550：但最大字号下「新番」自己就占掉大半行，季度被挤成「2026 …」，
-            // 那比顶上去难看得多——辅助功能字号下改成上下排，季度独占一行。
-            let label = Group {
-                HStack(spacing: 4) {
-                    Text("新番")
-                        // C 档大标题改 inline（§六之二）：34 半粗 → 20 半粗。
-                        .font(isShortTier ? Font.title3.weight(.semibold) : Font.largeTitle.weight(.semibold))
-                        .tracking(-0.4)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    // 尖角跟着标题一档走：34 配 17（Colo 3035 定的是 28 配 15）。
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
+            HStack(spacing: 4) {
                 Text(controller.seasonLabel)
-                    // 13 号、次要色（Colo 3061）。
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
             }
-            Group {
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 2) { label }
-                } else {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) { label }
-                }
-            }
-            // 宽档标题按内容宽排，空档由 header 的 Spacer 控制（§6.1）。
-            .frame(maxWidth: expands ? .infinity : nil, alignment: .leading)
         }
-        .buttonStyle(.plain)
         .accessibilityLabel(String(localized: "新番，切换放送季度，当前 \(controller.seasonLabel)"))
     }
 
@@ -909,4 +849,3 @@ struct TimelineScreen: View {
         KazumiImageLoader.shared.prefetch(urls, pixelSize: KazumiImageLoader.pixelSize(for: cover))
     }
 }
-

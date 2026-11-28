@@ -37,7 +37,7 @@ struct PopularScreen: View {
             let heroFillHeight = size.height + proxy.safeAreaInsets.top
             // 三档只按可用空间分（Colo 6687 §一）：A 单栏、B 宽档（再按宽高比分横式两栏／竖式英雄行）、C 矮屏。
             if size.width < Self.narrowMaxWidth {
-                narrowBody(size: size, safeTop: proxy.safeAreaInsets.top)
+                narrowBody(size: size)
             } else if size.height >= Self.wideMinHeight, size.width > size.height,
                       Self.rightColumnWidth(forWidth: size.width) >= Self.rightColumnMinWidth {
                 // 右栏 ≥ 320（Colo 6822）：不到就回落单栏，不缩左栏、不压海报。
@@ -48,6 +48,27 @@ struct PopularScreen: View {
                 compactTwoColumnBody(size: size, insets: proxy.safeAreaInsets)
             } else {
                 heroRowBody(size: size, overlayCard: overlayCard, heroFillHeight: heroFillHeight)
+            }
+        }
+        .navigationTitle("推荐")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    router.push(.search(keyword: ""))
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .accessibilityLabel("搜索")
+
+                Button {
+                    router.push(.history)
+                } label: {
+                    Image(systemName: "clock")
+                }
+                .accessibilityLabel("观看历史")
             }
         }
     }
@@ -61,14 +82,6 @@ struct PopularScreen: View {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.screen.bounds.height ?? 874
-    }
-
-    /// 状态栏高（跟 PopularHero 原版顶栏同一个数）：窄档自画标题那行的行顶用它，
-    /// 不加 8（Colo 7226：HEAD topBar .padding(.top, statusBarHeight)）。
-    private static var statusBarHeight: CGFloat {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.statusBarManager?.statusBarFrame.height ?? 44
     }
 
     /// 封面高：一律屏高 × 0.70（LP 6677「统一改成 70%」／Ato 6682 不分机型）。
@@ -130,11 +143,6 @@ struct PopularScreen: View {
                 .offset(y: heroFollowOffset)
 
             VStack(spacing: 0) {
-                // 标题 x=500（栏左缘 484 + 16）、圆钮贴右边缘 16，同一行，深色字压白底（Colo 6725）。
-                // 让开安全区再留 18（Ato 8217）。
-                PopularWideTopBar()
-                    .padding(.top, 18)
-
                 ScrollView {
                     // 宽档海报 132×198（Colo 6708：13 寸右栏 892 一行 6 张）。
                     // 货架跟英雄行块同一个偏移、同一个状态（Colo 7139：右栏 1:1 同步下移，
@@ -148,14 +156,12 @@ struct PopularScreen: View {
             }
             .frame(maxWidth: .infinity)
         }
-        // 只有封面那一栏铺到状态栏；右栏得待在顶上那排 tab 底下（现在浮在内容上，会压住第一行标题）。
+        // 只有封面那一栏铺到状态栏；右栏内容从系统导航栏下方开始。
         .overlay {
             if !controller.isLoading, controller.rows.isEmpty, controller.isFailed {
                 failureView
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             controller.paintFromCache()
             Task { await controller.load() }
@@ -253,10 +259,6 @@ struct PopularScreen: View {
                 }
 
             VStack(spacing: 0) {
-                // 让开安全区再留 18（Ato 8217）。
-                PopularWideTopBar()
-                    .padding(.top, 18)
-
                 ScrollView {
                     shelves(tileWidth: 96)
                         .padding(.top, 24)
@@ -272,8 +274,6 @@ struct PopularScreen: View {
                 failureView
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             cachedTabBarLeadingEdge = Self.tabBarLeadingEdge()
             controller.paintFromCache()
@@ -348,23 +348,19 @@ struct PopularScreen: View {
                 failureView
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             controller.paintFromCache()
             Task { await controller.load() }
         }
     }
 
-    /// 单栏版面：竖屏和窄窗口都用这一版，一个像素不动。
-    private func narrowBody(size: CGSize, safeTop: CGFloat) -> some View {
+    /// 单栏版面：竖屏和窄窗口都用这一版，封面与货架布局保持原样。
+    private func narrowBody(size: CGSize) -> some View {
         // §五（A 档单栏，Colo 7072 / Ato 7071；改口 Ato 7111 / Colo 7112；Ato 7141 删渐变；
         // 结构回旧 hero：Ato 7186/7189，信息块压封面下部、封面图垫到简介下）：
-        // 封面顶到 y=0 全出血；tab 条 / 搜索·历史圆钮直接叠在封面上（白字，LP 7140 拍板
-        // 接受亮封面看不清的取舍，后续撞上看不清走系统材质，不是恢复黑渐变）；
-        // 大标题「推荐」旧版原样（Ato 7170/7181，见 narrowTopControls）；
+        // 封面顶到 y=0 全出血；iPad 窄窗口保留自定义标签切换行；
         // 信息块用旧 hero 默认 .overlay（textTop = 封面高 − 块高，压在封面下部，旧渐隐配套）。
-        // iPad 窄窗口隐藏系统顶栏、改画透明叠图 tab 条；iPhone 保留底部系统 tab 栏。
+        // iPhone 保留底部系统 tab 栏，标题与搜索/历史按钮由系统导航栏承载。
         let coverWidth = size.width
         // 封面高度 = 屏高 × 0.70（Ato 7175 / LP 7173：不再用 0.90×宽；440 宽机 ≈669，
         // 接近 2:3 海报）；特窄窗口炤旧兜底（宽 ÷ 0.45，Colo 6683）。
@@ -388,7 +384,7 @@ struct PopularScreen: View {
                         // hero 内部旧 topBar 不再叠一份。
                         showsTopBar: false
                     )
-                    narrowTopControls(safeTop: safeTop, isPad: isPad)
+                    narrowTopControls(isPad: isPad)
                 }
                 .offset(y: -overPull)
 
@@ -447,11 +443,7 @@ struct PopularScreen: View {
                 failureView
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
-        // 大标题仍自画、位置照原版顶栏那一行（LP 7221）；系统大标题不采用。
-        // iPad 窄窗口：系统顶栏 tab 条隐藏，改画叠图 tab 条（Ato 7111）；
-        // iPhone 保留底部系统 tab 栏。
+        // iPad 窄窗口保留原有自定义标签切换行；iPhone 使用系统底部标签栏。
         // iPhone 这档不能写 `.visible`：这里是本 Tab 导航栈的根页面，根上显式声明
         // 可见性会盖掉被推入页面自己的设置——播放页 `.toolbar(.hidden, for: .tabBar)`
         // 因此失效，从推荐页「开始观看」进播放页时底部 tab 不收（LP 7339）。
@@ -465,16 +457,9 @@ struct PopularScreen: View {
         }
     }
 
-    /// 顶部叠图控件（§五 叠图版 / Ato 7111 / Colo 7112；Ato 7141 删渐变；大标题按 LP 7157
-    /// 加回、样式旧版原样 Ato 7168）：iPhone 大标题「推荐」左 16、和搜索/历史圆钮同一行（行高 44）；
-    /// iPad 窄窗那行被居中 tab 条（73–109）占了，标题放 tab 条下面（行顶 117）。
-    /// iPad 窄窗口隐藏系统顶栏，这里改画透明 tab 条（白字，选中 100% / 未选 72%）直接压在封面上；
-    /// 搜索 / 历史圆钮两设备都贴封面右上、与 tab 同行（同一行右端不随封面顶推，Ato 7111）。
-    private func narrowTopControls(safeTop: CGFloat, isPad: Bool) -> some View {
-        // 大标题自画、照原版顶栏那一行（LP 7221：位置找回最初的位置）——
-        // iPhone 跟圆钮同一行、左边 16（HEAD topBar 的 .padding(.horizontal, 16)）；
-        // iPad 窄窗口在叠图 tab 条下一行。圆钮钉住可点（存留改动④）。
-        ZStack(alignment: .top) {
+    /// iPad 窄窗口保留自定义标签切换行；标题、搜索和历史由系统导航栏统一承载。
+    private func narrowTopControls(isPad: Bool) -> some View {
+        Group {
             if isPad {
                 HStack(spacing: 0) {
                     ForEach(AppDestination.allCases, id: \.self) { dest in
@@ -492,45 +477,10 @@ struct PopularScreen: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .frame(height: 36)
-                .padding(.top, 73)
-                // 大标题在 tab 条下一行（行顶 117 = 109+8，左 16）；样式照 HEAD topBar 原样
-                //（.largeTitle semibold、字距 −0.4、黑 30% 阴影），字恒白（LP 7275 / Colo 7279）。
-                Text("推荐")
-                    .font(.largeTitle.weight(.semibold))
-                    .tracking(-0.4)
-                    .foregroundStyle(Color.white)
-                    .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 16)
-                    .padding(.top, 117)
-                    .accessibilityAddTraits(.isHeader)
+                .padding(.top, 117)
             }
-            HStack(spacing: 10) {
-                // iPhone：大标题和圆钮同一行，左边 16（HEAD topBar 原排法与样式）。
-                if !isPad {
-                    Text("推荐")
-                        .font(.largeTitle.weight(.semibold))
-                        .tracking(-0.4)
-                        .foregroundStyle(Color.white)
-                        .shadow(color: .black.opacity(0.30), radius: 8, y: 1)
-                        .frame(height: 44, alignment: .center)
-                        .accessibilityAddTraits(.isHeader)
-                }
-                Spacer()
-                PopularTopBarCircle(symbol: "magnifyingglass", label: "搜索") {
-                    router.push(.search(keyword: ""))
-                }
-                PopularTopBarCircle(symbol: "clock", label: "观看历史") {
-                    router.push(.history)
-                }
-            }
-            .padding(.leading, 16)
-            .padding(.trailing, 16)
-            .frame(height: 44, alignment: .top)
-            .padding(.top, isPad ? 69 : Self.statusBarHeight)
         }
         .frame(maxWidth: .infinity, alignment: .top)
-        .allowsHitTesting(true)
     }
 
     /// 四行全空时的错误态：跟列表页那份同一个形状（那里也是「更多」点进去的第一屏）。
